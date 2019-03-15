@@ -10,7 +10,6 @@
 #include "uv_mbed.h"
 #include "bio.h"
 
-#define DEFAULT_CA_CHAIN "/etc/ssl/certs/ca-certificates.crt"
 
 void uv__stream_init(uv_loop_t* loop, uv_stream_t* s, uv_handle_type type);
 
@@ -33,6 +32,16 @@ int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed) {
     uv_tcp_init(l, &mbed->socket);
     init_ssl(mbed);
 
+    return 0;
+}
+
+int uv_mbed_set_ca(uv_mbed_t *mbed, mbedtls_x509_crt* ca) {
+    mbedtls_ssl_conf_ca_chain(&mbed->ssl_config, ca, NULL);
+    return 0;
+}
+
+int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context *privkey) {
+    mbedtls_ssl_conf_own_cert(&mbed->ssl_config, cert, privkey);
     return 0;
 }
 
@@ -107,9 +116,6 @@ static void init_ssl(uv_mbed_t *mbed) {
     unsigned char* seed = (unsigned char *) "this is entropy seed";
     mbedtls_ctr_drbg_seed(drbg, mbedtls_entropy_func, entropy, seed, strlen(seed));
     mbedtls_ssl_conf_rng(&mbed->ssl_config, mbedtls_ctr_drbg_random, drbg);
-    mbedtls_x509_crt *ca_chain = calloc(1, sizeof(mbedtls_x509_crt));
-    mbedtls_x509_crt_parse_file(ca_chain, DEFAULT_CA_CHAIN);
-    mbedtls_ssl_conf_ca_chain(&mbed->ssl_config, ca_chain, NULL);
 
     mbedtls_ssl_init(&mbed->ssl);
     mbedtls_ssl_setup(&mbed->ssl, &mbed->ssl_config);
@@ -124,9 +130,6 @@ static void mbed_ssl_free(uv_mbed_t *mbed) {
 
     mbedtls_ctr_drbg_free(mbed->ssl_config.p_rng);
     free(mbed->ssl_config.p_rng);
-
-    mbedtls_x509_crt_free(mbed->ssl_config.ca_chain);
-    free(mbed->ssl_config.ca_chain);
 
     mbedtls_ssl_config_free(&mbed->ssl_config);
 }

@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <uv_mbed.h>
 
+#define DEFAULT_CA_CHAIN "/etc/ssl/certs/ca-certificates.crt"
+
 static void alloc(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
     buf->base = (char*) malloc(suggested_size);
     buf->len = suggested_size;
@@ -65,8 +67,12 @@ void on_connect(uv_connect_t *cr, int status) {
 int main() {
     uv_loop_t *l = uv_default_loop();
 
+    mbedtls_x509_crt *ca_chain = calloc(1, sizeof(mbedtls_x509_crt));
+    mbedtls_x509_crt_parse_file(ca_chain, DEFAULT_CA_CHAIN);
+
     uv_mbed_t mbed;
     uv_mbed_init(l, &mbed);
+    uv_mbed_set_ca(&mbed, ca_chain);
 
     uv_connect_t cr;
     uv_mbed_connect(&cr, &mbed, "google.com", 443, on_connect);
