@@ -38,7 +38,7 @@ size_t BIO_available(BIO* bio) {
     return bio->available;
 }
 
-void BIO_put(BIO *bio, uint8_t *buf, size_t len) {
+void BIO_put(BIO *bio, const uint8_t *buf, size_t len) {
     struct msg *m = malloc(sizeof(struct msg));
     m->buf = malloc(len);
     m->len = len;

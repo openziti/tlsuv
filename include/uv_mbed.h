@@ -19,7 +19,8 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t* mbed, const char *host, int po
 int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t* mbed, const struct addrinfo *addr, uv_connect_cb cb);
 
 int uv_mbed_read(uv_mbed_t* client, uv_alloc_cb, uv_read_cb);
-int uv_mbed_write(uv_write_t* req, uv_mbed_t *session, uv_buf_t* buf, uv_write_cb cb);
+
+int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb cb);
 
 int uv_mbed_close(uv_mbed_t* session, uv_close_cb close_cb);
 

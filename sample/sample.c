@@ -5,7 +5,6 @@
 
 #include <uv.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <uv_mbed.h>
 
 #define DEFAULT_CA_CHAIN "/etc/ssl/certs/ca-certificates.crt"
@@ -39,6 +38,7 @@ void write_cb(uv_write_t *wr, int status) {
         fprintf(stderr, "write failed: %d: %s\n", status, uv_strerror(status));
         uv_mbed_close((uv_mbed_t *) wr->handle, on_close);
     }
+    printf("request sent %d\n", status);
     free(wr);
 }
 

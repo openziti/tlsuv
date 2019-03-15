@@ -16,7 +16,7 @@ typedef struct bio {
 BIO* BIO_new();
 void BIO_free(BIO*);
 
-void BIO_put(BIO*, uint8_t *buf, size_t len);
+void BIO_put(BIO *, const uint8_t *buf, size_t len);
 int BIO_read(BIO*, uint8_t *buf, size_t len);
 size_t BIO_available(BIO*);
 
