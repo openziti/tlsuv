@@ -277,10 +277,17 @@ static void mbed_ssl_process_in(uv_mbed_t *mbed) {
     }
     else {
         if (mbed->_stream.read_cb != NULL) {
-            uv_buf_t buf = uv_buf_init(NULL, 0);
-            mbed->_stream.alloc_cb((uv_handle_t *) mbed, 8 * 1024, &buf);
-            int recv = mbedtls_ssl_read(&mbed->ssl, (uint8_t *)buf.base, buf.len);
-            mbed->_stream.read_cb((uv_stream_t *) mbed, recv, &buf);
+            if (BIO_available(mbed->ssl_in) > 0) {
+                uv_buf_t buf = uv_buf_init(NULL, 0);
+                mbed->_stream.alloc_cb((uv_handle_t *) mbed, 64 * 1024, &buf);
+                size_t  recv = 0;
+                while (BIO_available(mbed->ssl_in) > 0 && (buf.len - recv) > 0) {
+                    int read = mbedtls_ssl_read(&mbed->ssl, (uint8_t *) buf.base + recv, buf.len - recv);
+                    if (read < 0) break;
+                    recv += read;
+                }
+                mbed->_stream.read_cb((uv_stream_t *) mbed, recv, &buf);
+            }
         }
     }
 }
@@ -312,9 +319,9 @@ static void mbed_ssl_process_out(uv_mbed_t *mbed, uv_write_t *wr) {
         tcp_wr->data = ctx;
         uv_buf_t wb = uv_buf_init((char *) ctx->buf, (unsigned int) len);
         uv_write(tcp_wr, (uv_stream_t *) &mbed->socket, &wb, 1, mbed_tcp_write_cb);
-
     }
     else {
+        // how did we get here?
         wr->cb(wr, MBEDTLS_ERR_SSL_WANT_WRITE);
     }
 }
