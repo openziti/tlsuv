@@ -18,7 +18,14 @@ set_target_properties(uv_a PROPERTIES
 
 add_library(uv_mbed STATIC
         src/uv_mbed.c src/uv_mbed.c src/bio.c src/bio.h)
-target_include_directories(uv_mbed PUBLIC include)
+
+target_include_directories(uv_mbed
+        PUBLIC
+        $<INSTALL_INTERFACE:include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
 
 target_link_libraries(uv_mbed
         PUBLIC uv_a
@@ -26,6 +33,9 @@ target_link_libraries(uv_mbed
         PUBLIC mbedx509
         PUBLIC mbedcrypto)
 
+install(DIRECTORY include/uv_mbed DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(TARGETS uv_mbed
+        ARCHIVE DESTINATION lib)
 
 if(ENABLE_SAMPLES)
 add_subdirectory(sample)

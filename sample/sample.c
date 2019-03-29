@@ -5,7 +5,7 @@
 
 #include <uv.h>
 #include <stdlib.h>
-#include <uv_mbed.h>
+#include <uv_mbed/uv_mbed.h>
 
 #define DEFAULT_CA_CHAIN "/etc/ssl/certs/ca-certificates.crt"
 

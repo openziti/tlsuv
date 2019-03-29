@@ -7,7 +7,7 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/debug.h>
 #include <mbedtls/entropy.h>
-#include "uv_mbed.h"
+#include "uv_mbed/uv_mbed.h"
 #include "bio.h"
 
 
