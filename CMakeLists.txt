@@ -1,6 +1,9 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.12)
 
-PROJECT("uv-mbed" C)
+PROJECT("uv-mbed"
+        LANGUAGES C
+        VERSION 0.5.0
+        )
 
 option(ENABLE_SAMPLES "Build samples." OFF)
 
