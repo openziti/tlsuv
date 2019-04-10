@@ -10,7 +10,7 @@ API is attempted to be consistent with [libuv API](http://docs.libuv.org/en/v1.x
 
 ### Suuported Platforms
 * Linux
-* _Darwin/MacOS - future_
+* _Darwin/MacOS
 * _Windows - future_
 
 
