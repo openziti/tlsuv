@@ -23,6 +23,7 @@ int uv_mbed_read(uv_mbed_t* client, uv_alloc_cb, uv_read_cb);
 int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb cb);
 
 int uv_mbed_close(uv_mbed_t* session, uv_close_cb close_cb);
+int uv_mbed_free(uv_mbed_t* session);
 
 struct uv_mbed_s {
     uv_stream_t _stream;

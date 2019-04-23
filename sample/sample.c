@@ -16,6 +16,7 @@ static void alloc(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
 
 static void on_close(uv_handle_t* h) {
     printf("mbed is closed\n");
+    uv_mbed_free((uv_mbed_t *) h);
 }
 
 void on_data(uv_stream_t *h, ssize_t nread, const uv_buf_t* buf) {

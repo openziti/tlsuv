@@ -20,7 +20,6 @@ static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* r
 static void tcp_connect_cb(uv_connect_t* req, int status);
 static void tcp_shutdown_cb(uv_shutdown_t* req, int status) ;
 
-static void mbed_ssl_free(uv_mbed_t *mbed);
 static void mbed_ssl_process_in(uv_mbed_t *mbed);
 
 static void mbed_ssl_process_out(uv_mbed_t *mbed, uv_write_t *wr);
@@ -69,12 +68,25 @@ int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t* mbed, const struct addrin
     return uv_tcp_connect(tcp_cr, &mbed->socket, addr->ai_addr, tcp_connect_cb);
 }
 
-int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
-    mbed->_stream.close_cb = close_cb;
-    mbedtls_ssl_close_notify(&mbed->ssl);
+static void on_close_write(uv_write_t *req, int status) {
+    struct uv_mbed_s *mbed = (struct uv_mbed_s *) req->handle;
+
     uv_shutdown_t *sr = malloc(sizeof(uv_shutdown_t));
     sr->data = mbed;
-    return uv_shutdown(sr, (uv_stream_t *) &mbed->socket, tcp_shutdown_cb);
+    uv_shutdown(sr, (uv_stream_t *) &mbed->socket, tcp_shutdown_cb);
+    free(req);
+}
+
+int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
+
+    mbed->_stream.close_cb = close_cb;
+    int rc = mbedtls_ssl_close_notify(&mbed->ssl);
+
+    uv_write_t *wr = malloc(sizeof(uv_write_t));
+    wr->handle = mbed;
+    wr->cb = on_close_write;
+    mbed_ssl_process_out(mbed, wr);
+    return 0;
 }
 
 
@@ -147,7 +159,7 @@ static void init_ssl(uv_mbed_t *mbed) {
     free(seed);
 }
 
-static void mbed_ssl_free(uv_mbed_t *mbed) {
+int uv_mbed_free(uv_mbed_t *mbed) {
     BIO_free(mbed->ssl_in);
     BIO_free(mbed->ssl_out);
     mbedtls_ssl_free(&mbed->ssl);
@@ -223,12 +235,16 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
     free(req);
 }
 
+static void on_mbed_close(uv_handle_t *h) {
+    uv_mbed_t *mbed = h->data;
+    mbed->_stream.close_cb((uv_handle_t *) mbed);
+}
+
+
 static void tcp_shutdown_cb(uv_shutdown_t* req, int status) {
     uv_mbed_t *mbed = req->data;
 
-    mbed_ssl_free(mbed);
-    mbed->_stream.close_cb((uv_handle_t *) mbed);
-
+    uv_close((uv_handle_t *) &mbed->socket, on_mbed_close);
     free(req);
 }
 
