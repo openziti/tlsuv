@@ -112,9 +112,22 @@ int uv_mbed_read(uv_mbed_t *mbed, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
 
 int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb cb) {
     req->handle = (uv_stream_t *) mbed;
-    int rc = mbedtls_ssl_write(&mbed->ssl, buf->base, buf->len);
 
-    if (rc >= 0) {
+    int rc = 0;
+    int sent = 0;
+    while (sent < buf->len) {
+        rc = mbedtls_ssl_write(&mbed->ssl, buf->base + sent, buf->len - sent);
+
+        if (rc >= 0) {
+            sent += rc;
+        }
+
+        if (rc < 0) {
+            break;
+        }
+    }
+
+    if (sent > 0) {
         req->handle = (uv_stream_t *) mbed;
         req->cb = cb;
 
@@ -256,7 +269,7 @@ static void mbed_tcp_write_cb(uv_write_t *tcp_wr, int status) {
         ssl_wr->cb(ssl_wr, status);
     }
     else if (tcp_wr->cb) {
-        tcp_wr->cb(tcp_wr, status);
+       // tcp_wr->cb(tcp_wr, status);
     }
     free(ctx->buf);
     free(ctx);
@@ -325,20 +338,30 @@ static void mbed_continue_handshake(uv_mbed_t *mbed) {
 static void mbed_ssl_process_out(uv_mbed_t *mbed, uv_write_t *wr) {
     BIO *out = mbed->ssl_out;
     size_t avail = BIO_available(out);
-    if (avail > 0) {
+
+    if (avail <= 0) {
+        // how did we get here?
+        printf("mbed WTF\n");
+        wr->cb(wr, MBEDTLS_ERR_SSL_WANT_WRITE);
+    }
+
+
+    while (avail > 0) {
         struct tcp_write_ctx *ctx = malloc(sizeof(struct tcp_write_ctx));
         ctx->buf = malloc(avail);
-        ctx->req = wr;
 
         int len = BIO_read(out, ctx->buf, avail);
+        if (len == avail)
+            ctx->req = wr;
+        else
+            ctx->req = NULL;
+
+        printf("%s: len=%d avail=%ld\n", __FUNCTION__, len, avail);
         uv_write_t *tcp_wr = calloc(1, sizeof(uv_write_t));
         tcp_wr->data = ctx;
         uv_buf_t wb = uv_buf_init((char *) ctx->buf, (unsigned int) len);
         uv_write(tcp_wr, (uv_stream_t *) &mbed->socket, &wb, 1, mbed_tcp_write_cb);
-    }
-    else {
-        // how did we get here?
-        wr->cb(wr, MBEDTLS_ERR_SSL_WANT_WRITE);
+        avail = BIO_available(out);
     }
 }
 

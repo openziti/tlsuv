@@ -49,9 +49,6 @@ void BIO_put(BIO *bio, const uint8_t *buf, size_t len) {
 }
 
 int BIO_read(BIO *bio, uint8_t *buf, size_t len) {
-    if (STAILQ_EMPTY(&bio->message_q)) {
-        return -1;
-    }
 
     struct msg *m = STAILQ_FIRST(&bio->message_q);
 
