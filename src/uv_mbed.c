@@ -341,7 +341,6 @@ static void mbed_ssl_process_out(uv_mbed_t *mbed, uv_write_t *wr) {
 
     if (avail <= 0) {
         // how did we get here?
-        printf("mbed WTF\n");
         wr->cb(wr, MBEDTLS_ERR_SSL_WANT_WRITE);
     }
 
@@ -356,7 +355,6 @@ static void mbed_ssl_process_out(uv_mbed_t *mbed, uv_write_t *wr) {
         else
             ctx->req = NULL;
 
-        printf("%s: len=%d avail=%ld\n", __FUNCTION__, len, avail);
         uv_write_t *tcp_wr = calloc(1, sizeof(uv_write_t));
         tcp_wr->data = ctx;
         uv_buf_t wb = uv_buf_init((char *) ctx->buf, (unsigned int) len);
