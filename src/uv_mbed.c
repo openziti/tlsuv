@@ -104,6 +104,10 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
     return uv_getaddrinfo(loop, resolve_req, dns_resolve_cb, host, portstr, NULL);
 }
 
+int uv_mbed_set_blocking(uv_mbed_t *um, int blocking) {
+    return uv_stream_set_blocking((uv_stream_t *) &um->socket, blocking);
+}
+
 int uv_mbed_read(uv_mbed_t *mbed, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
     mbed->_stream.alloc_cb = alloc_cb;
     mbed->_stream.read_cb = read_cb;

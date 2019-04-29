@@ -17,6 +17,7 @@ int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context
 
 int uv_mbed_connect(uv_connect_t *req, uv_mbed_t* mbed, const char *host, int port, uv_connect_cb cb);
 int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t* mbed, const struct addrinfo *addr, uv_connect_cb cb);
+int uv_mbed_set_blocking(uv_mbed_t* mbed, int blocking);
 
 int uv_mbed_read(uv_mbed_t* client, uv_alloc_cb, uv_read_cb);
 
