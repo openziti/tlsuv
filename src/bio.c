@@ -50,20 +50,25 @@ void BIO_put(BIO *bio, const uint8_t *buf, size_t len) {
 
 int BIO_read(BIO *bio, uint8_t *buf, size_t len) {
 
-    struct msg *m = STAILQ_FIRST(&bio->message_q);
+    size_t total = 0;
 
-    size_t recv_size = MIN(len, m->len - bio->headoffset);
-    memcpy(buf, m->buf + bio->headoffset, recv_size);
-    bio->headoffset += recv_size;
-    bio->available -= recv_size;
+    while (! STAILQ_EMPTY(&bio->message_q) && total < len) {
+        struct msg *m = STAILQ_FIRST(&bio->message_q);
 
-    if (bio->headoffset == m->len) {
-        STAILQ_REMOVE_HEAD(&bio->message_q, next);
-        bio->headoffset = 0;
+        size_t recv_size = MIN(len - total, m->len - bio->headoffset);
+        memcpy(buf + total, m->buf + bio->headoffset, recv_size);
+        bio->headoffset += recv_size;
+        bio->available -= recv_size;
+        total += recv_size;
 
-        free(m->buf);
-        free(m);
+        if (bio->headoffset == m->len) {
+            STAILQ_REMOVE_HEAD(&bio->message_q, next);
+            bio->headoffset = 0;
+
+            free(m->buf);
+            free(m);
+        }
     }
 
-    return (int) recv_size;
+    return (int) total;
 }
