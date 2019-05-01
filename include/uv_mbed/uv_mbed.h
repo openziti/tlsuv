@@ -7,6 +7,7 @@
 
 #include <uv.h>
 #include <mbedtls/ssl.h>
+#include <mbedtls/x509_crt.h>
 
 typedef struct uv_mbed_s uv_mbed_t;
 typedef struct bio BIO;
@@ -28,7 +29,7 @@ int uv_mbed_free(uv_mbed_t* session);
 
 struct uv_mbed_s {
     uv_stream_t _stream;
-
+    uv_connect_t *connect_req;
     uv_tcp_t socket;
     mbedtls_ssl_config ssl_config;
     mbedtls_ssl_context ssl;
@@ -37,6 +38,10 @@ struct uv_mbed_s {
     BIO* ssl_out;
 };
 
+#ifndef container_of
+#define container_of(ptr, type, member) \
+    ((type *) ((char *) (ptr) - offsetof(type, member)))
+#endif /* container_of */
 
 
 #endif //UV_MBED_H

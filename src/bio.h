@@ -5,6 +5,8 @@
 #ifndef UV_MBED_BIO_H
 #define UV_MBED_BIO_H
 
+#include <stddef.h>
+#include <stdint.h>
 #include <sys/queue.h>
 
 typedef struct bio {

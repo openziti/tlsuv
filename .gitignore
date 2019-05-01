@@ -67,3 +67,16 @@ CTestTestfile.cmake
 .idea/
 cmake-build-debug/
 cmake-build-release/
+
+.vscode/
+sample/sample
+*.cbp
+Debug/
+Release/
+x64/
+*.ipch
+*.opensdf
+*.sdf
+*.suo
+*.vcxproj.user
+

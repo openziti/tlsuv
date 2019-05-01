@@ -20,7 +20,7 @@ set_target_properties(uv_a PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/libuv/include)
 
 add_library(uv_mbed STATIC
-        src/uv_mbed.c src/uv_mbed.c src/bio.c src/bio.h)
+        include/uv_mbed/uv_mbed.h src/uv_mbed.c src/bio.c src/bio.h)
 
 target_include_directories(uv_mbed
         PUBLIC
@@ -40,6 +40,6 @@ install(DIRECTORY include/uv_mbed DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(TARGETS uv_mbed
         ARCHIVE DESTINATION lib)
 
-if(ENABLE_SAMPLES)
+#if(ENABLE_SAMPLES)
 add_subdirectory(sample)
-endif()
+#endif()

@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include <sys/param.h>
 #include "bio.h"
 
 struct msg {
@@ -16,7 +15,7 @@ struct msg {
 };
 
 BIO *BIO_new() {
-    BIO* bio = calloc(1, sizeof(BIO));
+    BIO* bio = (BIO *) calloc(1, sizeof(BIO));
     bio->available = 0;
     bio->headoffset = 0;
     STAILQ_INIT(&bio->message_q);
@@ -39,8 +38,8 @@ size_t BIO_available(BIO* bio) {
 }
 
 void BIO_put(BIO *bio, const uint8_t *buf, size_t len) {
-    struct msg *m = malloc(sizeof(struct msg));
-    m->buf = malloc(len);
+    struct msg *m = (struct msg *) calloc(1, sizeof(struct msg));
+    m->buf = (uint8_t *) calloc(len, sizeof(uint8_t));
     m->len = len;
     memcpy(m->buf, buf, len);
     bio->available += len;
@@ -54,6 +53,10 @@ int BIO_read(BIO *bio, uint8_t *buf, size_t len) {
 
     while (! STAILQ_EMPTY(&bio->message_q) && total < len) {
         struct msg *m = STAILQ_FIRST(&bio->message_q);
+
+#ifndef MIN
+#define MIN(a,b) (((a)<(b))?(a):(b))
+#endif
 
         size_t recv_size = MIN(len - total, m->len - bio->headoffset);
         memcpy(buf + total, m->buf + bio->headoffset, recv_size);
