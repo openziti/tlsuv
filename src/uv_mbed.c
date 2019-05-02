@@ -39,7 +39,7 @@ struct tcp_write_ctx {
 
 
 int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed) {
-    uv__stream_init(l, &mbed->_stream, UV_STREAM);
+    uv__stream_init(l, (uv_stream_t *) mbed, UV_STREAM);
 
     uv_tcp_init(l, &mbed->socket);
     init_ssl(mbed);
@@ -99,7 +99,7 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
     char portstr[6] = { 0 };
     uv_loop_t *loop = mbed->_stream.loop;
     uv_getaddrinfo_t *resolve_req = (uv_getaddrinfo_t *)calloc(1, sizeof(uv_getaddrinfo_t));
-    req->handle = (uv_stream_t *) &mbed->_stream;
+    req->handle = (uv_stream_t *) mbed;
     req->cb = cb;
 
     mbed->connect_req = req;
