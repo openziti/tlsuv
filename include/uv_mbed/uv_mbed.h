@@ -29,6 +29,7 @@ int uv_mbed_free(uv_mbed_t* session);
 
 struct uv_mbed_s {
     uv_stream_t _stream;
+    void *user_data;
     uv_connect_t *connect_req;
     uv_tcp_t socket;
     mbedtls_ssl_config ssl_config;
