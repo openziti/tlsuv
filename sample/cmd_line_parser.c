@@ -65,6 +65,10 @@ struct cmd_line_info * cmd_line_info_create(int argc, char * const argv[]) {
         string_safe_assign(&info->request_path, DFL_REQUEST_PATH);
     }
 
+    if (argc <= 1) {
+        info->help_flag = true;
+    }
+
     return info;
 }
 

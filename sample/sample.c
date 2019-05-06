@@ -11,6 +11,8 @@
 
 #define DEFAULT_CA_CHAIN "/etc/ssl/certs/ca-certificates.crt"
 
+FILE *fp = NULL;
+
 static void alloc(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
     char *p = (char *) calloc(suggested_size+1, sizeof(char));
     *buf = uv_buf_init(p, suggested_size);
@@ -23,8 +25,12 @@ static void on_close(uv_handle_t* h) {
 
 void on_data(uv_stream_t *h, ssize_t nread, const uv_buf_t* buf) {
     if (nread > 0) {
+        if (fp) {
+            fwrite(buf->base, nread, 1, fp);
+        } else {
         printf("%*.*s", (int) nread, (int) nread, buf->base);
         fflush(stdout);
+        }
     } else if (nread == UV_EOF) {
         printf("=====================\nconnection closed\n");
         uv_mbed_close((uv_mbed_t *) h, on_close);
@@ -81,11 +87,16 @@ int main(int argc, char * const argv[]) {
     uv_connect_t cr;
     struct cmd_line_info *cmd;
 
-    if (argc <= 1) {
-        usage(argc, argv);
-        return 0;
-    }
     cmd = cmd_line_info_create(argc, argv);
+
+    if (cmd->help_flag) {
+        usage(argc, argv);
+        goto exit_point;
+    }
+
+    if (cmd->out_put_file && strlen(cmd->out_put_file)) {
+        fp = fopen(cmd->out_put_file, "wb+");
+    }
 
     uv_mbed_init(l, &mbed);
     mbed.user_data = cmd;
@@ -95,11 +106,16 @@ int main(int argc, char * const argv[]) {
         ca_chain = (mbedtls_x509_crt *) calloc(1, sizeof(mbedtls_x509_crt));
         mbedtls_x509_crt_parse_file(ca_chain, cmd->root_cert_file);
         uv_mbed_set_ca(&mbed, ca_chain);
+        // mbedtls_x509_crt_parse(ca_chain, ca, sizeof(ca));
     }
 
     uv_mbed_connect(&cr, &mbed, cmd->server_addr, atoi(cmd->server_port), on_connect);
 
     uv_run(l, UV_RUN_DEFAULT);
 
+exit_point:
     cmd_line_info_destroy(cmd);
+    if (fp) {
+        fclose(fp);
+    }
 }
