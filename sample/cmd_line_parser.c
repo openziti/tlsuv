@@ -97,7 +97,7 @@ int usage(int argc, char * const argv[]) {
         "\n"
         "Usage:\n"
         "\n"
-        "  %s [-s <server address>] [-p <server port>] [-r request_path] [-c <certificate file>] [-h]\n"
+        "  %s [-s <server address>] [-p <server port>] [-r request_path] [-c <certificate file>] [-o <output file>] [-d <dump level>] [-h]\n"
         "\n"
         "Options:\n"
         "\n"

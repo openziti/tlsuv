@@ -11,13 +11,19 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\sample\cmd_line_parser.c" />
     <ClCompile Include="..\sample\sample.c" />
     <ClCompile Include="..\src\bio.c" />
     <ClCompile Include="..\src\uv_mbed.c" />
+    <ClCompile Include="src\getopt.c" />
+    <ClCompile Include="src\getopt_long.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\include\uv_mbed\uv_mbed.h" />
+    <ClInclude Include="..\sample\cmd_line_parser.h" />
     <ClInclude Include="..\src\bio.h" />
+    <ClInclude Include="include\getopt.h" />
+    <ClInclude Include="include\getopt_long.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{E683C8F1-3C3F-4B5D-B60E-87D792D21002}</ProjectGuid>
@@ -60,6 +66,7 @@
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>../src;../include;./include;../mbedtls/include;../libuv/include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
