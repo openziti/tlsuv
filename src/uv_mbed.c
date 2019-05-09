@@ -19,7 +19,7 @@ void uv__stream_init(uv_loop_t* loop, uv_stream_t* s, uv_handle_type type);
 #endif /* _WIN32 */
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
-static void init_ssl(uv_mbed_t *mbed);
+static void init_ssl(uv_mbed_t *mbed, int dump_level);
 static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res);
 
 static void tcp_connect_established_cb(uv_connect_t* req, int status);
@@ -39,12 +39,12 @@ struct tcp_write_ctx {
 };
 
 
-int uv_mbed_init(uv_loop_t *loop, uv_mbed_t *mbed) {
+int uv_mbed_init(uv_loop_t *loop, uv_mbed_t *mbed, int dump_level) {
     uv_stream_t *stream = &mbed->_stream;
     uv__stream_init(loop, stream, UV_STREAM);
 
     uv_tcp_init(loop, &mbed->socket);
-    init_ssl(mbed);
+    init_ssl(mbed, dump_level);
 
     return 0;
 }
@@ -150,15 +150,12 @@ int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb c
     return rc;
 }
 
-static void init_ssl(uv_mbed_t *mbed) {
+static void init_ssl(uv_mbed_t *mbed, int dump_level) {
     mbedtls_ctr_drbg_context *drbg;
     mbedtls_entropy_context *entropy;
     unsigned char *seed;
-    char *tls_debug = getenv("MBEDTLS_DEBUG");
-    if (tls_debug != NULL) {
-        int level = (int) strtol(tls_debug, NULL, 10);
-        mbedtls_debug_set_threshold(level);
-    }
+
+    mbedtls_debug_set_threshold(dump_level);
 
     mbedtls_ssl_config_init(&mbed->ssl_config);
     mbedtls_ssl_conf_dbg(&mbed->ssl_config, tls_debug_f, stdout);

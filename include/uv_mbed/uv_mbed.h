@@ -13,7 +13,7 @@ struct uv_mbed_s;
 typedef struct uv_mbed_s uv_mbed_t;
 struct bio;
 
-int uv_mbed_init(uv_loop_t *loop, uv_mbed_t *mbed);
+int uv_mbed_init(uv_loop_t *loop, uv_mbed_t *mbed, int dump_level);
 int uv_mbed_set_ca(uv_mbed_t *mbed, mbedtls_x509_crt* ca);
 int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context *privkey);
 

@@ -57,7 +57,7 @@ void on_connect(uv_connect_t *cr, int status) {
     struct cmd_line_info *cmd;
     char req[] = "GET %s HTTP/1.1\r\n"
                  "Accept: */*\r\n"
-                 "Connection: keep-alive\r\n"
+                 "Connection: close\r\n"
                  "Host: %s\r\n"
                  "User-Agent: HTTPie/1.0.2\r\n"
                  "\r\n";
@@ -98,7 +98,7 @@ int main(int argc, char * const argv[]) {
         fp = fopen(cmd->out_put_file, "wb+");
     }
 
-    uv_mbed_init(l, &mbed);
+    uv_mbed_init(l, &mbed, cmd->dump_level);
     mbed.user_data = cmd;
 
     if (cmd->root_cert_file && strlen(cmd->root_cert_file)) {
