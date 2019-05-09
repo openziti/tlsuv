@@ -9,10 +9,11 @@
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 
+struct uv_mbed_s;
 typedef struct uv_mbed_s uv_mbed_t;
-typedef struct bio BIO;
+struct bio;
 
-int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed);
+int uv_mbed_init(uv_loop_t *loop, uv_mbed_t *mbed);
 int uv_mbed_set_ca(uv_mbed_t *mbed, mbedtls_x509_crt* ca);
 int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context *privkey);
 
@@ -35,8 +36,8 @@ struct uv_mbed_s {
     mbedtls_ssl_config ssl_config;
     mbedtls_ssl_context ssl;
 
-    BIO* ssl_in;
-    BIO* ssl_out;
+    struct bio *ssl_in;
+    struct bio *ssl_out;
 };
 
 #ifndef container_of
