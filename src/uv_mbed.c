@@ -1,5 +1,6 @@
 //
 // Created by eugene on 3/14/19.
+// Modified by ssrlive
 //
 
 #include <stdlib.h>
@@ -11,17 +12,11 @@
 #include "uv_mbed/uv_mbed.h"
 #include "bio.h"
 
-#if defined(_WIN32)
-void uv_stream_init(uv_loop_t* loop, uv_stream_t* s, uv_handle_type type);
-#define uv__stream_init uv_stream_init
-#else /* _WIN32 */
-void uv__stream_init(uv_loop_t* loop, uv_stream_t* s, uv_handle_type type);
-#endif /* _WIN32 */
-
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
 static void init_ssl(uv_mbed_t *mbed, int dump_level);
-static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res);
+static void dns_resolve_done_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res);
 
+static int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t* mbed, const struct addrinfo *addr, uv_connect_cb cb);
 static void tcp_connect_established_cb(uv_connect_t* req, int status);
 static void tcp_shutdown_cb(uv_shutdown_t* req, int status) ;
 
@@ -38,14 +33,9 @@ struct tcp_write_ctx {
     uv_write_t *req;
 };
 
-
 int uv_mbed_init(uv_loop_t *loop, uv_mbed_t *mbed, int dump_level) {
-    uv_stream_t *stream = &mbed->_stream;
-    uv__stream_init(loop, stream, UV_STREAM);
-
     uv_tcp_init(loop, &mbed->socket);
     init_ssl(mbed, dump_level);
-
     return 0;
 }
 
@@ -59,7 +49,7 @@ int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context
     return 0;
 }
 
-int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t* mbed, const struct addrinfo *addr, uv_connect_cb cb) {
+static int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t* mbed, const struct addrinfo *addr, uv_connect_cb cb) {
     uv_connect_t *tcp_cr;
     uv_stream_t *stream = &mbed->_stream;
 
@@ -99,7 +89,7 @@ int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
 
 int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int port, uv_connect_cb cb) {
     char portstr[6] = { 0 };
-    uv_loop_t *loop = mbed->_stream.loop;
+    uv_loop_t *loop = mbed->socket.loop;
     uv_getaddrinfo_t *resolve_req = (uv_getaddrinfo_t *)calloc(1, sizeof(uv_getaddrinfo_t));
     req->handle = (uv_stream_t *) mbed;
     req->cb = cb;
@@ -108,7 +98,7 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
 
     resolve_req->data = mbed;
     sprintf(portstr, "%d", port);
-    return uv_getaddrinfo(loop, resolve_req, dns_resolve_cb, host, portstr, NULL);
+    return uv_getaddrinfo(loop, resolve_req, dns_resolve_done_cb, host, portstr, NULL);
 }
 
 int uv_mbed_set_blocking(uv_mbed_t *um, int blocking) {
@@ -212,7 +202,7 @@ static void alloc_cb(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) 
     *buf = uv_buf_init(base, suggested_size);
 }
 
-static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res) {
+static void dns_resolve_done_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res) {
     uv_mbed_t *mbed = (uv_mbed_t *) req->data;
 
     uv_connect_t *cr = mbed->connect_req;
