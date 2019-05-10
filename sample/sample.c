@@ -18,7 +18,8 @@ static void alloc(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
     *buf = uv_buf_init(p, suggested_size);
 }
 
-static void on_close(uv_handle_t* h) {
+static void on_close(uv_mbed_t *h, void *p) {
+    (void)p;
     printf("mbed is closed\n");
     uv_mbed_free((uv_mbed_t *) h);
 }
@@ -33,10 +34,10 @@ void on_data(uv_stream_t *h, ssize_t nread, const uv_buf_t* buf) {
         }
     } else if (nread == UV_EOF) {
         printf("=====================\nconnection closed\n");
-        uv_mbed_close((uv_mbed_t *) h, on_close);
+        uv_mbed_close((uv_mbed_t *) h, on_close, NULL);
     } else {
         fprintf(stderr, "read error %ld: %s\n", nread, uv_strerror((int) nread));
-        uv_mbed_close((uv_mbed_t *) h, on_close);
+        uv_mbed_close((uv_mbed_t *) h, on_close, NULL);
     }
 
     free(buf->base);
@@ -45,7 +46,7 @@ void on_data(uv_stream_t *h, ssize_t nread, const uv_buf_t* buf) {
 void write_cb(uv_write_t *wr, int status) {
     if (status < 0) {
         fprintf(stderr, "write failed: %d: %s\n", status, uv_strerror(status));
-        uv_mbed_close((uv_mbed_t *) wr->handle, on_close);
+        uv_mbed_close((uv_mbed_t *) wr->handle, on_close, NULL);
     }
     printf("request sent %d\n", status);
     free(wr);
@@ -65,7 +66,7 @@ void on_connect(uv_connect_t *cr, int status) {
     uv_buf_t buf;
     if (status < 0) {
         fprintf(stderr, "connect failed: %d: %s\n", status, uv_strerror(status));
-        uv_mbed_close((uv_mbed_t *) cr->handle, on_close);
+        uv_mbed_close((uv_mbed_t *) cr->handle, on_close, NULL);
         return;
     }
 

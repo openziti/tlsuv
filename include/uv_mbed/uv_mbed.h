@@ -24,7 +24,8 @@ int uv_mbed_read(uv_mbed_t* client, uv_alloc_cb, uv_read_cb);
 
 int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb cb);
 
-int uv_mbed_close(uv_mbed_t* session, uv_close_cb close_cb);
+typedef void (*uv_mbed_close_cb)(uv_mbed_t *mbed, void *p);
+int uv_mbed_close(uv_mbed_t* session, uv_mbed_close_cb close_cb, void *p);
 int uv_mbed_free(uv_mbed_t* session);
 
 struct uv_mbed_s {
@@ -34,6 +35,9 @@ struct uv_mbed_s {
     uv_tcp_t socket;
     mbedtls_ssl_config ssl_config;
     mbedtls_ssl_context ssl;
+
+    uv_mbed_close_cb close_cb;
+    void *close_cb_p;
 
     struct bio *ssl_in;
     struct bio *ssl_out;

@@ -74,10 +74,11 @@ static void on_close_write(uv_write_t *req, int status) {
     free(req);
 }
 
-int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
+int uv_mbed_close(uv_mbed_t *mbed, uv_mbed_close_cb close_cb, void *p) {
     int rc;
     uv_write_t *wr;
-    mbed->_stream.close_cb = close_cb;
+    mbed->close_cb = close_cb;
+    mbed->close_cb_p = p;
     rc = mbedtls_ssl_close_notify(&mbed->ssl);
 
     wr = (uv_write_t *) calloc(1, sizeof(uv_write_t));
@@ -257,7 +258,7 @@ static void tcp_connect_established_cb(uv_connect_t *req, int status) {
 
 static void on_mbed_close(uv_handle_t *h) {
     uv_mbed_t *mbed = (uv_mbed_t *) h->data;
-    mbed->_stream.close_cb((uv_handle_t *) mbed);
+    mbed->close_cb(mbed, mbed->close_cb_p);
 }
 
 
