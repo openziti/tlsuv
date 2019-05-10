@@ -36,6 +36,9 @@ struct uv_mbed_s {
     mbedtls_ssl_config ssl_config;
     mbedtls_ssl_context ssl;
 
+    uv_alloc_cb alloc_cb;
+    uv_read_cb read_cb;
+
     uv_mbed_close_cb close_cb;
     void *close_cb_p;
 
