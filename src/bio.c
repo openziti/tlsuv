@@ -14,7 +14,7 @@ struct msg {
     STAILQ_ENTRY(msg) next;
 };
 
-struct bio * bio_new() {
+struct bio * bio_new(void) {
     struct bio *bio = (struct bio*) calloc(1, sizeof(*bio));
     bio->available = 0;
     bio->headoffset = 0;

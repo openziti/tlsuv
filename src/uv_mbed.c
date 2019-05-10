@@ -106,7 +106,7 @@ int uv_mbed_set_blocking(uv_mbed_t *um, int blocking) {
     return uv_stream_set_blocking((uv_stream_t *) &um->socket, blocking);
 }
 
-int uv_mbed_read(uv_mbed_t *mbed, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
+int uv_mbed_read(uv_mbed_t *mbed, uv_mbed_alloc_cb alloc_cb, uv_mbed_read_cb read_cb) {
     mbed->alloc_cb = alloc_cb;
     mbed->read_cb = read_cb;
     return 0;
@@ -198,7 +198,7 @@ static void tls_debug_f(void *ctx, int level, const char *file, int line, const 
     fflush(  stdout );
 }
 
-static void alloc_cb(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
+static void uv_tpc_alloc_cb(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
     char *base = (char*) calloc(suggested_size, sizeof(*base));
     *buf = uv_buf_init(base, suggested_size);
 }
@@ -217,7 +217,7 @@ static void dns_resolve_done_cb(uv_getaddrinfo_t* req, int status, struct addrin
     free(req);
 }
 
-static void tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
+static void uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     uv_mbed_t *mbed = (uv_mbed_t *) stream->data;
     assert(stream == (uv_stream_t *) &mbed->socket);
     if (nread > 0) {
@@ -233,8 +233,8 @@ static void tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t
         }
         else if (mbed->alloc_cb != NULL) {
             uv_buf_t b = uv_buf_init(NULL, 0);
-            mbed->alloc_cb((uv_handle_t *) mbed, 1024, &b);
-            mbed->read_cb((uv_stream_t *) mbed, nread, &b);
+            mbed->alloc_cb(mbed, 1024, &b);
+            mbed->read_cb(mbed, nread, &b);
         }
     }
 
@@ -250,7 +250,7 @@ static void tcp_connect_established_cb(uv_connect_t *req, int status) {
         uv_stream_t* socket = req->handle;
         assert(socket == (uv_stream_t*)&mbed->socket);
         socket->data = mbed;
-        uv_read_start(socket, alloc_cb, tcp_read_done_cb);
+        uv_read_start(socket, uv_tpc_alloc_cb, uv_tcp_read_done_cb);
         mbed_ssl_process_in(mbed);
     }
     free(req);
@@ -283,11 +283,11 @@ static void mbed_tcp_write_done_cb(uv_write_t *req, int status) {
 
 static int mbed_ssl_recv(void* ctx, uint8_t *buf, size_t len) {
     uv_mbed_t *mbed = (uv_mbed_t *) ctx;
-    if (bio_available(mbed->ssl_in) == 0) {
+    struct bio *in = mbed->ssl_in;
+    if (bio_available(in) == 0) {
         return MBEDTLS_ERR_SSL_WANT_READ;
     }
-
-    return (int) bio_read(mbed->ssl_in, buf, len);
+    return (int) bio_read(in, buf, len);
 }
 
 static int mbed_ssl_send(void* ctx, const uint8_t *buf, size_t len) {
@@ -306,24 +306,29 @@ static void mbed_hs_write_cb(uv_write_t *hsw, int status) {
 }
 
 static void mbed_ssl_process_in(uv_mbed_t *mbed) {
-    if (mbed->ssl.state != MBEDTLS_SSL_HANDSHAKE_OVER) {
-        mbed_continue_handshake(mbed);
-    }
-    else {
-        if (mbed->read_cb != NULL) {
-            if (bio_available(mbed->ssl_in) > 0) {
-                size_t  recv = 0;
-                uv_buf_t buf = uv_buf_init(NULL, 0);
-                mbed->alloc_cb((uv_handle_t *) mbed, 64 * 1024, &buf);
-                while (bio_available(mbed->ssl_in) > 0 && (buf.len - recv) > 0) {
-                    int read = mbedtls_ssl_read(&mbed->ssl, (uint8_t *) buf.base + recv, buf.len - recv);
-                    if (read < 0) break;
-                    recv += read;
-                }
-                mbed->read_cb((uv_stream_t *) mbed, recv, &buf);
-            }
+    do {
+        struct bio *in = mbed->ssl_in;
+        size_t recv = 0;
+        uv_buf_t buf = uv_buf_init(NULL, 0);
+
+        if (mbed->ssl.state != MBEDTLS_SSL_HANDSHAKE_OVER) {
+            mbed_continue_handshake(mbed);
+            break;
         }
-    }
+        if (mbed->read_cb == NULL) {
+            break;
+        }
+        if (bio_available(in) == 0) {
+            break;
+        }
+        mbed->alloc_cb(mbed, 64 * 1024, &buf);
+        while (bio_available(in) > 0 && (buf.len - recv) > 0) {
+            int read = mbedtls_ssl_read(&mbed->ssl, (uint8_t *) buf.base + recv, buf.len - recv);
+            if (read < 0) break;
+            recv += read;
+        }
+        mbed->read_cb(mbed, recv, &buf);
+    } while(0);
 }
 
 static void mbed_continue_handshake(uv_mbed_t *mbed) {

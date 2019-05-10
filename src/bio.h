@@ -17,7 +17,7 @@ struct bio {
     STAILQ_HEAD(msgq, msg) message_q;
 };
 
-struct bio* bio_new();
+struct bio* bio_new(void);
 void bio_free(struct bio*);
 
 void bio_put(struct bio *, const uint8_t *buf, size_t len);

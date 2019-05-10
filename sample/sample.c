@@ -13,7 +13,7 @@
 
 FILE *fp = NULL;
 
-static void alloc(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
+static void alloc(uv_mbed_t *mbed, size_t suggested_size, uv_buf_t *buf) {
     char *p = (char *) calloc(suggested_size+1, sizeof(char));
     *buf = uv_buf_init(p, suggested_size);
 }
@@ -24,7 +24,7 @@ static void on_close(uv_mbed_t *h, void *p) {
     uv_mbed_free((uv_mbed_t *) h);
 }
 
-void on_data(uv_stream_t *h, ssize_t nread, const uv_buf_t* buf) {
+void on_data(uv_mbed_t *h, ssize_t nread, const uv_buf_t* buf) {
     if (nread > 0) {
         if (fp) {
             fwrite(buf->base, nread, 1, fp);
@@ -34,10 +34,10 @@ void on_data(uv_stream_t *h, ssize_t nread, const uv_buf_t* buf) {
         }
     } else if (nread == UV_EOF) {
         printf("=====================\nconnection closed\n");
-        uv_mbed_close((uv_mbed_t *) h, on_close, NULL);
+        uv_mbed_close(h, on_close, NULL);
     } else {
         fprintf(stderr, "read error %ld: %s\n", nread, uv_strerror((int) nread));
-        uv_mbed_close((uv_mbed_t *) h, on_close, NULL);
+        uv_mbed_close(h, on_close, NULL);
     }
 
     free(buf->base);
