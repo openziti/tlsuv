@@ -222,7 +222,7 @@ static void tcp_read_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
         BIO_put(mbed->ssl_in, buf->base, (size_t) nread);
         mbed_ssl_process_in(mbed);
     }
-
+    
     if (nread < 0) {
         // still connecting
         if (mbed->_stream.connect_req != NULL) {
@@ -313,11 +313,16 @@ static void mbed_ssl_process_in(uv_mbed_t *mbed) {
             if (BIO_available(mbed->ssl_in) > 0) {
                 uv_buf_t buf = uv_buf_init(NULL, 0);
                 mbed->_stream.alloc_cb((uv_handle_t *) mbed, 64 * 1024, &buf);
-                size_t  recv = 0;
-                while (BIO_available(mbed->ssl_in) > 0 && (buf.len - recv) > 0) {
-                    int read = mbedtls_ssl_read(&mbed->ssl, (uint8_t *) buf.base + recv, buf.len - recv);
-                    if (read < 0) break;
-                    recv += read;
+
+                ssize_t recv = 0;
+                if (buf.base == NULL || buf.len == 0) {
+                    recv = UV_ENOBUFS;
+                } else {
+                    while (BIO_available(mbed->ssl_in) > 0 && (buf.len - recv) > 0) {
+                        int read = mbedtls_ssl_read(&mbed->ssl, (uint8_t *) buf.base + recv, buf.len - recv);
+                        if (read < 0) break;
+                        recv += read;
+                    }
                 }
                 mbed->_stream.read_cb((uv_stream_t *) mbed, recv, &buf);
             }
