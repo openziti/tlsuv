@@ -234,12 +234,13 @@ static void uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_bu
 
 static void tcp_connect_established_cb(uv_connect_t *req, int status) {
     uv_mbed_t *mbed = (uv_mbed_t *) req->data;
+    // uv_mbed_t *mbed = container_of((uv_tcp_t*)req->handle, uv_mbed_t, socket);
     if (status < 0) {
         _do_uv_mbeb_connect_cb(mbed, status);
     }
     else {
-        uv_stream_t* socket = req->handle;
-        assert(socket == (uv_stream_t*)&mbed->socket);
+        //uv_stream_t* socket = req->handle;
+        uv_stream_t *socket = (uv_stream_t*)&mbed->socket;
         socket->data = mbed;
         uv_read_start(socket, uv_tpc_alloc_cb, uv_tcp_read_done_cb);
         mbed_ssl_process_in(mbed);
@@ -251,7 +252,6 @@ static void on_mbed_close(uv_handle_t *h) {
     uv_mbed_t *mbed = (uv_mbed_t *) h->data;
     mbed->close_cb(mbed, mbed->close_cb_p);
 }
-
 
 static void tcp_shutdown_cb(uv_shutdown_t* req, int status) {
     uv_mbed_t *mbed = (uv_mbed_t *) req->data;
