@@ -52,8 +52,7 @@ void write_cb(uv_write_t *wr, int status) {
     free(wr);
 }
 
-void on_connect(uv_connect_t *cr, int status) {
-    uv_mbed_t *mbed;
+void on_connect(uv_mbed_t* mbed, int status, void *p) {
     uv_write_t *wr;
     struct cmd_line_info *cmd;
     char req[] = "GET %s HTTP/1.1\r\n"
@@ -66,11 +65,10 @@ void on_connect(uv_connect_t *cr, int status) {
     uv_buf_t buf;
     if (status < 0) {
         fprintf(stderr, "connect failed: %d: %s\n", status, uv_strerror(status));
-        uv_mbed_close((uv_mbed_t *) cr->handle, on_close, NULL);
+        uv_mbed_close(mbed, on_close, p);
         return;
     }
 
-    mbed = (uv_mbed_t *) cr->handle;
     cmd = (struct cmd_line_info *)mbed->user_data;
     uv_mbed_read(mbed, alloc, on_data);
 
@@ -85,7 +83,6 @@ void on_connect(uv_connect_t *cr, int status) {
 int main(int argc, char * const argv[]) {
     uv_loop_t *l = uv_default_loop();
     uv_mbed_t mbed;
-    uv_connect_t cr;
     struct cmd_line_info *cmd;
 
     cmd = cmd_line_info_create(argc, argv);
@@ -110,7 +107,7 @@ int main(int argc, char * const argv[]) {
         // mbedtls_x509_crt_parse(ca_chain, ca, sizeof(ca));
     }
 
-    uv_mbed_connect(&cr, &mbed, cmd->server_addr, atoi(cmd->server_port), on_connect);
+    uv_mbed_connect(&mbed, cmd->server_addr, atoi(cmd->server_port), on_connect, NULL);
 
     uv_run(l, UV_RUN_DEFAULT);
 

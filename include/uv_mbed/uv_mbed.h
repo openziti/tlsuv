@@ -17,7 +17,8 @@ int uv_mbed_init(uv_loop_t *loop, uv_mbed_t *mbed, int dump_level);
 int uv_mbed_set_ca(uv_mbed_t *mbed, mbedtls_x509_crt* ca);
 int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context *privkey);
 
-int uv_mbed_connect(uv_connect_t *req, uv_mbed_t* mbed, const char *host, int port, uv_connect_cb cb);
+typedef void (*uv_mbed_connect_cb)(uv_mbed_t* mbed, int status, void *p);
+int uv_mbed_connect(uv_mbed_t* mbed, const char *host, int port, uv_mbed_connect_cb cb, void *p);
 int uv_mbed_set_blocking(uv_mbed_t* mbed, int blocking);
 
 typedef void (*uv_mbed_alloc_cb)(uv_mbed_t *mbed, size_t suggested_size, uv_buf_t* buf);
@@ -33,10 +34,12 @@ int uv_mbed_free(uv_mbed_t* session);
 struct uv_mbed_s {
     uv_stream_t _stream;
     void *user_data;
-    uv_connect_t *connect_req;
     uv_tcp_t socket;
     mbedtls_ssl_config ssl_config;
     mbedtls_ssl_context ssl;
+
+    uv_mbed_connect_cb connect_cb;
+    void *connect_cb_p;
 
     uv_mbed_alloc_cb alloc_cb;
     uv_mbed_read_cb read_cb;

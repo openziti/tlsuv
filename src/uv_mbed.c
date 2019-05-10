@@ -16,7 +16,6 @@ static void tls_debug_f(void *ctx, int level, const char *file, int line, const 
 static void init_ssl(uv_mbed_t *mbed, int dump_level);
 static void dns_resolve_done_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res);
 
-static int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t* mbed, const struct addrinfo *addr, uv_connect_cb cb);
 static void tcp_connect_established_cb(uv_connect_t* req, int status);
 static void tcp_shutdown_cb(uv_shutdown_t* req, int status) ;
 
@@ -49,22 +48,6 @@ int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context
     return 0;
 }
 
-static int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t* mbed, const struct addrinfo *addr, uv_connect_cb cb) {
-    uv_connect_t *tcp_cr;
-    uv_stream_t *stream = &mbed->_stream;
-
-    if (mbed->connect_req != NULL && mbed->connect_req != req) {
-        return UV_EALREADY;
-    }
-    req->handle = stream;
-    req->cb = cb;
-    mbed->connect_req = req;
-
-    tcp_cr = (uv_connect_t *) calloc(1, sizeof(uv_connect_t));
-    tcp_cr->data = mbed;
-    return uv_tcp_connect(tcp_cr, &mbed->socket, addr->ai_addr, tcp_connect_established_cb);
-}
-
 static void on_close_write(uv_write_t *req, int status) {
     uv_mbed_t *mbed = container_of(req->handle, uv_mbed_t, _stream);
 
@@ -88,14 +71,13 @@ int uv_mbed_close(uv_mbed_t *mbed, uv_mbed_close_cb close_cb, void *p) {
     return 0;
 }
 
-int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int port, uv_connect_cb cb) {
+int uv_mbed_connect(uv_mbed_t *mbed, const char *host, int port, uv_mbed_connect_cb cb, void *p) {
     char portstr[6] = { 0 };
     uv_loop_t *loop = mbed->socket.loop;
     uv_getaddrinfo_t *resolve_req = (uv_getaddrinfo_t *)calloc(1, sizeof(uv_getaddrinfo_t));
-    req->handle = (uv_stream_t *) mbed;
-    req->cb = cb;
 
-    mbed->connect_req = req;
+    mbed->connect_cb = cb;
+    mbed->connect_cb_p = p;
 
     resolve_req->data = mbed;
     sprintf(portstr, "%d", port);
@@ -203,15 +185,24 @@ static void uv_tpc_alloc_cb(uv_handle_t *handle, size_t suggested_size, uv_buf_t
     *buf = uv_buf_init(base, suggested_size);
 }
 
+static void _do_uv_mbeb_connect_cb(uv_mbed_t *mbed, int status) {
+    if (mbed && mbed->connect_cb) {
+        mbed->connect_cb(mbed, status, mbed->connect_cb_p);
+        mbed->connect_cb = NULL;
+        mbed->connect_cb_p = NULL;
+    }
+}
+
 static void dns_resolve_done_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res) {
     uv_mbed_t *mbed = (uv_mbed_t *) req->data;
 
-    uv_connect_t *cr = mbed->connect_req;
     if (status < 0) {
-        cr->cb(cr, status);
+        _do_uv_mbeb_connect_cb(mbed, status);
     }
     else {
-        uv_mbed_connect_addr(cr, mbed, res, cr->cb);
+        uv_connect_t *tcp_cr = (uv_connect_t *) calloc(1, sizeof(uv_connect_t));
+        tcp_cr->data = mbed;
+        uv_tcp_connect(tcp_cr, &mbed->socket, res->ai_addr, tcp_connect_established_cb);
     }
     uv_freeaddrinfo(res);
     free(req);
@@ -227,9 +218,9 @@ static void uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_bu
 
     if (nread < 0) {
         // still connecting
-        if (mbed->connect_req != NULL) {
-            mbed->connect_req->cb(mbed->connect_req, nread);
-            mbed->connect_req = NULL;
+        if (mbed->connect_cb != NULL) {
+            _do_uv_mbeb_connect_cb(mbed, nread);
+            assert(mbed->connect_cb == NULL);
         }
         else if (mbed->alloc_cb != NULL) {
             uv_buf_t b = uv_buf_init(NULL, 0);
@@ -244,7 +235,7 @@ static void uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_bu
 static void tcp_connect_established_cb(uv_connect_t *req, int status) {
     uv_mbed_t *mbed = (uv_mbed_t *) req->data;
     if (status < 0) {
-        mbed->connect_req->cb(mbed->connect_req, status);
+        _do_uv_mbeb_connect_cb(mbed, status);
     }
     else {
         uv_stream_t* socket = req->handle;
@@ -333,15 +324,21 @@ static void mbed_ssl_process_in(uv_mbed_t *mbed) {
 
 static void mbed_continue_handshake(uv_mbed_t *mbed) {
     int rc = mbedtls_ssl_handshake(&mbed->ssl);
-    if (rc == 0) {
-        mbed->connect_req->cb(mbed->connect_req, 0);
-        mbed->connect_req = NULL;
-    }
-    else if (rc == MBEDTLS_ERR_SSL_WANT_WRITE || rc == MBEDTLS_ERR_SSL_WANT_READ) {
-        uv_write_t *hsw = (uv_write_t *) calloc(1, sizeof(uv_write_t));
-        hsw->cb = mbed_hs_write_cb;
-        hsw->handle = (uv_stream_t *) mbed;
-        mbed_ssl_process_out(mbed, hsw);
+    switch (rc) {
+    case 0:
+        _do_uv_mbeb_connect_cb(mbed, rc);
+        break;
+    case MBEDTLS_ERR_SSL_WANT_WRITE:
+    case MBEDTLS_ERR_SSL_WANT_READ:
+        {
+            uv_write_t *hsw = (uv_write_t *) calloc(1, sizeof(uv_write_t));
+            hsw->cb = mbed_hs_write_cb;
+            hsw->handle = (uv_stream_t *) mbed;
+            mbed_ssl_process_out(mbed, hsw);
+        }
+        break;
+    default:
+        (void)mbed;
     }
 }
 
