@@ -215,7 +215,7 @@ static void uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_bu
         bio_put(mbed->ssl_in, (uint8_t *)buf->base, (size_t) nread);
         mbed_ssl_process_in(mbed);
     }
-
+    
     if (nread < 0) {
         // still connecting
         if (mbed->connect_cb != NULL) {
