@@ -12,6 +12,30 @@
 #include "uv_mbed/uv_mbed.h"
 #include "bio.h"
 
+struct uv_mbed_s {
+    uv_tcp_t socket;
+    void *user_data;
+    mbedtls_ssl_config ssl_config;
+    mbedtls_ssl_context ssl;
+
+    uv_mbed_connect_cb connect_cb;
+    void *connect_cb_p;
+
+    uv_mbed_alloc_cb alloc_cb;
+    uv_mbed_read_cb read_cb;
+
+    uv_mbed_close_cb close_cb;
+    void *close_cb_p;
+
+    struct bio *ssl_in;
+    struct bio *ssl_out;
+};
+
+#ifndef container_of
+#define container_of(ptr, type, member) \
+    ((type *) ((char *) (ptr) - offsetof(type, member)))
+#endif /* container_of */
+
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
 static void init_ssl(uv_mbed_t *mbed, int dump_level);
 static void _uv_dns_resolve_done_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res);
@@ -33,10 +57,16 @@ static int mbed_ssl_send(void* ctx, const uint8_t *buf, size_t len);
 
 static void mbed_continue_handshake(uv_mbed_t *mbed);
 
-int uv_mbed_init(uv_loop_t *loop, uv_mbed_t *mbed, int dump_level) {
+uv_mbed_t * uv_mbed_init(uv_loop_t *loop, void *user_data, int dump_level) {
+    uv_mbed_t *mbed = (uv_mbed_t *) calloc(1, sizeof(*mbed));
+    mbed->user_data = user_data;
     uv_tcp_init(loop, &mbed->socket);
     init_ssl(mbed, dump_level);
-    return 0;
+    return mbed;
+}
+
+void * uv_mbed_user_data(uv_mbed_t *mbed) {
+    return mbed->user_data;
 }
 
 int uv_mbed_set_ca(uv_mbed_t *mbed, mbedtls_x509_crt* ca) {
@@ -68,14 +98,14 @@ int uv_mbed_close(uv_mbed_t *mbed, uv_mbed_close_cb close_cb, void *p) {
 int uv_mbed_connect(uv_mbed_t *mbed, const char *host, int port, uv_mbed_connect_cb cb, void *p) {
     char portstr[6] = { 0 };
     uv_loop_t *loop = mbed->socket.loop;
-    uv_getaddrinfo_t *resolve_req = (uv_getaddrinfo_t *)calloc(1, sizeof(uv_getaddrinfo_t));
+    uv_getaddrinfo_t *req = (uv_getaddrinfo_t *)calloc(1, sizeof(*req));
 
     mbed->connect_cb = cb;
     mbed->connect_cb_p = p;
 
-    resolve_req->data = mbed;
+    req->data = mbed;
     sprintf(portstr, "%d", port);
-    return uv_getaddrinfo(loop, resolve_req, _uv_dns_resolve_done_cb, host, portstr, NULL);
+    return uv_getaddrinfo(loop, req, _uv_dns_resolve_done_cb, host, portstr, NULL);
 }
 
 int uv_mbed_set_blocking(uv_mbed_t *um, int blocking) {
@@ -161,6 +191,8 @@ int uv_mbed_free(uv_mbed_t *mbed) {
     free(rng);
 
     mbedtls_ssl_config_free(&mbed->ssl_config);
+
+    free(mbed);
     return 0;
 }
 

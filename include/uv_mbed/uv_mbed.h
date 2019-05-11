@@ -9,11 +9,15 @@
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct uv_mbed_s;
 typedef struct uv_mbed_s uv_mbed_t;
-struct bio;
 
-int uv_mbed_init(uv_loop_t *loop, uv_mbed_t *mbed, int dump_level);
+uv_mbed_t * uv_mbed_init(uv_loop_t *loop, void *user_data, int dump_level);
+void * uv_mbed_user_data(uv_mbed_t *mbed);
 int uv_mbed_set_ca(uv_mbed_t *mbed, mbedtls_x509_crt* ca);
 int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context *privkey);
 
@@ -32,29 +36,8 @@ typedef void (*uv_mbed_close_cb)(uv_mbed_t *mbed, void *p);
 int uv_mbed_close(uv_mbed_t* session, uv_mbed_close_cb close_cb, void *p);
 int uv_mbed_free(uv_mbed_t* session);
 
-struct uv_mbed_s {
-    uv_tcp_t socket;
-    void *user_data;
-    mbedtls_ssl_config ssl_config;
-    mbedtls_ssl_context ssl;
-
-    uv_mbed_connect_cb connect_cb;
-    void *connect_cb_p;
-
-    uv_mbed_alloc_cb alloc_cb;
-    uv_mbed_read_cb read_cb;
-
-    uv_mbed_close_cb close_cb;
-    void *close_cb_p;
-
-    struct bio *ssl_in;
-    struct bio *ssl_out;
-};
-
-#ifndef container_of
-#define container_of(ptr, type, member) \
-    ((type *) ((char *) (ptr) - offsetof(type, member)))
-#endif /* container_of */
-
+#ifdef __cplusplus
+}
+#endif
 
 #endif //UV_MBED_H

@@ -67,7 +67,7 @@ void on_connect(uv_mbed_t* mbed, int status, void *p) {
         return;
     }
 
-    cmd = (struct cmd_line_info *)mbed->user_data;
+    cmd = (struct cmd_line_info *) uv_mbed_user_data(mbed);
     uv_mbed_read(mbed, alloc, on_data);
 
     sprintf(out_buf, req, cmd->request_path, cmd->server_addr);
@@ -78,7 +78,7 @@ void on_connect(uv_mbed_t* mbed, int status, void *p) {
 
 int main(int argc, char * const argv[]) {
     uv_loop_t *l = uv_default_loop();
-    uv_mbed_t mbed;
+    uv_mbed_t *mbed;
     struct cmd_line_info *cmd;
 
     cmd = cmd_line_info_create(argc, argv);
@@ -92,18 +92,17 @@ int main(int argc, char * const argv[]) {
         fp = fopen(cmd->out_put_file, "wb+");
     }
 
-    uv_mbed_init(l, &mbed, cmd->dump_level);
-    mbed.user_data = cmd;
+    mbed = uv_mbed_init(l, cmd, cmd->dump_level);
 
     if (cmd->root_cert_file && strlen(cmd->root_cert_file)) {
         mbedtls_x509_crt *ca_chain;
         ca_chain = (mbedtls_x509_crt *) calloc(1, sizeof(mbedtls_x509_crt));
         mbedtls_x509_crt_parse_file(ca_chain, cmd->root_cert_file);
-        uv_mbed_set_ca(&mbed, ca_chain);
+        uv_mbed_set_ca(mbed, ca_chain);
         // mbedtls_x509_crt_parse(ca_chain, ca, sizeof(ca));
     }
 
-    uv_mbed_connect(&mbed, cmd->server_addr, atoi(cmd->server_port), on_connect, NULL);
+    uv_mbed_connect(mbed, cmd->server_addr, atoi(cmd->server_port), on_connect, NULL);
 
     uv_run(l, UV_RUN_DEFAULT);
 
