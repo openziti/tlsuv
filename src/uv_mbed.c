@@ -208,14 +208,14 @@ static void dns_resolve_done_cb(uv_getaddrinfo_t* req, int status, struct addrin
     free(req);
 }
 
-static void uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
+static void _uv_mbed_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     uv_mbed_t *mbed = (uv_mbed_t *) stream->data;
     assert(stream == (uv_stream_t *) &mbed->socket);
     if (nread > 0) {
         bio_put(mbed->ssl_in, (uint8_t *)buf->base, (size_t) nread);
         mbed_ssl_process_in(mbed);
     }
-    
+
     if (nread < 0) {
         // still connecting
         if (mbed->connect_cb != NULL) {
@@ -242,7 +242,7 @@ static void tcp_connect_established_cb(uv_connect_t *req, int status) {
         //uv_stream_t* socket = req->handle;
         uv_stream_t *socket = (uv_stream_t*)&mbed->socket;
         socket->data = mbed;
-        uv_read_start(socket, uv_tpc_alloc_cb, uv_tcp_read_done_cb);
+        uv_read_start(socket, uv_tpc_alloc_cb, _uv_mbed_tcp_read_done_cb);
         mbed_ssl_process_in(mbed);
     }
     free(req);
