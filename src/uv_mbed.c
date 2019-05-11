@@ -344,11 +344,13 @@ static void mbed_ssl_process_in(uv_mbed_t *mbed) {
         if (buf.base == NULL || buf.len == 0) {
             recv = UV_ENOBUFS;
         } else {
-        while (bio_available(in) > 0 && (buf.len - recv) > 0) {
-            int read = mbedtls_ssl_read(&mbed->ssl, (uint8_t *) buf.base + recv, buf.len - recv);
-            if (read < 0) break;
-            recv += read;
-        }
+            while (bio_available(in) > 0 && (buf.len - recv) > 0) {
+                int read = mbedtls_ssl_read(&mbed->ssl, (uint8_t *) buf.base + recv, buf.len - recv);
+                if (read < 0) {
+                    break;
+                }
+                recv += read;
+            }
         }
         mbed->read_cb(mbed, (ssize_t)recv, &buf, mbed->read_cb_p);
     } while(0);

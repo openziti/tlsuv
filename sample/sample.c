@@ -33,8 +33,8 @@ void on_data(uv_mbed_t *h, ssize_t nread, uv_buf_t* buf, void *p) {
         if (ctx->fp) {
             fwrite(buf->base, nread, 1, ctx->fp);
         } else {
-        printf("%*.*s", (int) nread, (int) nread, buf->base);
-        fflush(stdout);
+            printf("%*.*s", (int) nread, (int) nread, buf->base);
+            fflush(stdout);
         }
     } else if (nread == UV_EOF) {
         printf("=====================\nconnection closed\n");
