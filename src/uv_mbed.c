@@ -17,7 +17,7 @@ static void init_ssl(uv_mbed_t *mbed, int dump_level);
 static void dns_resolve_done_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res);
 
 static void tcp_connect_established_cb(uv_connect_t* req, int status);
-static void tcp_shutdown_cb(uv_shutdown_t* req, int status) ;
+static void _uv_mbed_tcp_shutdown_cb(uv_shutdown_t* req, int status) ;
 
 static void mbed_ssl_process_in(uv_mbed_t *mbed);
 
@@ -53,7 +53,7 @@ static void on_close_write(uv_write_t *req, int status) {
 
     uv_shutdown_t *sr = (uv_shutdown_t *)calloc(1, sizeof(uv_shutdown_t));
     sr->data = mbed;
-    uv_shutdown(sr, (uv_stream_t *) &mbed->socket, tcp_shutdown_cb);
+    uv_shutdown(sr, (uv_stream_t *) &mbed->socket, _uv_mbed_tcp_shutdown_cb);
     free(req);
 }
 
@@ -248,15 +248,15 @@ static void tcp_connect_established_cb(uv_connect_t *req, int status) {
     free(req);
 }
 
-static void on_mbed_close(uv_handle_t *h) {
+static void _uv_mbed_tcp_close(uv_handle_t *h) {
     uv_mbed_t *mbed = (uv_mbed_t *) h->data;
     mbed->close_cb(mbed, mbed->close_cb_p);
 }
 
-static void tcp_shutdown_cb(uv_shutdown_t* req, int status) {
+static void _uv_mbed_tcp_shutdown_cb(uv_shutdown_t* req, int status) {
     uv_mbed_t *mbed = (uv_mbed_t *) req->data;
-
-    uv_close((uv_handle_t *) &mbed->socket, on_mbed_close);
+    assert(req->handle == (uv_stream_t *)&mbed->socket);
+    uv_close((uv_handle_t *) &mbed->socket, _uv_mbed_tcp_close);
     free(req);
 }
 
