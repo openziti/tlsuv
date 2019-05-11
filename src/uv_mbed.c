@@ -23,6 +23,7 @@ struct uv_mbed_s {
 
     uv_mbed_alloc_cb alloc_cb;
     uv_mbed_read_cb read_cb;
+    void *read_cb_p;
 
     uv_mbed_close_cb close_cb;
     void *close_cb_p;
@@ -112,13 +113,14 @@ int uv_mbed_set_blocking(uv_mbed_t *um, int blocking) {
     return uv_stream_set_blocking((uv_stream_t *) &um->socket, blocking);
 }
 
-int uv_mbed_read(uv_mbed_t *mbed, uv_mbed_alloc_cb alloc_cb, uv_mbed_read_cb read_cb) {
+int uv_mbed_read(uv_mbed_t *mbed, uv_mbed_alloc_cb alloc_cb, uv_mbed_read_cb read_cb, void *p) {
     mbed->alloc_cb = alloc_cb;
     mbed->read_cb = read_cb;
+    mbed->read_cb_p = p;
     return 0;
 }
 
-int uv_mbed_write(uv_mbed_t *mbed, uv_buf_t *buf, uv_mbed_write_cb cb, void *p) {
+int uv_mbed_write(uv_mbed_t *mbed, const uv_buf_t *buf, uv_mbed_write_cb cb, void *p) {
     int rc = 0;
     int sent = 0;
 
@@ -247,12 +249,14 @@ static void _uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_b
         }
         else if (mbed->alloc_cb != NULL) {
             uv_buf_t b = uv_buf_init(NULL, 0);
-            mbed->alloc_cb(mbed, 1024, &b);
-            mbed->read_cb(mbed, nread, &b);
+            mbed->alloc_cb(mbed, 1024, &b, mbed->read_cb_p);
+            mbed->read_cb(mbed, nread, &b, mbed->read_cb_p);
         }
     }
 
-    free(buf->base);
+    if (buf && buf->base) {
+        free(buf->base);
+    }
 }
 
 static void _uv_tcp_connect_established_cb(uv_connect_t *req, int status) {
@@ -272,7 +276,7 @@ static void _uv_tcp_connect_established_cb(uv_connect_t *req, int status) {
 }
 
 static void _uv_tcp_close_done_cb (uv_handle_t *h) {
-    uv_mbed_t *mbed = (uv_mbed_t *) h->data;
+    uv_mbed_t *mbed = container_of((uv_tcp_t*)h, uv_mbed_t, socket);
     mbed->close_cb(mbed, mbed->close_cb_p);
 }
 
@@ -336,7 +340,7 @@ static void mbed_ssl_process_in(uv_mbed_t *mbed) {
         if (bio_available(in) == 0) {
             break;
         }
-        mbed->alloc_cb(mbed, 64 * 1024, &buf);
+        mbed->alloc_cb(mbed, 64 * 1024, &buf, mbed->read_cb_p);
         if (buf.base == NULL || buf.len == 0) {
             recv = UV_ENOBUFS;
         } else {
@@ -346,7 +350,7 @@ static void mbed_ssl_process_in(uv_mbed_t *mbed) {
             recv += read;
         }
         }
-        mbed->read_cb(mbed, (ssize_t)recv, &buf);
+        mbed->read_cb(mbed, (ssize_t)recv, &buf, mbed->read_cb_p);
     } while(0);
 }
 
