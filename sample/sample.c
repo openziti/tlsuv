@@ -43,17 +43,15 @@ void on_data(uv_mbed_t *h, ssize_t nread, const uv_buf_t* buf) {
     free(buf->base);
 }
 
-void write_cb(uv_write_t *wr, int status) {
+void write_cb(uv_mbed_t *mbed, int status, void *p) {
     if (status < 0) {
         fprintf(stderr, "write failed: %d: %s\n", status, uv_strerror(status));
-        uv_mbed_close((uv_mbed_t *) wr->handle, on_close, NULL);
+        uv_mbed_close(mbed, on_close, p);
     }
     printf("request sent %d\n", status);
-    free(wr);
 }
 
 void on_connect(uv_mbed_t* mbed, int status, void *p) {
-    uv_write_t *wr;
     struct cmd_line_info *cmd;
     char req[] = "GET %s HTTP/1.1\r\n"
                  "Accept: */*\r\n"
@@ -72,12 +70,10 @@ void on_connect(uv_mbed_t* mbed, int status, void *p) {
     cmd = (struct cmd_line_info *)mbed->user_data;
     uv_mbed_read(mbed, alloc, on_data);
 
-    wr = (uv_write_t *) calloc(1, sizeof(uv_write_t));
-
     sprintf(out_buf, req, cmd->request_path, cmd->server_addr);
 
     buf = uv_buf_init(out_buf, (unsigned int) strlen(out_buf) + 1);
-    uv_mbed_write(wr, mbed, &buf, write_cb);
+    uv_mbed_write(mbed, &buf, write_cb, NULL);
 }
 
 int main(int argc, char * const argv[]) {

@@ -25,16 +25,16 @@ typedef void (*uv_mbed_alloc_cb)(uv_mbed_t *mbed, size_t suggested_size, uv_buf_
 typedef void (*uv_mbed_read_cb)(uv_mbed_t *mbed, ssize_t nread, const uv_buf_t* buf);
 int uv_mbed_read(uv_mbed_t* client, uv_mbed_alloc_cb, uv_mbed_read_cb);
 
-int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb cb);
+typedef void (*uv_mbed_write_cb)(uv_mbed_t *mbed, int status, void *p);
+int uv_mbed_write(uv_mbed_t *mbed, uv_buf_t *buf, uv_mbed_write_cb cb, void *p);
 
 typedef void (*uv_mbed_close_cb)(uv_mbed_t *mbed, void *p);
 int uv_mbed_close(uv_mbed_t* session, uv_mbed_close_cb close_cb, void *p);
 int uv_mbed_free(uv_mbed_t* session);
 
 struct uv_mbed_s {
-    uv_stream_t _stream;
-    void *user_data;
     uv_tcp_t socket;
+    void *user_data;
     mbedtls_ssl_config ssl_config;
     mbedtls_ssl_context ssl;
 
