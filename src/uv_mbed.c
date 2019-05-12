@@ -89,6 +89,13 @@ int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
     return 0;
 }
 
+int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, uint delay) {
+    return uv_tcp_keepalive(&mbed->socket, keepalive, delay);
+}
+
+int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay) {
+    return uv_tcp_nodelay(&mbed->socket, nodelay);
+}
 
 int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int port, uv_connect_cb cb) {
     uv_loop_t *loop = mbed->_stream.loop;
@@ -222,7 +229,7 @@ static void tcp_read_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
         BIO_put(mbed->ssl_in, buf->base, (size_t) nread);
         mbed_ssl_process_in(mbed);
     }
-    
+
     if (nread < 0) {
         // still connecting
         if (mbed->_stream.connect_req != NULL) {
