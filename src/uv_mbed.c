@@ -7,6 +7,7 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/debug.h>
 #include <mbedtls/entropy.h>
+#include <assert.h>
 #include "uv_mbed/uv_mbed.h"
 #include "bio.h"
 
@@ -176,8 +177,8 @@ static void init_ssl(uv_mbed_t *mbed) {
     mbedtls_ssl_init(&mbed->ssl);
     mbedtls_ssl_setup(&mbed->ssl, &mbed->ssl_config);
 
-    mbed->ssl_in = BIO_new();
-    mbed->ssl_out = BIO_new();
+    mbed->ssl_in = BIO_new(1);
+    mbed->ssl_out = BIO_new(0);
     mbedtls_ssl_set_bio(&mbed->ssl, mbed, mbed_ssl_send, mbed_ssl_recv, NULL);
 
     free(seed);
@@ -195,6 +196,7 @@ int uv_mbed_free(uv_mbed_t *mbed) {
     free(rng);
 
     mbedtls_ssl_config_free(&mbed->ssl_config);
+    return 0;
 }
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str)
@@ -226,7 +228,17 @@ static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* r
 static void tcp_read_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     uv_mbed_t *mbed = stream->data;
     if (nread > 0) {
-        BIO_put(mbed->ssl_in, buf->base, (size_t) nread);
+        int rc = BIO_put(mbed->ssl_in, buf->base, (size_t) nread);
+        if (rc < 0) {
+            // this should not happen since ssl_in is zerocopy BIO
+            // see if that frees up memory
+            mbed_ssl_process_in(mbed);
+            rc = BIO_put(mbed->ssl_in, buf->base, (size_t) nread);
+
+            if (rc < 0) {
+                fprintf(stderr, "UVMBED: failed to put incoming data into bio for SSL processing, MBED will probably fail\n");
+            }
+        }
         mbed_ssl_process_in(mbed);
     }
 
@@ -242,8 +254,6 @@ static void tcp_read_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
             mbed->_stream.read_cb((uv_stream_t *) mbed, nread, &b);
         }
     }
-
-    free(buf->base);
 }
 
 static void tcp_connect_cb(uv_connect_t *req, int status) {
