@@ -14,10 +14,13 @@ struct msg {
     STAILQ_ENTRY(msg) next;
 };
 
-struct bio * bio_new(void) {
+struct bio * bio_new(int zerocopy) {
     struct bio *bio = (struct bio*) calloc(1, sizeof(*bio));
     bio->available = 0;
     bio->headoffset = 0;
+    bio->qlen = 0;
+    bio->zerocopy = zerocopy;
+
     STAILQ_INIT(&bio->message_q);
     return bio;
 }
@@ -36,14 +39,30 @@ size_t bio_available(struct bio *bio) {
     return bio->available;
 }
 
-void bio_put(struct bio *bio, const uint8_t *buf, size_t len) {
+int bio_put(struct bio *bio, const uint8_t *buf, size_t len) {
     struct msg *m = (struct msg *) calloc(1, sizeof(struct msg));
-    m->buf = (uint8_t *) calloc(len, sizeof(uint8_t));
+    if (m == NULL) {
+        return -1;
+    }
+
+    if (bio->zerocopy) {
+        m->buf = buf;
+    } else {
+        m->buf = (uint8_t *) calloc(len, sizeof(uint8_t));
+        if (m->buf == NULL) {
+            free(m);
+            return -1;
+        }
+        memcpy(m->buf, buf, len);
+    }
+
     m->len = len;
-    memcpy(m->buf, buf, len);
-    bio->available += len;
 
     STAILQ_INSERT_TAIL(&bio->message_q, m, next);
+    bio->available += len;
+    bio->qlen += 1;
+
+    return len;
 }
 
 size_t bio_read(struct bio *bio, uint8_t *buf, size_t len) {
@@ -66,6 +85,7 @@ size_t bio_read(struct bio *bio, uint8_t *buf, size_t len) {
         if (bio->headoffset == m->len) {
             STAILQ_REMOVE_HEAD(&bio->message_q, next);
             bio->headoffset = 0;
+            bio->qlen -= 1;
 
             free(m->buf);
             free(m);
