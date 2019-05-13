@@ -96,6 +96,14 @@ int uv_mbed_close(uv_mbed_t *mbed, uv_mbed_close_cb close_cb, void *p) {
     return 0;
 }
 
+int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, uint delay) {
+    return uv_tcp_keepalive(&mbed->socket, keepalive, delay);
+}
+
+int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay) {
+    return uv_tcp_nodelay(&mbed->socket, nodelay);
+}
+
 int uv_mbed_connect(uv_mbed_t *mbed, const char *host, int port, uv_mbed_connect_cb cb, void *p) {
     char portstr[6] = { 0 };
     uv_loop_t *loop = mbed->socket.loop;

@@ -20,6 +20,8 @@ uv_mbed_t * uv_mbed_init(uv_loop_t *loop, void *user_data, int dump_level);
 void * uv_mbed_user_data(uv_mbed_t *mbed);
 int uv_mbed_set_ca(uv_mbed_t *mbed, mbedtls_x509_crt* ca);
 int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context *privkey);
+int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, uint delay);
+int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay);
 
 typedef void (*uv_mbed_connect_cb)(uv_mbed_t* mbed, int status, void *p);
 int uv_mbed_connect(uv_mbed_t* mbed, const char *host, int port, uv_mbed_connect_cb cb, void *p);
