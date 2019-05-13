@@ -96,7 +96,7 @@ int uv_mbed_close(uv_mbed_t *mbed, uv_mbed_close_cb close_cb, void *p) {
     return 0;
 }
 
-int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, uint delay) {
+int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, unsigned int delay) {
     return uv_tcp_keepalive(&mbed->socket, keepalive, delay);
 }
 
