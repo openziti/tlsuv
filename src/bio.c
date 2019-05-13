@@ -46,7 +46,7 @@ int bio_put(struct bio *bio, const uint8_t *buf, size_t len) {
     }
 
     if (bio->zerocopy) {
-        m->buf = buf;
+        m->buf = (uint8_t *) buf;
     } else {
         m->buf = (uint8_t *) calloc(len, sizeof(uint8_t));
         if (m->buf == NULL) {
