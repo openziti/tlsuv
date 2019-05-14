@@ -14,7 +14,7 @@ struct msg;
 struct bio {
     size_t available;
     size_t headoffset;
-    uint qlen;
+    int qlen;
     int zerocopy;
     STAILQ_HEAD(msgq, msg) message_q;
 };
