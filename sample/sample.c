@@ -39,7 +39,7 @@ void on_data(uv_mbed_t *h, ssize_t nread, uv_buf_t* buf, void *p) {
     } else if (nread == UV_EOF) {
         printf("=====================\nconnection closed\n");
         uv_mbed_close(h, on_close, p);
-    } else {
+    } else if (nread != 0) {
         fprintf(stderr, "read error %ld: %s\n", nread, uv_strerror((int) nread));
         uv_mbed_close(h, on_close, p);
     }
