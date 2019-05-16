@@ -10,6 +10,7 @@
 #include <mbedtls/debug.h>
 #include <mbedtls/entropy.h>
 #include <assert.h>
+#include <stdbool.h>
 #include "uv_mbed/uv_mbed.h"
 #include "bio.h"
 
@@ -252,6 +253,7 @@ static void _uv_dns_resolve_done_cb(uv_getaddrinfo_t* req, int status, struct ad
 
 static void _uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     uv_mbed_t *mbed = (uv_mbed_t *) stream->data;
+    bool release_buf = true;
     assert(stream == (uv_stream_t *) &mbed->socket);
     if (nread > 0) {
         int rc = bio_put(mbed->ssl_in, (uint8_t *)buf->base, (size_t) nread);
@@ -266,6 +268,13 @@ static void _uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_b
             }
         }
         mbed_ssl_process_in(mbed);
+        if (mbed->ssl_in->zerocopy && rc >= 0) {
+            release_buf = false;
+        }
+    }
+
+    if (release_buf) {
+        free((void *)buf->base);
     }
 
     if (nread < 0) {
