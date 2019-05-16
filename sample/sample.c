@@ -113,11 +113,7 @@ int main(int argc, char * const argv[]) {
     mbed = uv_mbed_init(l, NULL, cmd->dump_level);
 
     if (cmd->root_cert_file && strlen(cmd->root_cert_file)) {
-        mbedtls_x509_crt *ca_chain;
-        ca_chain = (mbedtls_x509_crt *) calloc(1, sizeof(mbedtls_x509_crt));
-        mbedtls_x509_crt_parse_file(ca_chain, cmd->root_cert_file);
-        uv_mbed_set_ca(mbed, ca_chain);
-        // mbedtls_x509_crt_parse(ca_chain, ca, sizeof(ca));
+        uv_mbed_set_ca(mbed, cmd->root_cert_file);
     }
 
     ctx.cmd = cmd;

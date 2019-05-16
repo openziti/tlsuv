@@ -18,7 +18,7 @@ typedef struct uv_mbed_s uv_mbed_t;
 
 uv_mbed_t * uv_mbed_init(uv_loop_t *loop, void *user_data, int dump_level);
 void * uv_mbed_user_data(uv_mbed_t *mbed);
-int uv_mbed_set_ca(uv_mbed_t *mbed, mbedtls_x509_crt* ca);
+int uv_mbed_set_ca(uv_mbed_t *mbed, const char *root_cert_file);
 int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context *privkey);
 int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, unsigned int delay);
 int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay);

@@ -18,6 +18,7 @@ struct uv_mbed_s {
     void *user_data;
     mbedtls_ssl_config ssl_config;
     mbedtls_ssl_context ssl;
+    mbedtls_x509_crt cacert;
 
     uv_mbed_connect_cb connect_cb;
     void *connect_cb_p;
@@ -71,8 +72,10 @@ void * uv_mbed_user_data(uv_mbed_t *mbed) {
     return mbed->user_data;
 }
 
-int uv_mbed_set_ca(uv_mbed_t *mbed, mbedtls_x509_crt* ca) {
-    mbedtls_ssl_conf_ca_chain(&mbed->ssl_config, ca, NULL);
+int uv_mbed_set_ca(uv_mbed_t *mbed, const char *root_cert_file) {
+    mbedtls_x509_crt_parse_file(&mbed->cacert, root_cert_file);
+    // mbedtls_x509_crt_parse(&mbed->cacert, ca, sizeof(ca));
+    mbedtls_ssl_conf_ca_chain(&mbed->ssl_config, &mbed->cacert, NULL);
     return 0;
 }
 
@@ -177,6 +180,8 @@ static void init_ssl(uv_mbed_t *mbed, int dump_level) {
     mbedtls_ctr_drbg_seed(drbg, mbedtls_entropy_func, entropy, seed, MBEDTLS_ENTROPY_MAX_SEED_SIZE);
     mbedtls_ssl_conf_rng(&mbed->ssl_config, mbedtls_ctr_drbg_random, drbg);
 
+    mbedtls_x509_crt_init(&mbed->cacert);
+
     mbedtls_ssl_init(&mbed->ssl);
     mbedtls_ssl_setup(&mbed->ssl, &mbed->ssl_config);
 
@@ -202,6 +207,8 @@ int uv_mbed_free(uv_mbed_t *mbed) {
     free(rng);
 
     mbedtls_ssl_config_free(&mbed->ssl_config);
+
+    mbedtls_x509_crt_free(&mbed->cacert);
 
     free(mbed);
 
