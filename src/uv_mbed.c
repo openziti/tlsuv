@@ -256,19 +256,20 @@ static void _uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_b
     bool release_buf = true;
     assert(stream == (uv_stream_t *) &mbed->socket);
     if (nread > 0) {
-        int rc = bio_put(mbed->ssl_in, (uint8_t *)buf->base, (size_t) nread);
+        struct bio *in = mbed->ssl_in;
+        int rc = bio_put(in, (uint8_t *)buf->base, (size_t) nread);
         if (rc < 0) {
             // this should not happen since ssl_in is zerocopy BIO
             // see if that frees up memory
             mbed_ssl_process_in(mbed);
-            rc = bio_put(mbed->ssl_in, (uint8_t *)buf->base, (size_t) nread);
+            rc = bio_put(in, (uint8_t *)buf->base, (size_t) nread);
 
             if (rc < 0) {
                 fprintf(stderr, "UVMBED: failed to put incoming data into bio for SSL processing, MBED will probably fail\n");
             }
         }
         mbed_ssl_process_in(mbed);
-        if (mbed->ssl_in->zerocopy && rc >= 0) {
+        if (in->zerocopy && rc >= 0) {
             release_buf = false;
         }
     }
