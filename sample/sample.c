@@ -15,7 +15,7 @@
 struct client_context {
     struct cmd_line_info *cmd;
     FILE *fp;
-    bool parse_header;
+    bool header_parsed;
 };
 
 static void alloc(uv_mbed_t *mbed, size_t suggested_size, uv_buf_t *buf, void *p) {
@@ -35,14 +35,14 @@ void on_data(uv_mbed_t *h, ssize_t nread, uv_buf_t* buf, void *p) {
         if (ctx->fp) {
             char *ptmp = (char *)buf->base;
             size_t len0 = (size_t)nread;
-            if (ctx->parse_header == false) {
+            if (ctx->header_parsed == false) {
 #define GET_REQUEST_END "\r\n\r\n"
                 char *px = strstr(ptmp, GET_REQUEST_END);
                 if (px != NULL) {
                     ptmp = px + strlen(GET_REQUEST_END);
                     len0 = len0 - (size_t)(ptmp - buf->base);
                 }
-                ctx->parse_header = true;
+                ctx->header_parsed = true;
             }
             fwrite(ptmp, len0, 1, ctx->fp);
         } else {
