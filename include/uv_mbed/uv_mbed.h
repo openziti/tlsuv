@@ -29,14 +29,14 @@ int uv_mbed_set_blocking(uv_mbed_t* mbed, int blocking);
 
 typedef void (*uv_mbed_alloc_cb)(uv_mbed_t *mbed, size_t suggested_size, uv_buf_t* buf, void *p);
 typedef void (*uv_mbed_read_cb)(uv_mbed_t *mbed, ssize_t nread, uv_buf_t* buf, void *p);
-int uv_mbed_read(uv_mbed_t* client, uv_mbed_alloc_cb, uv_mbed_read_cb, void*);
+int uv_mbed_read(uv_mbed_t *mbed, uv_mbed_alloc_cb, uv_mbed_read_cb, void*);
 
 typedef void (*uv_mbed_write_cb)(uv_mbed_t *mbed, int status, void *p);
 int uv_mbed_write(uv_mbed_t *mbed, const uv_buf_t *buf, uv_mbed_write_cb cb, void *p);
 
 typedef void (*uv_mbed_close_cb)(uv_mbed_t *mbed, void *p);
-int uv_mbed_close(uv_mbed_t* session, uv_mbed_close_cb close_cb, void *p);
-int uv_mbed_free(uv_mbed_t* session);
+int uv_mbed_close(uv_mbed_t *mbed, uv_mbed_close_cb close_cb, void *p);
+int uv_mbed_free(uv_mbed_t *mbed);
 
 #ifdef __cplusplus
 }
