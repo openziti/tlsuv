@@ -9,6 +9,7 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/debug.h>
 #include <mbedtls/entropy.h>
+#include <mbedtls/certs.h>
 #include <assert.h>
 #include <stdbool.h>
 #include "uv_mbed/uv_mbed.h"
@@ -20,6 +21,11 @@ struct uv_mbed_s {
     mbedtls_ssl_config ssl_config;
     mbedtls_ssl_context ssl;
     mbedtls_x509_crt cacert;
+    mbedtls_x509_crt clicert;
+    mbedtls_pk_context pkey;
+
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_entropy_context entropy;
 
     uv_mbed_connect_cb connect_cb;
     void *connect_cb_p;
@@ -74,9 +80,9 @@ void * uv_mbed_user_data(uv_mbed_t *mbed) {
 }
 
 int uv_mbed_set_ca(uv_mbed_t *mbed, const char *root_cert_file) {
-    mbedtls_x509_crt_parse_file(&mbed->cacert, root_cert_file);
-    // mbedtls_x509_crt_parse(&mbed->cacert, ca, sizeof(ca));
-    mbedtls_ssl_conf_ca_chain(&mbed->ssl_config, &mbed->cacert, NULL);
+    if (mbedtls_x509_crt_parse_file(&mbed->cacert, root_cert_file) == 0) {
+        mbedtls_ssl_conf_ca_chain(&mbed->ssl_config, &mbed->cacert, NULL);
+    }
     return 0;
 }
 
@@ -160,8 +166,6 @@ int uv_mbed_write(uv_mbed_t *mbed, const uv_buf_t *buf, uv_mbed_write_cb cb, voi
 }
 
 static void init_ssl(uv_mbed_t *mbed, int dump_level) {
-    mbedtls_ctr_drbg_context *drbg;
-    mbedtls_entropy_context *entropy;
     unsigned char *seed;
 
     mbedtls_debug_set_threshold(dump_level);
@@ -173,15 +177,28 @@ static void init_ssl(uv_mbed_t *mbed, int dump_level) {
                                  MBEDTLS_SSL_TRANSPORT_STREAM,
                                  MBEDTLS_SSL_PRESET_DEFAULT );
     mbedtls_ssl_conf_authmode(&mbed->ssl_config, MBEDTLS_SSL_VERIFY_REQUIRED);
-    drbg = (mbedtls_ctr_drbg_context *) calloc(1, sizeof(mbedtls_ctr_drbg_context));
-    entropy = (mbedtls_entropy_context *) calloc(1, sizeof(mbedtls_entropy_context));
-    mbedtls_ctr_drbg_init(drbg);
-    mbedtls_entropy_init(entropy);
+    mbedtls_ctr_drbg_init(&mbed->ctr_drbg);
+    mbedtls_entropy_init(&mbed->entropy);
     seed = (unsigned char *) malloc(MBEDTLS_ENTROPY_MAX_SEED_SIZE); // uninitialized memory
-    mbedtls_ctr_drbg_seed(drbg, mbedtls_entropy_func, entropy, seed, MBEDTLS_ENTROPY_MAX_SEED_SIZE);
-    mbedtls_ssl_conf_rng(&mbed->ssl_config, mbedtls_ctr_drbg_random, drbg);
+    mbedtls_ctr_drbg_seed(&mbed->ctr_drbg, mbedtls_entropy_func, &mbed->entropy, seed, MBEDTLS_ENTROPY_MAX_SEED_SIZE);
+    mbedtls_ssl_conf_rng(&mbed->ssl_config, mbedtls_ctr_drbg_random, &mbed->ctr_drbg);
 
     mbedtls_x509_crt_init(&mbed->cacert);
+    mbedtls_ssl_conf_ca_chain( &mbed->ssl_config, &mbed->cacert, NULL );
+
+    mbedtls_x509_crt_init(&mbed->clicert);
+    mbedtls_x509_crt_parse( &mbed->clicert,
+        (const unsigned char *) mbedtls_test_cli_crt,
+        mbedtls_test_cli_crt_len );
+
+    mbedtls_pk_init(&mbed->pkey);
+    mbedtls_pk_parse_key(&mbed->pkey,
+        (const unsigned char *)mbedtls_test_cli_key,
+        mbedtls_test_cli_key_len, NULL, 0 );
+
+    mbedtls_ssl_conf_own_cert(&mbed->ssl_config, &mbed->clicert, &mbed->pkey);
+
+    mbedtls_ssl_conf_authmode(&mbed->ssl_config, MBEDTLS_SSL_VERIFY_OPTIONAL);
 
     mbedtls_ssl_init(&mbed->ssl);
     mbedtls_ssl_setup(&mbed->ssl, &mbed->ssl_config);
@@ -203,13 +220,15 @@ int uv_mbed_free(uv_mbed_t *mbed) {
     rng = (mbedtls_ctr_drbg_context *) mbed->ssl_config.p_rng;
     ctx = (mbedtls_entropy_context *)rng->p_entropy;
     mbedtls_entropy_free(ctx);
-    free(ctx);
+    assert(ctx == &mbed->entropy);
     mbedtls_ctr_drbg_free(rng);
-    free(rng);
+    assert(rng == &mbed->ctr_drbg);
 
     mbedtls_ssl_config_free(&mbed->ssl_config);
 
     mbedtls_x509_crt_free(&mbed->cacert);
+    mbedtls_x509_crt_free(&mbed->clicert);
+    mbedtls_pk_free(&mbed->pkey);
 
     free(mbed);
 
