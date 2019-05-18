@@ -258,16 +258,6 @@ static void _uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_b
     if (nread > 0) {
         struct bio *in = mbed->ssl_in;
         bool rc = bio_put(in, (uint8_t *)buf->base, (size_t) nread);
-        if (rc == false) {
-            // this should not happen since ssl_in is zerocopy BIO
-            // see if that frees up memory
-            mbed_ssl_process_in(mbed);
-            rc = bio_put(in, (uint8_t *)buf->base, (size_t) nread);
-
-            if (rc == false) {
-                fprintf(stderr, "UVMBED: failed to put incoming data into bio for SSL processing, MBED will probably fail\n");
-            }
-        }
         mbed_ssl_process_in(mbed);
         if (in->zerocopy && rc) {
             release_buf = false;
@@ -279,14 +269,9 @@ static void _uv_tcp_read_done_cb (uv_stream_t* stream, ssize_t nread, const uv_b
     }
 
     if (nread < 0) {
-        // still connecting
-        if (mbed->connect_cb != NULL) {
-            _do_uv_mbeb_connect_cb(mbed, nread);
-            assert(mbed->connect_cb == NULL);
-        }
-        else if (mbed->alloc_cb != NULL) {
+        assert(mbed->connect_cb == NULL);
+        if (mbed->read_cb) {
             uv_buf_t b = uv_buf_init(NULL, 0);
-            mbed->alloc_cb(mbed, 1024, &b, mbed->read_cb_p);
             mbed->read_cb(mbed, nread, &b, mbed->read_cb_p);
         }
     }
@@ -415,8 +400,7 @@ static void mbed_ssl_process_out(uv_mbed_t *mbed, uv_mbed_write_cb cb, void *p) 
         // how did we get here?
         cb(mbed, MBEDTLS_ERR_SSL_WANT_WRITE, p);
     }
-
-    while (avail > 0) {
+    else {
         size_t len;
         uv_write_t *tcp_wr;
         uv_buf_t wb;
@@ -433,7 +417,7 @@ static void mbed_ssl_process_out(uv_mbed_t *mbed, uv_mbed_write_cb cb, void *p) 
         tcp_wr->data = ctx;
         wb = uv_buf_init((char *) ctx->buf, (unsigned int) len);
         uv_write(tcp_wr, (uv_stream_t *) &mbed->socket, &wb, 1, _uv_mbed_tcp_write_done_cb);
-        avail = bio_available(out);
+        assert((avail = bio_available(out)) == 0);
     }
 }
 
