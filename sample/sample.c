@@ -16,6 +16,8 @@ struct client_context {
     struct cmd_line_info *cmd;
     FILE *fp;
     bool header_parsed;
+    size_t file_size;
+    size_t progress_size;
 };
 
 static void alloc(uv_mbed_t *mbed, size_t suggested_size, uv_buf_t *buf, void *p) {
@@ -43,13 +45,31 @@ void on_data(uv_mbed_t *h, ssize_t nread, uv_buf_t* buf, void *p) {
                     len0 = len0 - (size_t)(ptmp - buf->base);
                 }
                 ctx->header_parsed = true;
+
+#define CONTENT_LENGTH "Content-Length:"
+                px = strstr(buf->base, CONTENT_LENGTH);
+                if (px) {
+                    px = px + strlen(CONTENT_LENGTH);
+                    ctx->file_size = (size_t) strtol(px, NULL, 10);
+                }
             }
             fwrite(ptmp, len0, 1, ctx->fp);
+
+            if (ctx->file_size) {
+                int percent = 0;
+                ctx->progress_size += len0;
+                percent = (int) ctx->progress_size * 100 / ctx->file_size;
+                printf("received %3d%% of %d bytes\r", percent, (int) ctx->file_size);
+                fflush(stdout);
+            }
         } else {
             printf("%*.*s", (int) nread, (int) nread, buf->base);
             fflush(stdout);
         }
     } else if (nread == UV_EOF) {
+        if (ctx->file_size != 0) {
+            printf("\n");
+        }
         printf("=====================\nconnection closed\n");
         uv_mbed_close(h, on_close, p);
     } else if (nread != 0) {
