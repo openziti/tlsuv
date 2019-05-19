@@ -5,11 +5,11 @@ EXPORTS
 uv_mbed_init
 uv_mbed_user_data
 uv_mbed_set_ca
-uv_mbed_set_cert
-uv_mbed_keepalive
-uv_mbed_nodelay
+;uv_mbed_set_cert
+;uv_mbed_keepalive
+;uv_mbed_nodelay
+;uv_mbed_set_blocking
 uv_mbed_connect
-uv_mbed_set_blocking
 uv_mbed_read
 uv_mbed_write
 uv_mbed_close

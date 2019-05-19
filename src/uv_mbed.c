@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/x509_crt.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/debug.h>
 #include <mbedtls/entropy.h>
