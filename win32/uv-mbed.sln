@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual Studio 2010
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "uv-mbed", "uv-mbed.vcxproj", "{E683C8F1-3C3F-4B5D-B60E-87D792D21002}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "uv-mbed", "uv-mbed\uv-mbed.vcxproj", "{E683C8F1-3C3F-4B5D-B60E-87D792D21002}"
 	ProjectSection(ProjectDependencies) = postProject
 		{46CF2D25-6A36-4189-B59C-E4815388E554} = {46CF2D25-6A36-4189-B59C-E4815388E554}
 		{02C81C67-F361-4F30-B7ED-31ABE423CC94} = {02C81C67-F361-4F30-B7ED-31ABE423CC94}
@@ -10,6 +10,13 @@ EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "mbedTLS", "..\mbedtls\visualc\VS2010\mbedTLS.vcxproj", "{46CF2D25-6A36-4189-B59C-E4815388E554}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libuv", "libuv\libuv.vcxproj", "{02C81C67-F361-4F30-B7ED-31ABE423CC94}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sample", "sample\sample.vcxproj", "{E0F51620-4C60-4080-BDE1-EC41781AA1D4}"
+	ProjectSection(ProjectDependencies) = postProject
+		{46CF2D25-6A36-4189-B59C-E4815388E554} = {46CF2D25-6A36-4189-B59C-E4815388E554}
+		{02C81C67-F361-4F30-B7ED-31ABE423CC94} = {02C81C67-F361-4F30-B7ED-31ABE423CC94}
+		{E683C8F1-3C3F-4B5D-B60E-87D792D21002} = {E683C8F1-3C3F-4B5D-B60E-87D792D21002}
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -39,6 +46,12 @@ Global
 		{02C81C67-F361-4F30-B7ED-31ABE423CC94}.Release|Win32.ActiveCfg = Release|Win32
 		{02C81C67-F361-4F30-B7ED-31ABE423CC94}.Release|Win32.Build.0 = Release|Win32
 		{02C81C67-F361-4F30-B7ED-31ABE423CC94}.Release|x64.ActiveCfg = Release|Win32
+		{E0F51620-4C60-4080-BDE1-EC41781AA1D4}.Debug|Win32.ActiveCfg = Debug|Win32
+		{E0F51620-4C60-4080-BDE1-EC41781AA1D4}.Debug|Win32.Build.0 = Debug|Win32
+		{E0F51620-4C60-4080-BDE1-EC41781AA1D4}.Debug|x64.ActiveCfg = Debug|Win32
+		{E0F51620-4C60-4080-BDE1-EC41781AA1D4}.Release|Win32.ActiveCfg = Release|Win32
+		{E0F51620-4C60-4080-BDE1-EC41781AA1D4}.Release|Win32.Build.0 = Release|Win32
+		{E0F51620-4C60-4080-BDE1-EC41781AA1D4}.Release|x64.ActiveCfg = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

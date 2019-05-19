@@ -13,45 +13,26 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
-    <Filter Include="getopt">
-      <UniqueIdentifier>{4aa89dc4-63f2-40b7-aaa5-487570a24623}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\bio.c">
+    <ClCompile Include="..\..\src\bio.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\uv_mbed.c">
+    <ClCompile Include="..\..\src\uv_mbed.c">
       <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sample\sample.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sample\cmd_line_parser.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\getopt.c">
-      <Filter>getopt</Filter>
-    </ClCompile>
-    <ClCompile Include="src\getopt_long.c">
-      <Filter>getopt</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\src\bio.h">
+    <ClInclude Include="..\..\src\bio.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\uv_mbed\uv_mbed.h">
+    <ClInclude Include="..\..\include\uv_mbed\uv_mbed.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\sample\cmd_line_parser.h">
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\uv-mbed.def">
       <Filter>Source Files</Filter>
-    </ClInclude>
-    <ClInclude Include="include\getopt.h">
-      <Filter>getopt</Filter>
-    </ClInclude>
-    <ClInclude Include="include\getopt_long.h">
-      <Filter>getopt</Filter>
-    </ClInclude>
+    </None>
   </ItemGroup>
 </Project>
