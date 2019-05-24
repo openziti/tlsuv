@@ -106,7 +106,7 @@ int uv_mbed_sample_prep_ca(mbedtls_x509_crt* my_ca_chain) {
     }
     CertFreeCertificateContext(pCertContext);
     CertCloseStore(hCertStore, 0);
-#elif
-    mbedtls_x509_crt_parse_file(ca_chain, DEFAULT_CA_CHAIN);
+#else
+    mbedtls_x509_crt_parse_file(my_ca_chain, DEFAULT_CA_CHAIN);
 #endif
 }

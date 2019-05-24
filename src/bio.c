@@ -7,7 +7,7 @@
 #include <string.h>
 #ifdef _WIN32
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#elif
+#else
 #include <sys/param.h>
 #endif
 #include "bio.h"

@@ -12,9 +12,7 @@
 #include "bio.h"
 #include "uv-common.h"
 
-
-void uv__stream_init(uv_loop_t* loop, uv_stream_t* s);
-
+#if _WIN32
 // this function is declared INLINE in an mbed .h file. As such we have had to 
 // duplicate the entire function as well as include the necessary headers to 
 // support the function
@@ -32,6 +30,7 @@ void uv_stream_init_dup(uv_loop_t* loop,
     handle->read_req.wait_handle = INVALID_HANDLE_VALUE;
     handle->read_req.data = handle;
 }
+#endif
 
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
@@ -58,7 +57,7 @@ struct tcp_write_ctx {
 int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed) {
 #if _WIN32
     uv_stream_init_dup(l, (uv_stream_t*)mbed, UV_STREAM);
-#elif
+#else
     uv__stream_init(l, (uv_stream_t*)mbed, UV_STREAM);
 #endif
     
