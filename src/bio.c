@@ -5,7 +5,11 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#ifdef _WIN32
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+#elif
 #include <sys/param.h>
+#endif
 #include "bio.h"
 
 struct msg {

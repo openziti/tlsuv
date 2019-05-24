@@ -7,6 +7,11 @@
 #include <stdlib.h>
 #include <uv_mbed/uv_mbed.h>
 
+#if _WIN32
+#include <wincrypt.h>
+#pragma comment (lib, "crypt32.lib")
+#endif
+
 #define DEFAULT_CA_CHAIN "/etc/ssl/certs/ca-certificates.crt"
 
 static void alloc(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
@@ -66,17 +71,42 @@ void on_connect(uv_connect_t *cr, int status) {
 }
 
 int main() {
-    uv_loop_t *l = uv_default_loop();
-
-    mbedtls_x509_crt *ca_chain = calloc(1, sizeof(mbedtls_x509_crt));
-    mbedtls_x509_crt_parse_file(ca_chain, DEFAULT_CA_CHAIN);
+    uv_loop_t* l = uv_default_loop();
 
     uv_mbed_t mbed;
     uv_mbed_init(l, &mbed);
+
+    //sets debug output if needed
+    //uv_mbed_mbedtls_debug_set_threshold(1);
+
+    mbedtls_x509_crt* ca_chain = calloc(1, sizeof(mbedtls_x509_crt));
+    uv_mbed_sample_prep_ca(ca_chain);
     uv_mbed_set_ca(&mbed, ca_chain);
 
-    uv_connect_t cr;
-    uv_mbed_connect(&cr, &mbed, "google.com", 443, on_connect);
+    mbed.connReq = calloc(1, sizeof(uv_connect_t));
+    uv_mbed_connect(mbed.connReq, &mbed, "google.com", 443, on_connect);
 
     uv_run(l, UV_RUN_DEFAULT);
+}
+
+int uv_mbed_sample_prep_ca(mbedtls_x509_crt* my_ca_chain) {
+#if _WIN32
+    mbedtls_x509_crt_init(my_ca_chain);
+
+    HCERTSTORE       hCertStore;
+    PCCERT_CONTEXT   pCertContext = NULL;
+
+    if (!(hCertStore = CertOpenSystemStore(0, "ROOT")))
+    {
+        printf("The first system store did not open.");
+        return -1;
+    }
+    while (pCertContext = CertEnumCertificatesInStore(hCertStore, pCertContext)) {
+        mbedtls_x509_crt_parse(my_ca_chain, pCertContext->pbCertEncoded, pCertContext->cbCertEncoded);
+    }
+    CertFreeCertificateContext(pCertContext);
+    CertCloseStore(hCertStore, 0);
+#elif
+    mbedtls_x509_crt_parse_file(ca_chain, DEFAULT_CA_CHAIN);
+#endif
 }
