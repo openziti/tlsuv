@@ -27,30 +27,30 @@ Building on windows:
 ** cmake --build . --config Debug
 * execute the sample application and verify the output looks like the following (note: exe is at sample\Debug\sample.exe)
 
-    c:\git\uv-mbed\2017>sample\Debug\sample.exe
-    request sent 0
-    HTTP/1.1 301 Moved Permanently
-    Location: https://www.google.com/
-    Content-Type: text/html; charset=UTF-8
-    Date: Fri, 24 May 2019 05:30:28 GMT
-    Expires: Sun, 23 Jun 2019 05:30:28 GMT
-    Cache-Control: public, max-age=2592000
-    Server: gws
-    Content-Length: 220
-    X-XSS-Protection: 0
-    X-Frame-Options: SAMEORIGIN
-    Alt-Svc: quic=":443"; ma=2592000; v="46,44,43,39"
-    Connection: close
+        c:\git\uv-mbed\2017>sample\Debug\sample.exe
+        request sent 0
+        HTTP/1.1 301 Moved Permanently
+        Location: https://www.google.com/
+        Content-Type: text/html; charset=UTF-8
+        Date: Fri, 24 May 2019 05:30:28 GMT
+        Expires: Sun, 23 Jun 2019 05:30:28 GMT
+        Cache-Control: public, max-age=2592000
+        Server: gws
+        Content-Length: 220
+        X-XSS-Protection: 0
+        X-Frame-Options: SAMEORIGIN
+        Alt-Svc: quic=":443"; ma=2592000; v="46,44,43,39"
+        Connection: close
 
-    <HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">
-    <TITLE>301 Moved</TITLE></HEAD><BODY>
-    <H1>301 Moved</H1>
-    The document has moved
-    <A HREF="https://www.google.com/">here</A>.
-    </BODY></HTML>
-    =====================
-    connection closed
-    mbed is closed
+        <HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">
+        <TITLE>301 Moved</TITLE></HEAD><BODY>
+        <H1>301 Moved</H1>
+        The document has moved
+        <A HREF="https://www.google.com/">here</A>.
+        </BODY></HTML>
+        =====================
+        connection closed
+        mbed is closed
 
 
 
