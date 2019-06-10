@@ -8,8 +8,6 @@ PROJECT("uv-mbed"
 #sample is off by default
 option(ENABLE_SAMPLES "Build samples." OFF)
 
-set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT sample)
-
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 add_subdirectory(mbedtls)
