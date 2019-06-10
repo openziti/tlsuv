@@ -79,13 +79,13 @@ int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context
 
 int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t* mbed, const struct addrinfo *addr, uv_connect_cb cb) {
 
-    if (mbed->connReq != NULL && mbed->connReq != req) {
+    if (mbed->conn_req != NULL && mbed->conn_req != req) {
         return UV_EALREADY;
     }
 
     req->handle = (uv_stream_t *) mbed;
     req->cb = cb;
-    mbed->connReq = req;
+    mbed->conn_req = req;
 
     uv_connect_t *tcp_cr = calloc(1, sizeof(uv_connect_t));
     tcp_cr->data = mbed;
@@ -126,7 +126,7 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
     uv_getaddrinfo_t *resolve_req = malloc(sizeof(uv_getaddrinfo_t));
     req->handle = (uv_stream_t *) mbed;
     req->cb = cb;
-    mbed->connReq = req;
+    mbed->conn_req = req;
     
     resolve_req->data = mbed;
     char portstr[6];
@@ -236,7 +236,7 @@ static void alloc_cb(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) 
 static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res) {
     uv_mbed_t *mbed = req->data;
 
-    uv_connect_t *cr = mbed->connReq;
+    uv_connect_t *cr = mbed->conn_req;
     if (status < 0) {
         cr->cb(cr, status);
     }
@@ -266,9 +266,9 @@ static void tcp_read_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
 
     if (nread < 0) {
         // still connecting
-       if (mbed->connReq != NULL) {
-            mbed->connReq->cb(mbed->connReq, nread);
-            mbed->connReq = NULL;
+       if (mbed->conn_req != NULL) {
+            mbed->conn_req->cb(mbed->conn_req, nread);
+            mbed->conn_req = NULL;
         }
         else if (mbed->_stream.alloc_cb != NULL) {
             uv_buf_t b = uv_buf_init(NULL, 0);
@@ -281,7 +281,7 @@ static void tcp_read_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
 static void tcp_connect_cb(uv_connect_t *req, int status) {
     uv_mbed_t *mbed = req->data;
     if (status < 0) {
-        mbed->connReq->cb(mbed->connReq, status);
+        mbed->conn_req->cb(mbed->conn_req, status);
     }
     else {
         req->handle->data = mbed;
@@ -371,8 +371,8 @@ static void mbed_ssl_process_in(uv_mbed_t *mbed) {
 static void mbed_continue_handshake(uv_mbed_t *mbed) {
     int rc = mbedtls_ssl_handshake(&mbed->ssl);
     if (rc == 0) {
-        mbed->connReq->cb(mbed->connReq, 0);
-        mbed->connReq = NULL;
+        mbed->conn_req->cb(mbed->conn_req, 0);
+        mbed->conn_req = NULL;
     }
     else if (rc == MBEDTLS_ERR_SSL_WANT_WRITE || rc == MBEDTLS_ERR_SSL_WANT_READ) {
         uv_write_t *hsw = calloc(1, sizeof(uv_write_t));

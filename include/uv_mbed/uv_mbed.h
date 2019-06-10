@@ -40,7 +40,7 @@ struct uv_mbed_s {
     BIO* ssl_in;
     BIO* ssl_out;
 
-    uv_connect_t *connReq; //a place to stash a connection request
+    uv_connect_t *conn_req; //a place to stash a connection request
 };
 
 #endif //UV_MBED_H
