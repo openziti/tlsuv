@@ -85,6 +85,7 @@ int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t* mbed, const struct addrin
 
     req->handle = (uv_stream_t *) mbed;
     req->cb = cb;
+    mbed->connReq = req;
 
     uv_connect_t *tcp_cr = calloc(1, sizeof(uv_connect_t));
     tcp_cr->data = mbed;
@@ -125,6 +126,7 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
     uv_getaddrinfo_t *resolve_req = malloc(sizeof(uv_getaddrinfo_t));
     req->handle = (uv_stream_t *) mbed;
     req->cb = cb;
+    mbed->connReq = req;
     
     resolve_req->data = mbed;
     char portstr[6];
@@ -379,7 +381,7 @@ static void mbed_continue_handshake(uv_mbed_t *mbed) {
         mbed_ssl_process_out(mbed, hsw);
     }
     else {
-        printf("WARNING: unhandled response code %d", rc);
+        fprintf(stderr, "WARNING: unhandled response code %d", rc);
     }
 }
 

@@ -83,10 +83,11 @@ int main() {
     uv_mbed_sample_prep_ca(ca_chain);
     uv_mbed_set_ca(&mbed, ca_chain);
 
-    mbed.connReq = calloc(1, sizeof(uv_connect_t));
-    uv_mbed_connect(mbed.connReq, &mbed, "google.com", 443, on_connect);
+    uv_connect_t* req = calloc(1, sizeof(uv_connect_t));
+    uv_mbed_connect(req, &mbed, "google.com", 443, on_connect);
 
     uv_run(l, UV_RUN_DEFAULT);
+    free(req);
 }
 
 int uv_mbed_sample_prep_ca(mbedtls_x509_crt* my_ca_chain) {
