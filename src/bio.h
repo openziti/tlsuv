@@ -10,7 +10,7 @@
 typedef struct bio {
     size_t available;
     size_t headoffset;
-    uint qlen;
+    unsigned int qlen;
     int zerocopy;
     STAILQ_HEAD(msgq, msg) message_q;
 } BIO;
@@ -25,3 +25,4 @@ int BIO_read(BIO*, uint8_t *buf, size_t len);
 size_t BIO_available(BIO*);
 
 #endif //UV_MBED_BIO_H
+

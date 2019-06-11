@@ -62,8 +62,12 @@ cmake_install.cmake
 install_manifest.txt
 compile_commands.json
 CTestTestfile.cmake
+build
 
 ### JetBrains
 .idea/
 cmake-build-debug/
 cmake-build-release/
+
+### Visual Studio
+.vs
