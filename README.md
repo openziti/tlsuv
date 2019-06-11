@@ -21,10 +21,10 @@ Building on windows:
 * mkdir build
 * cd build
 * after checking out the project - open a visual studio command prompt
-** if vs 2017 issue: cmake -G "Visual Studio 15 2017" .. -DCMAKE_INSTALL_INCLUDEDIR=include
-** if vs 2019 issue: cmake -G "Visual Studio 16 2019" .. -DCMAKE_INSTALL_INCLUDEDIR=include
+    * if vs 2017 issue: `cmake -G "Visual Studio 15 2017" .. -DCMAKE_INSTALL_INCLUDEDIR=include`
+    * if vs 2019 issue: `cmake -G "Visual Studio 16 2019" .. -DCMAKE_INSTALL_INCLUDEDIR=include`
 * test building with cmake/msbuild: 
-** cmake --build . --config Debug
+    * `cmake --build . --config Debug`
 * execute the sample application and verify the output looks like the following (note: exe is at sample\Debug\sample.exe)
 
         c:\git\uv-mbed\2017>sample\Debug\sample.exe
