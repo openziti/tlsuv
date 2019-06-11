@@ -13,7 +13,7 @@
 #include "uv-common.h"
 
 #if _WIN32
-// this function is declared INLINE in an mbed .h file. As such we have had to 
+// this function is declared INLINE in a libuv .h file. As such we have had to 
 // duplicate the entire function as well as include the necessary headers to 
 // support the function
 void uv_stream_init_dup(uv_loop_t* loop,
