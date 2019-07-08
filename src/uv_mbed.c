@@ -30,6 +30,11 @@ void uv_stream_init_dup(uv_loop_t* loop,
     handle->read_req.wait_handle = INVALID_HANDLE_VALUE;
     handle->read_req.data = handle;
 }
+#else
+// copy declaration of uv__stream_init() from libuv/src/unix/internal.h to avoid
+// breaking when building for iOS-arm64, where the compiler defaults to
+// '-Werror=implicit-function-declaration'
+void uv__stream_init(uv_loop_t* loop, uv_stream_t* stream, uv_handle_type type);
 #endif
 
 
