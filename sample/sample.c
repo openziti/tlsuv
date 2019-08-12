@@ -14,6 +14,8 @@
 
 #define DEFAULT_CA_CHAIN "/etc/ssl/certs/ca-certificates.crt"
 
+int uv_mbed_sample_prep_ca(mbedtls_x509_crt *my_ca_chain);
+
 static void alloc(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
     buf->base = (char*) malloc(suggested_size);
     buf->len = suggested_size;
@@ -74,7 +76,7 @@ int main() {
     uv_loop_t* l = uv_default_loop();
 
     uv_mbed_t mbed;
-    uv_mbed_init(l, &mbed);
+    uv_mbed_init(l, &mbed, NULL);
 
     //sets debug output if needed
     //uv_mbed_mbedtls_debug_set_threshold(1);

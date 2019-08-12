@@ -20,7 +20,7 @@ add_subdirectory(libuv)
 set_target_properties(uv_a PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/libuv/include)
 
-add_library(uv_mbed STATIC src/uv_mbed.c src/uv_mbed.c src/bio.c src/bio.h)
+add_library(uv_mbed STATIC src/uv_mbed.c src/uv_mbed.c src/bio.c src/bio.h src/engine_mbedtls.c include/uv_mbed/tls_engine.h)
 
 if (WIN32)
     target_include_directories(uv_mbed PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/win32/include)

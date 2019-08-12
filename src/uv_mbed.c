@@ -59,7 +59,7 @@ struct tcp_write_ctx {
 };
 
 
-int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed) {
+int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls) {
 #if _WIN32
     uv_stream_init_dup(l, (uv_stream_t*)mbed, UV_STREAM);
 #else
