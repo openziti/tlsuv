@@ -22,6 +22,9 @@ enum TLS_RESULT {
 };
 
 typedef struct {
+
+    tls_handshake_state (*handshake_state)(void *engine);
+
     /**
      * Initiates/continues TLS handshake.
      * @param engine

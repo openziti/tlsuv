@@ -6,20 +6,14 @@
 #define UV_MBED_H
 
 #include <uv.h>
-#include <mbedtls/ssl.h>
 #include <stdbool.h>
 
 #include "tls_engine.h"
-
-/*sets the mbed tls debug threshold*/
-void uv_mbed_mbedtls_debug_set_threshold(int threshold);
 
 typedef struct uv_mbed_s uv_mbed_t;
 typedef struct bio BIO;
 
 int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls);
-int uv_mbed_set_ca(uv_mbed_t *mbed, mbedtls_x509_crt* ca);
-int uv_mbed_set_cert(uv_mbed_t *mbed, mbedtls_x509_crt *cert, mbedtls_pk_context *privkey);
 int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, unsigned int delay);
 int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay);
 
@@ -37,11 +31,8 @@ struct uv_mbed_s {
     uv_stream_t _stream;
     uv_tcp_t socket;
 
-    mbedtls_ssl_config ssl_config;
-    mbedtls_ssl_context ssl;
-
-    BIO* ssl_in;
-    BIO* ssl_out;
+    tls_context *tls;
+    tls_engine *tls_engine;
 
     uv_connect_t *conn_req; //a place to stash a connection request
 };

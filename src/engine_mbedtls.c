@@ -8,6 +8,11 @@
 #include <uv_mbed/uv_mbed.h>
 #include "bio.h"
 
+#if _WIN32
+#include <wincrypt.h>
+#pragma comment (lib, "crypt32.lib")
+#endif
+
 // inspired by https://golang.org/src/crypto/x509/root_linux.go
 // Possible certificate files; stop after finding one.
 const char *const caFiles[] = {
@@ -25,6 +30,7 @@ struct mbedtls_context {
     mbedtls_pk_context *own_key;
     mbedtls_x509_crt *own_cert;
 };
+
 struct mbedtls_engine {
     mbedtls_ssl_context *ssl;
     BIO *in;
@@ -35,6 +41,7 @@ void mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, cons
 
 static tls_engine *new_mbedtls_engine(void *ctx, const char *host);
 
+static tls_handshake_state mbedtls_hs_state(void *engine);
 static tls_handshake_state
 mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
 
@@ -57,6 +64,7 @@ static tls_context_api mbedtls_context_api = {
 };
 
 static tls_engine_api mbedtls_engine_api = {
+        .handshake_state = mbedtls_hs_state,
         .handshake = mbedtls_continue_hs,
         .close = mbedtls_close,
         .write = mbedtls_write,
@@ -70,7 +78,7 @@ static int mbed_ssl_recv(void *ctx, uint8_t *buf, size_t len);
 
 static int mbed_ssl_send(void *ctx, const uint8_t *buf, size_t len);
 
-extern tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len) {
+static tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len) {
     tls_context *ctx = calloc(1, sizeof(tls_context));
     ctx->api = &mbedtls_context_api;
     struct mbedtls_context *c = calloc(1, sizeof(struct mbedtls_context));
@@ -78,6 +86,10 @@ extern tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len) {
     ctx->ctx = c;
 
     return ctx;
+}
+
+tls_context *default_tls_context(const char *ca, size_t ca_len) {
+    return new_mbedtls_ctx(ca, ca_len);
 }
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
@@ -88,7 +100,6 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
         int level = (int) strtol(tls_debug, NULL, 10);
         mbedtls_debug_set_threshold(level);
     }
-
 
     mbedtls_ssl_config_init(ssl_config);
     mbedtls_ssl_conf_dbg(ssl_config, tls_debug_f, stdout);
@@ -112,21 +123,37 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
         if (rc < 0) {
             char err[1024];
             mbedtls_strerror(rc, err, sizeof(err));
-            fprintf(stderr, "%s\n", err);
+            fprintf(stderr, "mbedtls_engine: %s\n", err);
             mbedtls_x509_crt_init(ca);
 
             rc = mbedtls_x509_crt_parse_file(ca, cabuf);
             mbedtls_strerror(rc, err, sizeof(err));
-            fprintf(stderr, "%s\n", err);
+            fprintf(stderr, "mbedtls_engine: %s\n", err);
         }
     }
-    else {
-        for (int i = 0; i < NUM_CAFILES; i++) {
+    else { // try loading default CA stores
+#if _WIN32
+        HCERTSTORE       hCertStore;
+        PCCERT_CONTEXT   pCertContext = NULL;
+
+        if (!(hCertStore = CertOpenSystemStore(0, "ROOT")))
+        {
+            printf("The first system store did not open.");
+            return -1;
+        }
+        while (pCertContext = CertEnumCertificatesInStore(hCertStore, pCertContext)) {
+            mbedtls_x509_crt_parse(ca, pCertContext->pbCertEncoded, pCertContext->cbCertEncoded);
+        }
+        CertFreeCertificateContext(pCertContext);
+        CertCloseStore(hCertStore, 0);
+#else
+        for (size_t i = 0; i < NUM_CAFILES; i++) {
             if (access(caFiles[i], R_OK) != -1) {
                 mbedtls_x509_crt_parse_file(ca, caFiles[i]);
                 break;
             }
         }
+#endif
     }
 
 
@@ -203,6 +230,16 @@ static void tls_debug_f(void *ctx, int level, const char *file, int line, const 
     fflush(stdout);
 }
 
+static tls_handshake_state mbedtls_hs_state(void *engine) {
+    struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
+    if (eng->ssl->state == MBEDTLS_SSL_HANDSHAKE_OVER) {
+        return TLS_HS_COMPLETE;
+    }
+    else {
+        return TLS_HS_CONTINUE;
+    }
+}
+
 static tls_handshake_state
 mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout) {
     struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
@@ -239,7 +276,7 @@ static int mbedtls_write(void *engine, const char *data, size_t data_len, char *
 static int
 mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout) {
     struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
-    if (ssl_in_len > 0) {
+    if (ssl_in_len > 0 && ssl_in != NULL) {
         BIO_put(eng->in, ssl_in, ssl_in_len);
     }
 

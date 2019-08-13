@@ -12,7 +12,6 @@
 
 #define HOST "wttr.in"
 
-tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len);
 
 int main(int argc, char **argv) {
     struct hostent *he = gethostbyname(HOST);
@@ -25,7 +24,7 @@ int main(int argc, char **argv) {
 
     printf("ip: %s\n", ip);
 
-    tls_context *tls = new_mbedtls_ctx(NULL, 0);
+    tls_context *tls = default_tls_context(NULL, 0);
     tls_engine *engine = tls->api->new_engine(tls->ctx, HOST);
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);
