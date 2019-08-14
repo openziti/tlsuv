@@ -67,6 +67,10 @@ void on_connect(uv_connect_t *cr, int status) {
 }
 
 int main() {
+#if _WIN32
+    //changes the output to UTF-8 so that the windows output looks correct and not all jumbly
+    SetConsoleOutputCP(65001);
+#endif
     uv_loop_t* l = uv_default_loop();
 
     uv_mbed_t mbed;
