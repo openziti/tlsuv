@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include <unistd.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/debug.h>
 #include <mbedtls/ctr_drbg.h>
@@ -11,6 +10,8 @@
 #if _WIN32
 #include <wincrypt.h>
 #pragma comment (lib, "crypt32.lib")
+#elif
+#include <unistd.h>
 #endif
 
 // inspired by https://golang.org/src/crypto/x509/root_linux.go
