@@ -10,7 +10,7 @@
 #if _WIN32
 #include <wincrypt.h>
 #pragma comment (lib, "crypt32.lib")
-#elif
+#else
 #include <unistd.h>
 #endif
 
