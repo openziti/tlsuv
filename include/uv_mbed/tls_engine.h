@@ -79,7 +79,7 @@ typedef struct {
 typedef struct tls_context_s tls_context;
 
 typedef struct {
-    void (*set_own_cert)(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
+    int (*set_own_cert)(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
 
     tls_engine *(*new_engine)(void *ctx, const char *host);
 

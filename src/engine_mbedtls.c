@@ -38,7 +38,7 @@ struct mbedtls_engine {
     BIO *out;
 };
 
-void mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
+int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
 
 static tls_engine *new_mbedtls_engine(void *ctx, const char *host);
 
@@ -168,9 +168,6 @@ static tls_engine *new_mbedtls_engine(void *ctx, const char *host) {
     mbedtls_ssl_init(ssl);
     mbedtls_ssl_setup(ssl, &context->config);
     mbedtls_ssl_set_hostname(ssl, host);
-    if (context->own_key != NULL) {
-        mbedtls_ssl_set_hs_own_cert(ssl, context->own_cert, context->own_key);
-    }
 
     tls_engine *engine = calloc(1, sizeof(tls_engine));
     struct mbedtls_engine *mbed_eng = calloc(1, sizeof(struct mbedtls_engine));
@@ -210,19 +207,40 @@ static void mbedtls_free(tls_engine *engine) {
     free(engine);
 }
 
-void mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
+int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
     struct mbedtls_context *c = ctx;
     c->own_key = calloc(1, sizeof(mbedtls_pk_context));
     int rc = mbedtls_pk_parse_key(c->own_key, key_buf, key_len, NULL, 0);
     if (rc < 0) {
         rc = mbedtls_pk_parse_keyfile(c->own_key, key_buf, NULL);
+        if (rc < 0) {
+            fprintf(stderr, "failed to load private key");
+            mbedtls_pk_free(c->own_key);
+            free(c->own_key);
+            c->own_key = NULL;
+            return TLS_ERR;
+        }
     }
 
     c->own_cert = calloc(1, sizeof(mbedtls_x509_crt));
     rc = mbedtls_x509_crt_parse(c->own_cert, cert_buf, cert_len);
     if (rc < 0) {
         rc = mbedtls_x509_crt_parse_file(c->own_cert, cert_buf);
+        if (rc < 0) {
+            fprintf(stderr, "failed to load certificate");
+            mbedtls_x509_crt_free(c->own_cert);
+            free(c->own_cert);
+            c->own_cert = NULL;
+
+            mbedtls_pk_free(c->own_key);
+            free(c->own_key);
+            c->own_key = NULL;
+            return TLS_ERR;
+        }
     }
+
+    mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, c->own_key);
+    return TLS_OK;
 }
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str) {
@@ -251,8 +269,6 @@ mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *
     char err[1024];
     mbedtls_strerror(state, err, 1024);
     *out_bytes = BIO_read(eng->out, out, maxout);
-
-    printf("hs_state = %d(%s), out_bytes = %zd\n", eng->ssl->state, err, *out_bytes);
 
     if (eng->ssl->state == MBEDTLS_SSL_HANDSHAKE_OVER) {
         return TLS_HS_COMPLETE;
@@ -284,6 +300,7 @@ mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, siz
     int rc = mbedtls_ssl_read(eng->ssl, out, maxout);
 
     if (rc == MBEDTLS_ERR_SSL_WANT_READ) {
+        *out_bytes = 0;
         return TLS_READ_AGAIN;
     }
 
