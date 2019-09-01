@@ -151,9 +151,9 @@ int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb c
     char out[32 * 1024];
     size_t out_len;
     mbed->tls_engine->api->write(mbed->tls_engine->engine, buf->base, buf->len, out, &out_len, sizeof(out));
-    uv_write_t *wr = calloc(1, sizeof(uv_write_t));
-    wr->cb = cb;
-    mbed_tcp_write(mbed, out, out_len, wr);
+
+    req->cb = cb;
+    mbed_tcp_write(mbed, out, out_len, req);
     return 0;
 }
 
@@ -236,6 +236,10 @@ static void tcp_read_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
             mbed->_stream.alloc_cb((uv_handle_t *) mbed, 1024, &b);
             mbed->_stream.read_cb((uv_stream_t *) mbed, nread, &b);
         }
+    }
+
+    if (buf->base != NULL) {
+        free(buf->base);
     }
 }
 
