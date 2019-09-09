@@ -283,11 +283,16 @@ mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *
 
 static int mbedtls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout) {
     struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
-    if (data_len > 0) {
-        mbedtls_ssl_write(eng->ssl, data, data_len);
+    size_t wrote = 0;
+    while (data_len > wrote) {
+        int rc = mbedtls_ssl_write(eng->ssl, data + wrote, data_len - wrote);
+        if (rc < 0) {
+            return TLS_ERR;
+        }
+        wrote += rc;
     }
     *out_bytes = BIO_read(eng->out, out, maxout);
-    return 0;
+    return BIO_available(eng->out);
 }
 
 static int
