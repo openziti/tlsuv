@@ -1,7 +1,6 @@
 [submodule "mbedtls"]
 	path = mbedtls
-	url = https://github.com/ARMmbed/mbedtls.git
-	branch = mbedtls-2.16
+	url = https://github.com/NetFoundry/mbedtls.git
 [submodule "libuv"]
 	path = libuv
 	url = https://github.com/libuv/libuv.git
