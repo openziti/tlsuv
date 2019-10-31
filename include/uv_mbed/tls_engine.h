@@ -79,13 +79,27 @@ typedef struct {
 typedef struct tls_context_s tls_context;
 
 typedef struct {
-    int (*set_own_cert)(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
-
+    /* creates new TLS engine for a host */
     tls_engine *(*new_engine)(void *ctx, const char *host);
+
+    void (*free_engine)(tls_engine *);
 
     void (*free_ctx)(tls_context *ctx);
 
-    void (*free_engine)(tls_engine *);
+    /**
+     * (Optional): if you bring your own engine this is probably not needed.
+     * This method is provided to set client/server side cert on the default TLS context.
+     */
+    int (*set_own_cert)(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
+
+    /**
+     * (Optional): if you bring your own engine this is probably not needed.
+     * This method is provided to set client/server-side cert backed by an HSM(hardware key) on the default TLS context.
+     * if `cert_buf is NULL` certificate is loaded from HSM as well, matched by `key_id` (TODO: not implemented yet)
+     */
+    int (*set_own_cert_pkcs11)(void *ctx, const char *cert_buf, size_t cert_len,
+            const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
+
 } tls_context_api;
 
 struct tls_context_s {
