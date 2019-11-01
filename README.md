@@ -1,18 +1,40 @@
+UV-MBED
+----
+
 ## Overview
 UV-MBED is a cross-platform library allowing asynchronous TLS communication. 
 This is done by combinining [libuv](https://github.com/libuv/libuv) with [mbedTLS](https://github.com/ARMmbed/mbedtls.git)
+(see below for using other TLS implementations)
 
-### Features
+## Features
 * async TLS over TCP
+* Flexible TLS engine support
+* [pkcs#11](https://en.wikipedia.org/wiki/PKCS_11) support with default(mbedTLS) engine
 
-### API
+## API
 API is attempted to be consistent with [libuv API](http://docs.libuv.org/en/v1.x/api.html)
 
-### Suuported Platforms
+## Suuported Platforms
 * Linux
 * Darwin/MacOS
 * Windows
 
+## TLS engine support (BYFE - Bring Your Favorite Engine)
+If using mbedTLS does not work for you,
+for example you're already using another TLS library for your project, there is a way to use it inside _uv-mbed_.
+Two API [interfaces](include/uv_mbed/tls_engine.h) are defined for that purpose:
+
+- `tls_context` is roughly equivalent to `mbedtls_ssl_config` or `SSL_CTX`in OpenSSL and is used to create instances
+of `tls_engine` for individual connections
+- `tls_engine` is an object for handling handshake and encryption for a single connection.
+Similar in purpose to `mbedtls_ssl_ctx` or `SSL` in OpenSSL
+
+## Build
+* Dependencies (libuv, and mbedTLS) are specified as [git submodules](https://git-scm.com/book/en/v2/Git-Tools-Submodules).
+Make sure to get them with `$ git submodule update --init --recursive`
+* We use [Cmake](https://cmake.org) as our build system.
+Any of the standard generators(`makefile`, [`ninja`](https://ninja-build.org/))
+should be working fine, let us know if you see any issues.
 
 #### Windows
 Building on windows:
@@ -23,7 +45,7 @@ Building on windows:
 * after checking out the project - open a visual studio command prompt
     * if vs 2017 issue: `cmake -G "Visual Studio 15 2017" .. -DCMAKE_INSTALL_INCLUDEDIR=include`
     * if vs 2019 issue: `cmake -G "Visual Studio 16 2019" .. -DCMAKE_INSTALL_INCLUDEDIR=include`
-* test building with cmake/msbuild: 
+* test building with cmake/msbuild:
     * `cmake --build . --config Debug`
 * execute the sample application and verify the output looks like the following (note: exe is at sample\Debug\sample.exe)
 
