@@ -20,7 +20,21 @@ add_subdirectory(libuv)
 set_target_properties(uv_a PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/libuv/include)
 
-add_library(uv_mbed STATIC src/uv_mbed.c src/uv_mbed.c src/bio.c src/bio.h src/engine_mbedtls.c include/uv_mbed/tls_engine.h)
+set(uv_mbed_sources
+        src/uv_mbed.c
+        src/bio.c
+        src/engine_mbedtls.c
+        )
+
+set(p11_sources
+        src/p11/p11_mbedtls/mbed_p11.c
+        src/p11/p11_mbedtls/p11_ecdsa.c
+        src/p11/p11_mbedtls/p11_rsa.c)
+
+add_library(uv_mbed STATIC
+        ${uv_mbed_sources}
+        ${p11_sources}
+        )
 
 if (WIN32)
     target_include_directories(uv_mbed PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/win32/include)
@@ -32,6 +46,7 @@ target_include_directories(uv_mbed
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/p11
         ${CMAKE_CURRENT_SOURCE_DIR}/libuv/src
         )
 

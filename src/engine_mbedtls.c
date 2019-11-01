@@ -6,6 +6,7 @@
 #include <mbedtls/error.h>
 #include <uv_mbed/uv_mbed.h>
 #include "bio.h"
+#include "p11_mbedtls/mbed_p11.h"
 
 #if _WIN32
 #include <wincrypt.h>
@@ -38,7 +39,9 @@ struct mbedtls_engine {
     BIO *out;
 };
 
-int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
+static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
+static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
+            const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
 
 static tls_engine *new_mbedtls_engine(void *ctx, const char *host);
 
@@ -58,10 +61,11 @@ static void mbedtls_free(tls_engine *engine);
 static void mbedtls_free_ctx(tls_context *ctx);
 
 static tls_context_api mbedtls_context_api = {
-        .set_own_cert = mbedtls_set_own_cert,
         .new_engine = new_mbedtls_engine,
         .free_engine = mbedtls_free,
         .free_ctx = mbedtls_free_ctx,
+        .set_own_cert = mbedtls_set_own_cert,
+        .set_own_cert_pkcs11 = mbedtls_set_own_cert_p11,
 };
 
 static tls_engine_api mbedtls_engine_api = {
@@ -207,7 +211,7 @@ static void mbedtls_free(tls_engine *engine) {
     free(engine);
 }
 
-int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
+static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
     struct mbedtls_context *c = ctx;
     c->own_key = calloc(1, sizeof(mbedtls_pk_context));
     int rc = mbedtls_pk_parse_key(c->own_key, key_buf, key_len, NULL, 0);
@@ -220,6 +224,41 @@ int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const
             c->own_key = NULL;
             return TLS_ERR;
         }
+    }
+
+    c->own_cert = calloc(1, sizeof(mbedtls_x509_crt));
+    rc = mbedtls_x509_crt_parse(c->own_cert, cert_buf, cert_len);
+    if (rc < 0) {
+        rc = mbedtls_x509_crt_parse_file(c->own_cert, cert_buf);
+        if (rc < 0) {
+            fprintf(stderr, "failed to load certificate");
+            mbedtls_x509_crt_free(c->own_cert);
+            free(c->own_cert);
+            c->own_cert = NULL;
+
+            mbedtls_pk_free(c->own_key);
+            free(c->own_key);
+            c->own_key = NULL;
+            return TLS_ERR;
+        }
+    }
+
+    mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, c->own_key);
+    return TLS_OK;
+}
+
+static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
+        const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id) {
+
+    struct mbedtls_context *c = ctx;
+    c->own_key = calloc(1, sizeof(mbedtls_pk_context));
+    int rc = mp11_load_key(c->own_key, pkcs11_lib, pin, slot, key_id);
+    if (rc != CKR_OK) {
+        fprintf(stderr, "failed to load private key - %s", p11_strerror(rc));
+        mbedtls_pk_free(c->own_key);
+        free(c->own_key);
+        c->own_key = NULL;
+        return TLS_ERR;
     }
 
     c->own_cert = calloc(1, sizeof(mbedtls_x509_crt));
