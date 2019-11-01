@@ -253,8 +253,8 @@ static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert
     struct mbedtls_context *c = ctx;
     c->own_key = calloc(1, sizeof(mbedtls_pk_context));
     int rc = mp11_load_key(c->own_key, pkcs11_lib, pin, slot, key_id);
-    if (rc < 0) {
-        fprintf(stderr, "failed to load private key");
+    if (rc != CKR_OK) {
+        fprintf(stderr, "failed to load private key - %s", p11_strerror(rc));
         mbedtls_pk_free(c->own_key);
         free(c->own_key);
         c->own_key = NULL;
