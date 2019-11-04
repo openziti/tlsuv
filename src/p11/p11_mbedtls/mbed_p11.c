@@ -19,6 +19,7 @@ limitations under the License.
 
 #if _WIN32
 #define strncasecmp _strnicmp
+#include <windows.h>
 #else
 #include <dlfcn.h>
 #endif
