@@ -133,9 +133,9 @@ static int mp11_init(mp11_context *p11, const char *lib, const char *slot, const
     
 #if _WIN32
     P11( (p11->lib = LoadLibrary(lib)) != NULL ? CKR_OK : CKR_LIBRARY_LOAD_FAILED);
-    P11( (f = GetProcAddress(p11->lib, "C_GetFunctionList")) != NULL ? CKR_OK : CKR_LIBRARY_LOAD_FAILED);
+    P11( (f = (CK_C_GetFunctionList)GetProcAddress(p11->lib, "C_GetFunctionList")) != NULL ? CKR_OK : CKR_LIBRARY_LOAD_FAILED);
 #else
-    p11->lib = dlopen(lib, RTLD_LAZY);
+    p11->lib = (CK_C_GetFunctionList)dlopen(lib, RTLD_LAZY);
     if (p11->lib == NULL) {
         return CKR_FUNCTION_FAILED;
     }
