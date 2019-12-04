@@ -1,6 +1,6 @@
 [submodule "mbedtls"]
 	path = mbedtls
-	url = https://github.com/NetFoundry/mbedtls.git
+	url = https://github.com/netfoundry/mbedtls.git
 [submodule "libuv"]
 	path = libuv
 	url = https://github.com/libuv/libuv.git
