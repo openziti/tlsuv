@@ -8,17 +8,7 @@ PROJECT("uv-mbed"
 #sample is off by default
 option(ENABLE_SAMPLES "Build samples." OFF)
 
-set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
-set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-add_subdirectory(mbedtls)
-set_target_properties(mbedtls PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_BINARY_DIR}/mbedtls/include)
-
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
-add_subdirectory(libuv)
-set_target_properties(uv_a PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/libuv/include)
+add_subdirectory(deps)
 
 set(uv_mbed_sources
         src/uv_mbed.c
@@ -47,7 +37,7 @@ target_include_directories(uv_mbed
         PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/p11
-        ${CMAKE_CURRENT_SOURCE_DIR}/libuv/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv/src
         )
 
 target_link_libraries(uv_mbed
