@@ -26,10 +26,6 @@ add_library(uv_mbed STATIC
         ${p11_sources}
         )
 
-if (WIN32)
-    target_include_directories(uv_mbed PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/win32/include)
-endif()
-
 target_include_directories(uv_mbed
         PUBLIC
         $<INSTALL_INTERFACE:include>

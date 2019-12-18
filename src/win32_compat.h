@@ -22,7 +22,7 @@ limitations under the License.
 
 #define strncasecmp _strnicmp
 
-#if !defined (strndup_DEFINED)
+#if !defined (strndup_DEFINED)grep
 #define strndup_DEFINED
 static char* strndup(char* p, size_t len) {
     char *s = malloc(len + 1);

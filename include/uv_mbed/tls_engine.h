@@ -19,6 +19,10 @@ limitations under the License.
 
 #include <stdlib.h>
 
+#if _WIN32
+#pragma comment (lib, "crypt32.lib")
+#endif
+
 typedef enum tls_handshake_st {
     TLS_HS_CONTINUE,
     TLS_HS_COMPLETE,
