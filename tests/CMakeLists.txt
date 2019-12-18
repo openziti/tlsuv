@@ -7,7 +7,7 @@ ENABLE_LANGUAGE(CXX)
 
 add_executable(all_tests
         all_tests.cpp ${test_srcs})
-
+set_property(TARGET all_tests PROPERTY CXX_STANDARD 11)
 target_link_libraries(all_tests
         uv_mbed)
 
