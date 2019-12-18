@@ -66,7 +66,7 @@ void test_timeout(uv_timer_t *t) {
     uv_stop(t->loop);
 }
 
-TEST_CASE("http tests", "[http]") {
+TEST_CASE("http_tests", "[http]") {
 
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 

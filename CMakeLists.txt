@@ -56,4 +56,5 @@ if(ENABLE_SAMPLES)
 add_subdirectory(sample)
 endif()
 
+ENABLE_TESTING()
 add_subdirectory(tests)
