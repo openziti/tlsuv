@@ -28,6 +28,8 @@ printf(__FILE__ ":%d " fmt "\n", __LINE__, ##__VA_ARGS__ )
 #define LOG(...)
 #endif
 
+#include "win32_compat.h"
+
 static const unsigned int U1 = 1;
 
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
