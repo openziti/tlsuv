@@ -391,7 +391,7 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     clt->tls_link = NULL;
     clt->active = NULL;
     clt->connected = false;
-    struct http_parser_url url_parse = {};
+    struct http_parser_url url_parse = {0};
     int rc = http_parser_parse_url(url, strlen(url), false, &url_parse);
 
     if (url_parse.field_set & (U1 << (unsigned int) UF_HOST)) {
