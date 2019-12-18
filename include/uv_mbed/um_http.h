@@ -22,7 +22,7 @@ limitations under the License.
 #include <uv_link_t.h>
 
 #include <stdbool.h>
-#include <sys/queue.h>
+#include "queue.h"
 #include "tls_engine.h"
 
 #ifdef __cplusplus
@@ -69,7 +69,7 @@ typedef struct um_http_req_s {
 
     void *data;
 
-    SIMPLEQ_ENTRY(um_http_req_s) _next;
+    STAILQ_ENTRY(um_http_req_s) _next;
 } um_http_req_t;
 
 typedef struct um_http_s {
@@ -90,7 +90,7 @@ typedef struct um_http_s {
 
     uv_async_t proc;
     um_http_req_t *active;
-    SIMPLEQ_HEAD(req_q, um_http_req_s) requests;
+    STAILQ_HEAD(req_q, um_http_req_s) requests;
 } um_http_t;
 
 

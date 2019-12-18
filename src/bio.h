@@ -17,7 +17,7 @@ limitations under the License.
 #ifndef UV_MBED_BIO_H
 #define UV_MBED_BIO_H
 
-#include <sys/queue.h>
+#include "uv_mbed/queue.h"
 
 typedef struct bio {
     size_t available;

@@ -164,9 +164,9 @@ static void requests_fail(um_http_t *c, int code) {
     }
 
     um_http_req_t *r;
-    while (!SIMPLEQ_EMPTY(&c->requests)) {
-        r = SIMPLEQ_FIRST(&c->requests);
-        SIMPLEQ_REMOVE_HEAD(&c->requests, _next);
+    while (!STAILQ_EMPTY(&c->requests)) {
+        r = STAILQ_FIRST(&c->requests);
+        STAILQ_REMOVE_HEAD(&c->requests, _next);
         if (r->resp_cb != NULL) {
             r->resp_cb(r, code, NULL);
             uv_unref((uv_handle_t *) &c->proc);
@@ -314,7 +314,7 @@ static void process_requests(uv_async_t *ar) {
             return;
         }
 
-        if (SIMPLEQ_EMPTY(&c->requests)) {
+        if (STAILQ_EMPTY(&c->requests)) {
             LOG("no more requests, closing");
             uv_close((uv_handle_t *) &c->proc, NULL);
             uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
@@ -322,8 +322,8 @@ static void process_requests(uv_async_t *ar) {
         }
         else {
 
-            c->active = SIMPLEQ_FIRST(&c->requests);
-            SIMPLEQ_REMOVE_HEAD(&c->requests, _next);
+            c->active = STAILQ_FIRST(&c->requests);
+            STAILQ_REMOVE_HEAD(&c->requests, _next);
 
             uv_buf_t req;
             req.base = malloc(8196);
@@ -381,7 +381,7 @@ int um_http_close(um_http_t *clt) {
 }
 
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
-    SIMPLEQ_INIT(&clt->requests);
+    STAILQ_INIT(&clt->requests);
     LIST_INIT(&clt->headers);
 
     clt->tls = NULL;
@@ -469,7 +469,7 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path) {
 
     http_parser_init(&r->response, HTTP_RESPONSE);
 
-    SIMPLEQ_INSERT_TAIL(&c->requests, r, _next);
+    STAILQ_INSERT_TAIL(&c->requests, r, _next);
 
     uv_ref((uv_handle_t *) &c->proc);
     uv_async_send(&c->proc);
@@ -590,9 +590,9 @@ static void free_http(um_http_t *clt) {
         clt->active = NULL;
     }
 
-    while (!SIMPLEQ_EMPTY(&clt->requests)) {
-        um_http_req_t *req = SIMPLEQ_FIRST(&clt->requests);
-        SIMPLEQ_REMOVE_HEAD(&clt->requests, _next);
+    while (!STAILQ_EMPTY(&clt->requests)) {
+        um_http_req_t *req = STAILQ_FIRST(&clt->requests);
+        STAILQ_REMOVE_HEAD(&clt->requests, _next);
         free_req(req);
         free(req);
     }
