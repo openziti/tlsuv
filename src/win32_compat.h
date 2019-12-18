@@ -20,6 +20,7 @@ limitations under the License.
 
 #if _WIN32
 
+#define strcasecmp _stricmp
 #define strncasecmp _strnicmp
 
 #if !defined (strndup_DEFINED)
