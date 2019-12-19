@@ -23,6 +23,6 @@ before_script:
   - cmake --config Debug ..
 
 script:
+  - cmake --build . --target uv_mbed
   - cmake --build . --target all_tests
   - ctest -VV --no-compress-output -C Debug -T Test
-  - cmake --build . --target all
