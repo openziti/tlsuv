@@ -106,6 +106,7 @@ um_http_req_t *um_http_req(um_http_t *clt, const char *method, const char *path)
 int um_http_req_header(um_http_req_t *req, const char *name, const char *value);
 
 int um_http_req_data(um_http_req_t *req, const char *body, ssize_t bodylen, um_http_body_cb cb);
+void um_http_req_end(um_http_req_t *req);
 
 #ifdef __cplusplus
 }

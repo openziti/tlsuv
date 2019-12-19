@@ -28,6 +28,7 @@ struct resp_capture {
     map<string, string> headers;
 
     string body;
+    string req_body;
 
     bool resp_body_end_called;
     bool req_body_cb_called;
@@ -35,6 +36,7 @@ struct resp_capture {
 
 void req_body_cb(um_http_req_t *req, const char *chunk, ssize_t status) {
     auto rc = static_cast<resp_capture *>(req->data);
+    rc->req_body.append(chunk);
     rc->req_body_cb_called = true;
 }
 
@@ -53,7 +55,7 @@ void resp_capture_cb(um_http_req_t *req, int code, um_header_list *headers) {
     auto rc = static_cast<resp_capture *>(req->data);
     rc->code = code;
 
-    if (headers != NULL) {
+    if (headers != nullptr) {
         um_http_hdr *h;
         LIST_FOREACH(h, headers, _next) {
             rc->headers[h->name] = h->value;
@@ -64,6 +66,17 @@ void resp_capture_cb(um_http_req_t *req, int code, um_header_list *headers) {
 void test_timeout(uv_timer_t *t) {
     printf("timeout stopping loop\n");
     uv_stop(t->loop);
+}
+
+static string part2("this is part 2");
+
+void send_part2(uv_timer_t *t) {
+    auto req = static_cast<um_http_req_t *>(t->data);
+    um_http_req_data(req, part2.c_str(), part2.length(), req_body_cb);
+    um_http_req_end(req);
+
+    uv_close(reinterpret_cast<uv_handle_t *>(t), nullptr);
+
 }
 
 TEST_CASE("http_tests", "[http]") {
@@ -123,7 +136,7 @@ TEST_CASE("http_tests", "[http]") {
         free(timer);
     }
 
-    WHEN(scheme << "redirect") {
+    WHEN(scheme << " redirect") {
         um_http_init(loop, &clt, "http://httpbin.org");
         um_http_req_t *req = um_http_req(&clt, "GET", "/redirect/2");
         req->data = &resp;
@@ -192,7 +205,7 @@ TEST_CASE("http_tests", "[http]") {
     }
 
     WHEN(scheme << " POST body") {
-        um_http_init(loop, &clt, "http://httpbin.org");
+        um_http_init(loop, &clt, (scheme + "://httpbin.org").c_str());
         um_http_req_t *req = um_http_req(&clt, "POST", "/post");
         req->data = &resp;
         req->resp_cb = resp_capture_cb;
@@ -202,8 +215,10 @@ TEST_CASE("http_tests", "[http]") {
 
         uv_run(loop, UV_RUN_DEFAULT);
 
-        REQUIRE(resp.code == HTTP_STATUS_OK);
-        REQUIRE(resp.resp_body_end_called);
+        THEN("request should complete") {
+            REQUIRE(resp.code == HTTP_STATUS_OK);
+            REQUIRE(resp.resp_body_end_called);
+        }
         REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
         int body_len = resp.body.size();
         int content_len = atoi(resp.headers["Content-Length"].c_str());
@@ -211,6 +226,46 @@ TEST_CASE("http_tests", "[http]") {
 
         REQUIRE_THAT(resp.body, Contains(req_body));
         REQUIRE(resp.req_body_cb_called);
+        um_http_close(&clt);
+        uv_timer_stop(timer);
+        free(timer);
+    }
+
+
+    WHEN(scheme << " posting chunked") {
+        um_http_init(loop, &clt, (scheme + "://httpbin.org").c_str());
+        um_http_req_t *req = um_http_req(&clt, "POST", "/post");
+        um_http_req_header(req, "Transfer-Encoding", "chunked");
+
+        req->data = &resp;
+        req->resp_cb = resp_capture_cb;
+        req->body_cb = resp_body_cb;
+        string part1("this is part1");
+        um_http_req_data(req, part1.c_str(), part1.length(), req_body_cb);
+
+        uv_timer_t p2_timer;
+        uv_timer_init(loop, &p2_timer);
+        p2_timer.data = req;
+        uv_timer_start(&p2_timer, send_part2, 1000, 0);
+
+        uv_run(loop, UV_RUN_DEFAULT);
+
+        THEN("request should complete") {
+            REQUIRE(resp.code == HTTP_STATUS_OK);
+            REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
+            REQUIRE(resp.resp_body_end_called);
+        }
+        int body_len = resp.body.size();
+        int content_len = atoi(resp.headers["Content-Length"].c_str());
+
+        THEN("response body size matches") {
+            REQUIRE(body_len == content_len);
+        }
+
+        THEN("request sent completely") {
+            REQUIRE_THAT(resp.req_body, Equals(part1 + part2));
+            REQUIRE(resp.req_body_cb_called);
+        }
         um_http_close(&clt);
         uv_timer_stop(timer);
         free(timer);

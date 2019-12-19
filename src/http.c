@@ -60,7 +60,7 @@ static void free_req(um_http_req_t *req);
 static void free_http(um_http_t *clt);
 
 struct body_chunk_s {
-    const char *chunk;
+    char *chunk;
     size_t len;
     um_http_body_cb cb;
 
@@ -324,6 +324,51 @@ static void req_write_body_cb(uv_link_t *source, int status, void *arg) {
     free(chunk);
 }
 
+static void chunk_hdr_wcb(uv_link_t *l, int status, void *arg) {
+    if (arg != NULL) {
+        free(arg);
+    }
+}
+
+static void send_body(um_http_req_t *req) {
+    um_http_t *clt = req->client;
+    if (clt->active != req) {
+        LOG("ERROR: attempt to send body for inactive request");
+    }
+
+    uv_buf_t buf;
+    while (req->req_body != NULL) {
+        struct body_chunk_s *b = req->req_body;
+        req->req_body = b->next;
+
+        if (req->req_chunked) {
+            if (b->len > 0) {
+                buf.base = malloc(10);
+                buf.len = snprintf(buf.base, 10, "%zx\r\n", b->len);
+                uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, chunk_hdr_wcb, buf.base);
+
+                buf.base = b->chunk;
+                buf.len = b->len;
+                uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, req_write_body_cb, b);
+
+                buf.base = "\r\n";
+                buf.len = 2;
+                uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, chunk_hdr_wcb, NULL);
+            } else { // last chunk
+                buf.base = "0\r\n\r\n";
+                buf.len = 5;
+                uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, chunk_hdr_wcb, NULL);
+                free(b);
+                req->state = body_sent;
+            }
+        }
+        else {
+            buf = uv_buf_init(b->chunk, b->len);
+            uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, req_write_body_cb, b);
+        }
+    }
+}
+
 static void process_requests(uv_async_t *ar) {
     um_http_t *c = ar->data;
 
@@ -387,16 +432,10 @@ static void process_requests(uv_async_t *ar) {
                                 "\r\n");
 
             uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_cb, req.base);
+            c->active->state = headers_sent;
 
             // send body
-            while (c->active->req_body != NULL) {
-                struct body_chunk_s *b = c->active->req_body;
-                c->active->req_body = b->next;
-
-                req.base = b->chunk;
-                req.len = b->len;
-                uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_body_cb, b);
-            }
+            send_body(c->active);
         }
     }
 }
@@ -541,6 +580,32 @@ int um_http_req_header(um_http_req_t *req, const char *name, const char *value) 
     return 0;
 }
 
+void um_http_req_end(um_http_req_t *req) {
+    if (req->req_chunked) {
+        struct body_chunk_s *chunk = calloc(1, sizeof(struct body_chunk_s));
+
+        chunk->len = 0;
+        chunk->next = NULL;
+        chunk->req = req;
+
+        if (req->req_body == NULL) {
+            req->req_body = chunk;
+        }
+        else {
+            struct body_chunk_s *prev = req->req_body;
+            while (prev->next != NULL) {
+                prev = prev->next;
+            }
+
+            prev->next = chunk;
+        }
+
+        if (req->client->active == req) {
+            send_body(req);
+        }
+    }
+}
+
 int um_http_req_data(um_http_req_t *req, const char *body, ssize_t body_len, um_http_body_cb cb) {
     if (strcmp(req->method, "POST") != 0 && strcmp(req->method, "PUT") != 0) {
         return UV_EINVAL;
@@ -569,6 +634,9 @@ int um_http_req_data(um_http_req_t *req, const char *body, ssize_t body_len, um_
         prev->next = chunk;
     }
 
+    if (req->client->active == req) {
+        send_body(req);
+    }
     return 0;
 }
 
