@@ -53,6 +53,8 @@ static int http_header_value_cb(http_parser *parser, const char *v, size_t len);
 
 static int http_headers_complete_cb(http_parser *p);
 
+static void requests_fail(um_http_t *c, int code);
+
 static void free_req(um_http_req_t *req);
 
 static void free_http(um_http_t *clt);
@@ -141,7 +143,12 @@ static int http_body_cb(http_parser *parser, const char *body, size_t len) {
 
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     um_http_t *c = link->data;
+
+    if (nread < 0) {
+        requests_fail(c, nread);
+    }
     if (c->active != NULL) {
+
         size_t processed = http_parser_execute(&c->active->response, &HTTP_PROC, buf->base, nread);
 
         LOG("processed %zd out of %zd", processed, nread);
@@ -236,6 +243,14 @@ static int tls_read_start(uv_link_t *l) {
 
 static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     um_http_t *clt = l->data;
+
+    if (nread < 0) {
+        if (b && b->base)
+            free(b->base);
+        uv_link_propagate_read_cb(l, nread, NULL);
+        return;
+    }
+
     tls_handshake_state hs_state = clt->engine->api->handshake_state(clt->engine->engine);
     if (hs_state == TLS_HS_CONTINUE) {
         LOG("continuing TLS handshake(%zd bytes received)", nread);
@@ -256,6 +271,15 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
             LOG("handshake completed");
             clt->connected = true;
             uv_async_send(&clt->proc);
+        }
+        else if (st == TLS_HS_ERROR) {
+            char err[1024];
+            int errlen = 0;
+            if (clt->engine->api->strerror) {
+                errlen = clt->engine->api->strerror(clt->engine->engine, err, sizeof(err));
+            }
+            LOG("TLS handshake error %*.*s", errlen, errlen, err);
+            uv_link_propagate_read_cb(l, UV_ECONNABORTED, NULL);
         }
     }
     else if (hs_state == TLS_HS_COMPLETE) {
@@ -386,6 +410,7 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     STAILQ_INIT(&clt->requests);
     LIST_INIT(&clt->headers);
 
+    clt->ssl = false;
     clt->tls = NULL;
     clt->engine = NULL;
     clt->tls_link = NULL;
