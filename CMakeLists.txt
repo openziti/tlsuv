@@ -14,7 +14,7 @@ set(uv_mbed_sources
         src/uv_mbed.c
         src/bio.c
         src/engine_mbedtls.c
-        )
+        src/http.c)
 
 set(p11_sources
         src/p11/p11_mbedtls/mbed_p11.c
@@ -25,10 +25,6 @@ add_library(uv_mbed STATIC
         ${uv_mbed_sources}
         ${p11_sources}
         )
-
-if (WIN32)
-    target_include_directories(uv_mbed PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/win32/include)
-endif()
 
 target_include_directories(uv_mbed
         PUBLIC
@@ -41,7 +37,9 @@ target_include_directories(uv_mbed
         )
 
 target_link_libraries(uv_mbed
+        PUBLIC http-parser
         PUBLIC uv_a
+        PUBLIC uv_link
         PUBLIC mbedtls
         PUBLIC mbedx509
         PUBLIC mbedcrypto)
@@ -53,3 +51,6 @@ install(TARGETS uv_mbed
 if(ENABLE_SAMPLES)
 add_subdirectory(sample)
 endif()
+
+ENABLE_TESTING()
+add_subdirectory(tests)

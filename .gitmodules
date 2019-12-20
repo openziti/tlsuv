@@ -5,3 +5,9 @@
 	path = deps/libuv
 	url = https://github.com/libuv/libuv.git
 	branch = v1.x
+[submodule "deps/uv_link_t"]
+	path = deps/uv_link_t
+	url = https://github.com/indutny/uv_link_t.git
+[submodule "deps/http-parser"]
+	path = deps/http-parser
+	url = https://github.com/netfoundry/http-parser
