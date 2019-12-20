@@ -23,6 +23,10 @@ limitations under the License.
 #pragma comment (lib, "crypt32.lib")
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum tls_handshake_st {
     TLS_HS_CONTINUE,
     TLS_HS_COMPLETE,
@@ -114,7 +118,7 @@ typedef struct {
      * if `cert_buf is NULL` certificate is loaded from HSM as well, matched by `key_id` (TODO: not implemented yet)
      */
     int (*set_own_cert_pkcs11)(void *ctx, const char *cert_buf, size_t cert_len,
-            const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
+                               const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
 
 } tls_context_api;
 
@@ -125,4 +129,7 @@ struct tls_context_s {
 
 tls_context *default_tls_context(const char *ca, size_t ca_len);
 
+#ifdef __cplusplus
+}
+#endif
 #endif //UV_MBED_TLS_ENGINE_H

@@ -62,7 +62,7 @@ struct tcp_write_ctx {
 
 static tls_context *DEFAULT_TLS = NULL;
 
-static tls_context *get_default_tls() {
+tls_context *get_default_tls() {
     if (DEFAULT_TLS == NULL) {
         DEFAULT_TLS = default_tls_context(NULL, 0);
     }

@@ -137,6 +137,17 @@ typedef struct um_http_s {
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url);
 
 /**
+ * @brief Set #tls_context on the client.
+ *
+ * Useful if you have custom TLS context (different implementation)
+ * or default TLS context configured with custom CA or client certificate.
+ * This operation only makes sense if client was initialized with `https` URL.
+ * @see um_http_init()
+ * @see tls_context
+ */
+void um_http_set_ssl(um_http_t *clt, tls_context *tls);
+
+/**
  * Set header on the client. All requests execute by the client will get that request header
  * @param clt
  * @param name
