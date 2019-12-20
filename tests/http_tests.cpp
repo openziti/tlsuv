@@ -274,7 +274,7 @@ TEST_CASE("http_tests", "[http]") {
     }
 }
 
-SCENARIO("client_cert_test","[http]") {
+TEST_CASE("client_cert_test","[http]") {
     uv_loop_t *loop = uv_default_loop();
     um_http_t clt;
     resp_capture resp;
