@@ -30,6 +30,8 @@ printf(__FILE__ ":%d " fmt "\n", __LINE__, ##__VA_ARGS__ )
 
 #include "win32_compat.h"
 
+extern tls_context *get_default_tls();
+
 static const unsigned int U1 = 1;
 
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
@@ -230,8 +232,10 @@ static int tls_read_start(uv_link_t *l) {
     uv_link_default_read_start(l);
 
     um_http_t *clt = l->data;
+    if (clt->tls == NULL) {
+        clt->tls = get_default_tls();
+    }
     clt->engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
-
 
     uv_buf_t buf;
     buf.base = malloc(32 * 1024);
@@ -510,8 +514,6 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
         uv_link_init(clt->tls_link, &tls_methods);
         clt->tls_link->data = clt;
 
-        clt->tls = default_tls_context(NULL, 0);
-
         uv_link_chain((uv_link_t *) &clt->conn_src, clt->tls_link);
         uv_link_chain(clt->tls_link, &clt->http_link);
     }
@@ -520,6 +522,10 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     }
 
     return 0;
+}
+
+void um_http_set_ssl(um_http_t *clt, tls_context *tls) {
+    clt->tls = tls;
 }
 
 um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path) {
@@ -670,10 +676,7 @@ static void free_http(um_http_t *clt) {
         clt->tls->api->free_engine(clt->engine);
         clt->engine = NULL;
     }
-    if (clt->tls != NULL) {
-        clt->tls->api->free_ctx(clt->tls);
-        clt->tls = NULL;
-    }
+    clt->tls = NULL;
     if (clt->tls_link != NULL) {
         free(clt->tls_link);
         clt->tls_link = NULL;
