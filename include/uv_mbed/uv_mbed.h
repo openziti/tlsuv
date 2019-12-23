@@ -29,6 +29,8 @@ extern "C" {
 typedef struct uv_mbed_s uv_mbed_t;
 typedef struct bio BIO;
 
+void uv_mbed_set_debug(int level, FILE *output);
+
 int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls);
 int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, unsigned int delay);
 int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay);
