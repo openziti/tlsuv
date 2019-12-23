@@ -6,7 +6,9 @@ PROJECT("uv-mbed"
         )
 
 #sample is off by default
-option(ENABLE_SAMPLES "Build samples." OFF)
+option(ENABLE_UM_SAMPLES "Build samples." OFF)
+
+option(ENABLE_UM_TESTS "Build tests." ON)
 
 add_subdirectory(deps)
 
@@ -14,7 +16,10 @@ set(uv_mbed_sources
         src/uv_mbed.c
         src/bio.c
         src/engine_mbedtls.c
-        src/http.c)
+        src/http.c
+        src/um_debug.c
+        src/um_debug.h
+        )
 
 set(p11_sources
         src/p11/p11_mbedtls/mbed_p11.c
@@ -48,9 +53,11 @@ install(DIRECTORY include/uv_mbed DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(TARGETS uv_mbed
         ARCHIVE DESTINATION lib)
 
-if(ENABLE_SAMPLES)
+if(ENABLE_UM_SAMPLES)
 add_subdirectory(sample)
 endif()
 
+if(ENABLE_UM_TESTS)
 ENABLE_TESTING()
 add_subdirectory(tests)
+endif()

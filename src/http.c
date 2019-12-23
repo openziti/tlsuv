@@ -19,15 +19,7 @@ limitations under the License.
 #include <stdlib.h>
 #include <string.h>
 
-#define DEBUG
-
-#ifdef DEBUG
-#define LOG(fmt, ...) \
-printf(__FILE__ ":%d " fmt "\n", __LINE__, ##__VA_ARGS__ )
-#else
-#define LOG(...)
-#endif
-
+#include "um_debug.h"
 #include "win32_compat.h"
 
 extern tls_context *get_default_tls();
@@ -121,12 +113,12 @@ static int http_header_value_cb(http_parser *parser, const char *v, size_t len) 
 }
 
 static int http_status_cb(http_parser *parser, const char *status, size_t len) {
-    LOG("status = %d %*.*s", parser->status_code, (int) len, (int) len, status);
+    UM_LOG(INFO, "status = %d %*.*s", parser->status_code, (int) len, (int) len, status);
     return 0;
 }
 
 static int http_message_cb(http_parser *parser) {
-    LOG("message complete");
+    UM_LOG(INFO, "message complete");
     um_http_req_t *r = parser->data;
     r->state = completed;
     if (r->body_cb != NULL) {
@@ -153,7 +145,7 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 
         size_t processed = http_parser_execute(&c->active->response, &HTTP_PROC, buf->base, nread);
 
-        LOG("processed %zd out of %zd", processed, nread);
+        UM_LOG(INFO, "processed %zd out of %zd", processed, nread);
         if (c->active->state == completed) {
             um_http_req_t *hr = c->active;
             c->active = NULL;
@@ -240,7 +232,7 @@ static int tls_read_start(uv_link_t *l) {
     uv_buf_t buf;
     buf.base = malloc(32 * 1024);
     tls_handshake_state st = clt->engine->api->handshake(clt->engine->engine, NULL, 0, buf.base, &buf.len, 32 * 1024);
-    LOG("starting TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
+    UM_LOG(INFO, "starting TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
 
     return uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, buf.base);
 }
@@ -257,13 +249,13 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
 
     tls_handshake_state hs_state = clt->engine->api->handshake_state(clt->engine->engine);
     if (hs_state == TLS_HS_CONTINUE) {
-        LOG("continuing TLS handshake(%zd bytes received)", nread);
+        UM_LOG(INFO, "continuing TLS handshake(%zd bytes received)", nread);
         uv_buf_t buf;
         buf.base = malloc(32 * 1024);
         tls_handshake_state st =
                 clt->engine->api->handshake(clt->engine->engine, b->base, nread, buf.base, &buf.len, 32 * 1024);
 
-        LOG("continuing TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
+        UM_LOG(INFO, "continuing TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
         if (buf.len > 0) {
             uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, buf.base);
         }
@@ -272,7 +264,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         }
 
         if (st == TLS_HS_COMPLETE) {
-            LOG("handshake completed");
+            UM_LOG(INFO, "handshake completed");
             clt->connected = true;
             uv_async_send(&clt->proc);
         }
@@ -282,7 +274,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
             if (clt->engine->api->strerror) {
                 errlen = clt->engine->api->strerror(clt->engine->engine, err, sizeof(err));
             }
-            LOG("TLS handshake error %*.*s", errlen, errlen, err);
+            UM_LOG(ERR, "TLS handshake error %*.*s", errlen, errlen, err);
             uv_link_propagate_read_cb(l, UV_ECONNABORTED, NULL);
         }
     }
@@ -293,7 +285,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         uv_link_propagate_read_cb(l, read_buf.len, &read_buf);
     }
     else {
-        LOG("hs_state = %d", hs_state);
+        UM_LOG(INFO, "hs_state = %d", hs_state);
     }
 
     if (b != NULL && b->base != NULL) {
@@ -315,12 +307,12 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
 }
 
 static void req_write_cb(uv_link_t *source, int status, void *arg) {
-    LOG("request write completed: %d", status);
+    UM_LOG(INFO, "request write completed: %d", status);
     free(arg);
 }
 
 static void req_write_body_cb(uv_link_t *source, int status, void *arg) {
-    LOG("request body write completed: %d", status);
+    UM_LOG(INFO, "request body write completed: %d", status);
     struct body_chunk_s *chunk = arg;
     if (chunk->cb) {
         chunk->cb(chunk->req, chunk->chunk, status);
@@ -337,7 +329,7 @@ static void chunk_hdr_wcb(uv_link_t *l, int status, void *arg) {
 static void send_body(um_http_req_t *req) {
     um_http_t *clt = req->client;
     if (clt->active != req) {
-        LOG("ERROR: attempt to send body for inactive request");
+        UM_LOG(ERR, "attempt to send body for inactive request");
     }
 
     uv_buf_t buf;
@@ -377,20 +369,20 @@ static void process_requests(uv_async_t *ar) {
     um_http_t *c = ar->data;
 
     if (!c->connected) {
-        LOG("client not connected, starting connect sequence");
+        UM_LOG(INFO, "client not connected, starting connect sequence");
         uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
         resolv_req->data = c;
         uv_getaddrinfo(ar->loop, resolv_req, resolve_cb, c->host, c->port, NULL);
     }
     else {
-        LOG("client connected, processing request");
+        UM_LOG(INFO, "client connected, processing request");
 
         if (c->active != NULL) {
             return;
         }
 
         if (STAILQ_EMPTY(&c->requests)) {
-            LOG("no more requests, closing");
+            UM_LOG(INFO, "no more requests, closing");
             uv_close((uv_handle_t *) &c->proc, NULL);
             uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
 
@@ -468,7 +460,7 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
                             url_parse.field_data[UF_HOST].len);
     }
     else {
-        fprintf(stderr, "invalid URL: no host");
+        UM_LOG(ERR, "invalid URL: no host");
         return UV_EINVAL;
     }
 
@@ -483,14 +475,14 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
             clt->ssl = true;
         }
         else {
-            fprintf(stderr, "scheme(%*.*s) is not supported",
+            UM_LOG(ERR, "scheme(%*.*s) is not supported",
                     url_parse.field_data[UF_SCHEMA].len, url_parse.field_data[UF_SCHEMA].len,
                     url + url_parse.field_data[UF_SCHEMA].off);
             return UV_EINVAL;
         }
     }
     else {
-        fprintf(stderr, "invalid URL: no scheme");
+        UM_LOG(ERR, "invalid URL: no scheme");
         return UV_EINVAL;
     }
 
