@@ -14,16 +14,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#define CATCH_CONFIG_RUNNER
 
-#include <uv_mbed/uv_mbed.h>
-#include "catch.hpp"
+#ifndef UV_MBED_UM_DEBUG_H
+#define UV_MBED_UM_DEBUG_H
 
-int main( int argc, char* argv[] ) {
+#define NONE 0
+#define ERR 1
+#define WARN 2
+#define INFO 3
+#define VERB 4
+#define TRACE 5
 
-    // enable full logging during tests
-    uv_mbed_set_debug(5, stdout);
-    int result = Catch::Session().run( argc, argv );
+extern int um_log_level;
+extern void um_log(const char* fmt, ...);
 
-    return result;
-}
+#define UM_LOG(lvl, fmt, ...) do {\
+if ((lvl) <= um_log_level) um_log(__FILE__ ":%d " #lvl " " fmt "\n", __LINE__, ##__VA_ARGS__ ); \
+}while(0)
+
+#endif //UV_MBED_UM_DEBUG_H

@@ -14,7 +14,10 @@ set(uv_mbed_sources
         src/uv_mbed.c
         src/bio.c
         src/engine_mbedtls.c
-        src/http.c)
+        src/http.c
+        src/um_debug.c
+        src/um_debug.h
+        )
 
 set(p11_sources
         src/p11/p11_mbedtls/mbed_p11.c
