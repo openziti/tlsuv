@@ -274,7 +274,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
             if (clt->engine->api->strerror) {
                 errlen = clt->engine->api->strerror(clt->engine->engine, err, sizeof(err));
             }
-            UM_LOG(INFO, "TLS handshake error %*.*s", errlen, errlen, err);
+            UM_LOG(ERR, "TLS handshake error %*.*s", errlen, errlen, err);
             uv_link_propagate_read_cb(l, UV_ECONNABORTED, NULL);
         }
     }
@@ -329,7 +329,7 @@ static void chunk_hdr_wcb(uv_link_t *l, int status, void *arg) {
 static void send_body(um_http_req_t *req) {
     um_http_t *clt = req->client;
     if (clt->active != req) {
-        UM_LOG(INFO, "ERROR: attempt to send body for inactive request");
+        UM_LOG(ERR, "attempt to send body for inactive request");
     }
 
     uv_buf_t buf;
@@ -460,7 +460,7 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
                             url_parse.field_data[UF_HOST].len);
     }
     else {
-        fprintf(stderr, "invalid URL: no host");
+        UM_LOG(ERR, "invalid URL: no host");
         return UV_EINVAL;
     }
 
@@ -475,14 +475,14 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
             clt->ssl = true;
         }
         else {
-            fprintf(stderr, "scheme(%*.*s) is not supported",
+            UM_LOG(ERR, "scheme(%*.*s) is not supported",
                     url_parse.field_data[UF_SCHEMA].len, url_parse.field_data[UF_SCHEMA].len,
                     url + url_parse.field_data[UF_SCHEMA].off);
             return UV_EINVAL;
         }
     }
     else {
-        fprintf(stderr, "invalid URL: no scheme");
+        UM_LOG(ERR, "invalid URL: no scheme");
         return UV_EINVAL;
     }
 
