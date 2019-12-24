@@ -122,6 +122,9 @@ typedef struct um_http_s {
     uv_link_t http_link;
     uv_link_t *tls_link;
 
+    long idle_time;
+    uv_timer_t idle_timer;
+
     uv_async_t proc;
     um_http_req_t *active;
     STAILQ_HEAD(req_q, um_http_req_s) requests;
@@ -135,6 +138,19 @@ typedef struct um_http_s {
  * @return 0 or error code
  */
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url);
+
+/**
+ * \brief Set idle timeout.
+ *
+ * Sets the length of time client will keep connection open after the last request was processed.
+ * Timeout of 0 will cause connection to be closed as soon as the last request in the queue is completed,
+ * client will re-establish connection for any consequent requests.
+ * Note: this only controls client side of the connection, server side may close it at any time before timeout expires.
+ * @param clt
+ * @param millis timeout in milliseconds, use -1 to defer to server side closing connection, default is 0
+ * @return 0 or error code
+ */
+int um_http_idle_keepalive(um_http_t *clt, long millis);
 
 /**
  * @brief Set #tls_context on the client.

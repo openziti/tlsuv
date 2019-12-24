@@ -12,5 +12,5 @@ target_link_libraries(all_tests
         uv_mbed)
 
 include(CTest)
-add_test(http_tests all_tests http_tests)
-add_test(client_cert_test all_tests client_cert_test)
+add_test(http_tests all_tests [http])
+add_test(model_tests all_tests [model])

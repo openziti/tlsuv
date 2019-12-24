@@ -16,12 +16,19 @@ limitations under the License.
 
 #include <uv_mbed/um_http.h>
 #include <string.h>
+#include <uv_mbed/uv_mbed.h>
 
 void resp_cb(um_http_req_t *req, int code, um_header_list *headers) {
-    printf("Response (%d) >>>\nHeaders >>>\n", code);
+    if (code < 0) {
+        fprintf(stderr, "ERROR: %d(%s)", code, uv_strerror(code));
+        exit(code);
+    }
     um_http_hdr *h;
-    LIST_FOREACH(h, headers, _next) {
-        printf("\t%s: %s\n", h->name, h->value);
+    printf("Response (%d) >>>\nHeaders >>>\n", code);
+    if (headers) {
+        LIST_FOREACH(h, headers, _next) {
+            printf("\t%s: %s\n", h->name, h->value);
+        }
     }
 }
 
@@ -31,6 +38,7 @@ void body_cb(um_http_req_t *req, const char *body, ssize_t len) {
     }
     else if (len < 0) {
         fprintf(stderr, "error(%zd) %s", len, uv_strerror(len));
+        exit(-1);
     }
     else {
         printf("%*.*s", (int) len, (int) len, body);
@@ -38,7 +46,7 @@ void body_cb(um_http_req_t *req, const char *body, ssize_t len) {
 }
 
 int main(int argc, char **argv) {
-
+    uv_mbed_set_debug(5, stdout);
     uv_loop_t *loop = uv_default_loop();
 
     um_http_t clt;
