@@ -384,7 +384,8 @@ TEST_CASE("client_cert_test","[http]") {
     }
 }
 
-#define ONE_SECOND 1000000
+const int ONE_SECOND = 1000000;
+
 static long duration(uv_timeval64_t &start, uv_timeval64_t &stop) {
     return stop.tv_sec * ONE_SECOND + stop.tv_usec - start.tv_sec * ONE_SECOND - start.tv_usec;
 }
@@ -420,8 +421,8 @@ TEST_CASE("client_idle_test","[http]") {
 
         THEN("request should be fast and then idle for 5 seconds") {
             REQUIRE(resp.code == HTTP_STATUS_OK);
-            REQUIRE(duration(start, resp.resp_endtime) < ONE_SECOND);
-            REQUIRE(duration(start, stop) >= 5 * ONE_SECOND);
+            REQUIRE(duration(start, resp.resp_endtime) < 2 * ONE_SECOND);
+            REQUIRE(duration(resp.resp_endtime, stop) >= 5 * ONE_SECOND);
         }
 
         um_http_close(&clt);
