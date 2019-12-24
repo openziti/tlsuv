@@ -22,6 +22,8 @@ limitations under the License.
 #include "um_debug.h"
 #include "win32_compat.h"
 
+#define DEFAULT_IDLE_TIMEOUT 0
+
 extern tls_context *get_default_tls();
 
 static const unsigned int U1 = 1;
@@ -48,7 +50,7 @@ static int http_header_value_cb(http_parser *parser, const char *v, size_t len);
 static int http_headers_complete_cb(http_parser *p);
 
 static void requests_fail(um_http_t *c, int code);
-
+static void close_connection(um_http_t *c);
 static void free_req(um_http_req_t *req);
 
 static void free_http(um_http_t *clt);
@@ -139,8 +141,13 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     um_http_t *c = link->data;
 
     if (nread < 0) {
+        UM_LOG(WARN, "received %zd (%s)", nread, uv_strerror(nread));
         requests_fail(c, nread);
+
+        close_connection(c);
+        return;
     }
+
     if (c->active != NULL) {
 
         size_t processed = http_parser_execute(&c->active->response, &HTTP_PROC, buf->base, nread);
@@ -154,6 +161,8 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 
             uv_async_send(&c->proc);
         }
+    } else {
+        UM_LOG(ERR, "received %zd bytes without active request");
     }
 
     if (buf && buf->base) {
@@ -365,6 +374,20 @@ static void send_body(um_http_req_t *req) {
     }
 }
 
+static void close_connection(um_http_t *c) {
+    uv_timer_stop(&c->idle_timer);
+    if (c->connected) {
+        c->connected = false;
+        uv_close((uv_handle_t *) &c->proc, NULL);
+        uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
+    }
+}
+
+static void idle_timeout(uv_timer_t *t) {
+    um_http_t *clt = t->data;
+    close_connection(clt);
+}
+
 static void process_requests(uv_async_t *ar) {
     um_http_t *c = ar->data;
 
@@ -382,10 +405,10 @@ static void process_requests(uv_async_t *ar) {
         }
 
         if (STAILQ_EMPTY(&c->requests)) {
-            UM_LOG(INFO, "no more requests, closing");
-            uv_close((uv_handle_t *) &c->proc, NULL);
-            uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
-
+            if (c->idle_time >= 0) {
+                UM_LOG(INFO, "no more requests, scheduling idle(%ld) close", c->idle_time);
+                uv_timer_start(&c->idle_timer, idle_timeout, c->idle_time, 0);
+            }
         }
         else {
 
@@ -426,7 +449,7 @@ static void process_requests(uv_async_t *ar) {
             }
             req.len += snprintf(req.base + req.len, 8196 - req.len,
                                 "\r\n");
-
+            UM_LOG(VERB, "writing request >>> %*.*s", req.len, req.len, req.base);
             uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_cb, req.base);
             c->active->state = headers_sent;
 
@@ -451,6 +474,14 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     clt->tls_link = NULL;
     clt->active = NULL;
     clt->connected = false;
+
+    clt->idle_time = DEFAULT_IDLE_TIMEOUT;
+    uv_timer_init(l, &clt->idle_timer);
+    uv_unref((uv_handle_t *) &clt->idle_timer);
+    clt->idle_timer.data = clt;
+
+    um_http_header(clt, "Connection", "keep-alive");
+
     struct http_parser_url url_parse = {0};
     int rc = http_parser_parse_url(url, strlen(url), false, &url_parse);
 
@@ -516,6 +547,11 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     return 0;
 }
 
+int um_http_idle_keepalive(um_http_t *clt, long millis) {
+    clt->idle_time = millis;
+    return 0;
+}
+
 void um_http_set_ssl(um_http_t *clt, tls_context *tls) {
     clt->tls = tls;
 }
@@ -535,6 +571,7 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path) {
 
     STAILQ_INSERT_TAIL(&c->requests, r, _next);
 
+    uv_timer_stop(&c->idle_timer);
     uv_ref((uv_handle_t *) &c->proc);
     uv_async_send(&c->proc);
 

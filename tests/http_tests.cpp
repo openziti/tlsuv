@@ -25,7 +25,8 @@ limitations under the License.
 using namespace std;
 using namespace Catch::Matchers;
 
-struct resp_capture {
+class resp_capture {
+public:
     ssize_t code;
     map<string, string> headers;
 
@@ -34,6 +35,8 @@ struct resp_capture {
 
     bool resp_body_end_called;
     bool req_body_cb_called;
+
+    uv_timeval64_t resp_endtime;
 };
 
 void req_body_cb(um_http_req_t *req, const char *chunk, ssize_t status) {
@@ -380,3 +383,91 @@ TEST_CASE("client_cert_test","[http]") {
         tls->api->free_ctx(tls);
     }
 }
+
+#define ONE_SECOND 1000000
+static long duration(uv_timeval64_t &start, uv_timeval64_t &stop) {
+    return stop.tv_sec * ONE_SECOND + stop.tv_usec - start.tv_sec * ONE_SECOND - start.tv_usec;
+}
+
+TEST_CASE("client_idle_test","[http]") {
+    uv_loop_t *loop = uv_default_loop();
+    um_http_t clt;
+    resp_capture resp;
+    um_http_init(loop, &clt, "https://httpbin.org");
+    um_http_idle_keepalive(&clt, 5000);
+    um_http_req_t *req = um_http_req(&clt, "GET", "/get");
+
+    req->data = &resp;
+    req->resp_cb = [](um_http_req_t *req, int c, um_header_list *headers){
+        auto r = static_cast<resp_capture*>(req->data);
+        r->code = c;
+    };
+
+    req->body_cb = [](um_http_req_t* req, const char* b, ssize_t len){
+        auto r = static_cast<resp_capture*>(req->data);
+
+        if (len == UV_EOF) {
+            uv_gettimeofday(&r->resp_endtime);
+        }
+    };
+
+    WHEN("client idle timeout is set to 5 seconds") {
+        uv_timeval64_t start;
+        uv_gettimeofday(&start);
+        uv_run(loop, UV_RUN_DEFAULT);
+        uv_timeval64_t stop;
+        uv_gettimeofday(&stop);
+
+        THEN("request should be fast and then idle for 5 seconds") {
+            REQUIRE(resp.code == HTTP_STATUS_OK);
+            REQUIRE(duration(start, resp.resp_endtime) < ONE_SECOND);
+            REQUIRE(duration(start, stop) >= 5 * ONE_SECOND);
+        }
+
+        um_http_close(&clt);
+    }
+}
+
+// hidden test
+// can't rely on server closing connection in time
+TEST_CASE("server_idle_close","[.]") {
+    uv_loop_t *loop = uv_default_loop();
+    um_http_t clt;
+    resp_capture resp;
+    um_http_init(loop, &clt, "http://www.aptivate.org");
+    um_http_idle_keepalive(&clt, -1);
+    um_http_req_t *req = um_http_req(&clt, "GET", "/");
+
+    req->data = &resp;
+    req->resp_cb = [](um_http_req_t *req, int c, um_header_list *headers){
+        auto r = static_cast<resp_capture*>(req->data);
+        r->code = c;
+    };
+
+    req->body_cb = [](um_http_req_t* req, const char* b, ssize_t len){
+        auto r = static_cast<resp_capture*>(req->data);
+
+        if (len == UV_EOF) {
+            uv_gettimeofday(&r->resp_endtime);
+        }
+    };
+
+    WHEN("client timeout is set to -1") {
+        uv_timeval64_t start;
+        uv_gettimeofday(&start);
+        uv_run(loop, UV_RUN_DEFAULT);
+        uv_timeval64_t stop;
+        uv_gettimeofday(&stop);
+
+        THEN("request should be fast and then idle until server disconnects") {
+            REQUIRE(resp.code == HTTP_STATUS_OK);
+            REQUIRE(duration(start, resp.resp_endtime) < ONE_SECOND);
+            auto test_duration = duration(start, stop);
+            REQUIRE(test_duration >= 5 * ONE_SECOND);
+            REQUIRE(test_duration < 30 * ONE_SECOND);
+        }
+
+        um_http_close(&clt);
+    }
+}
+
