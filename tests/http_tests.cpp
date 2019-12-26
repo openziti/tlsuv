@@ -105,9 +105,6 @@ TEST_CASE("http_tests", "[http]") {
         uv_run(loop, UV_RUN_DEFAULT);
 
         REQUIRE(resp.code == UV_EAI_NONAME);
-        um_http_close(&clt);
-        uv_timer_stop(timer);
-        free(timer);
     }
 
     WHEN(scheme << " connect failure") {
@@ -120,9 +117,6 @@ TEST_CASE("http_tests", "[http]") {
         uv_run(loop, UV_RUN_DEFAULT);
 
         REQUIRE(resp.code == UV_ECONNREFUSED);
-        um_http_close(&clt);
-        uv_timer_stop(timer);
-        free(timer);
     }
 
     WHEN(scheme << " redirect google.com ") {
@@ -136,9 +130,6 @@ TEST_CASE("http_tests", "[http]") {
         REQUIRE(resp.code == HTTP_STATUS_MOVED_PERMANENTLY);
         REQUIRE_THAT(resp.headers["Location"], Equals(scheme + "://www.google.com/"));
         REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("text/html"));
-        um_http_close(&clt);
-        uv_timer_stop(timer);
-        free(timer);
     }
 
     WHEN(scheme << " redirect") {
@@ -152,9 +143,6 @@ TEST_CASE("http_tests", "[http]") {
         REQUIRE(resp.code == HTTP_STATUS_FOUND);
         REQUIRE(resp.headers["Location"] == "/relative-redirect/1");
         REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("text/html"));
-        um_http_close(&clt);
-        uv_timer_stop(timer);
-        free(timer);
     }
 
     WHEN(scheme << " body GET") {
@@ -172,10 +160,6 @@ TEST_CASE("http_tests", "[http]") {
         int body_len = resp.body.size();
         int content_len = atoi(resp.headers["Content-Length"].c_str());
         REQUIRE(body_len == content_len);
-        uv_timer_stop(timer);
-        um_http_close(&clt);
-        free(timer);
-
     }
 
     WHEN(scheme << " send headers") {
@@ -203,10 +187,6 @@ TEST_CASE("http_tests", "[http]") {
 
         REQUIRE_THAT(resp.body, Contains("\"Request-Header\": \"this is request header\""));
         REQUIRE_THAT(resp2.body, !Contains("\"Request-Header\": \"this is request header\""));
-
-        um_http_close(&clt);
-        uv_timer_stop(timer);
-        free(timer);
     }
 
     WHEN(scheme << " POST body") {
@@ -231,9 +211,6 @@ TEST_CASE("http_tests", "[http]") {
 
         REQUIRE_THAT(resp.body, Contains(req_body));
         REQUIRE(resp.req_body_cb_called);
-        um_http_close(&clt);
-        uv_timer_stop(timer);
-        free(timer);
     }
 
 
@@ -271,10 +248,10 @@ TEST_CASE("http_tests", "[http]") {
             REQUIRE_THAT(resp.req_body, Equals(part1 + part2));
             REQUIRE(resp.req_body_cb_called);
         }
-        um_http_close(&clt);
-        uv_timer_stop(timer);
-        free(timer);
     }
+    um_http_close(&clt);
+    uv_timer_stop(timer);
+    free(timer);
 }
 
 TEST_CASE("client_cert_test","[http]") {
@@ -420,9 +397,9 @@ TEST_CASE("client_idle_test","[http]") {
         uv_gettimeofday(&stop);
 
         THEN("request should be fast and then idle for 5 seconds") {
-            REQUIRE(resp.code == HTTP_STATUS_OK);
-            REQUIRE(duration(start, resp.resp_endtime) < 2 * ONE_SECOND);
-            REQUIRE(duration(resp.resp_endtime, stop) >= 5 * ONE_SECOND);
+            CHECK(resp.code == HTTP_STATUS_OK);
+            CHECK(duration(start, resp.resp_endtime) < 2 * ONE_SECOND);
+            CHECK(duration(resp.resp_endtime, stop) >= 5 * ONE_SECOND);
         }
 
         um_http_close(&clt);

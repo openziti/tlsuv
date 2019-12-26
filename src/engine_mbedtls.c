@@ -211,6 +211,16 @@ static void mbedtls_free_ctx(tls_context *ctx) {
     mbedtls_ctr_drbg_free(drbg);
     free(drbg);
 
+    if (c->own_key) {
+        mbedtls_pk_free(c->own_key);
+        free(c->own_key);
+    }
+
+    if (c->own_cert) {
+        mbedtls_x509_crt_free(c->own_cert);
+        free(c->own_cert);
+    }
+
     mbedtls_ssl_config_free(&c->config);
     free(c);
     free(ctx);
