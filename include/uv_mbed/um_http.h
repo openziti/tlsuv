@@ -164,10 +164,12 @@ int um_http_idle_keepalive(um_http_t *clt, long millis);
 void um_http_set_ssl(um_http_t *clt, tls_context *tls);
 
 /**
- * Set header on the client. All requests execute by the client will get that request header
+ * \brief Set header on the client.
+ *
+ * All requests execute by the client will get that request header. Pass `value==NULL` to unset the header.
  * @param clt
- * @param name
- * @param value
+ * @param name name of the header
+ * @param value value
  */
 void um_http_header(um_http_t *clt, const char *name, const char *value);
 

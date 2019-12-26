@@ -579,11 +579,31 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path) {
 }
 
 void um_http_header(um_http_t *clt, const char *name, const char *value) {
-    um_http_hdr *h = malloc(sizeof(um_http_hdr));
-    h->name = strdup(name);
-    h->value = strdup(value);
+    um_http_hdr *h;
+    LIST_FOREACH(h, &clt->headers, _next) {
+        if (strcmp(h->name, name) == 0) {
+            break;
+        }
+    }
 
-    LIST_INSERT_HEAD(&clt->headers, h, _next);
+    if (value == NULL) {
+        if (h != NULL) {
+            LIST_REMOVE(h, _next);
+            free(h->value);
+            free(h->name);
+        }
+        return;
+    }
+
+    if (h == NULL) {
+        h = malloc(sizeof(um_http_hdr));
+        h->name = strdup(name);
+        LIST_INSERT_HEAD(&clt->headers, h, _next);
+    } else {
+        free(h->value);
+    }
+
+    h->value = strdup(value);
 }
 
 int um_http_req_header(um_http_req_t *req, const char *name, const char *value) {
