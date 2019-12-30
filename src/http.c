@@ -150,6 +150,7 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 
     if (c->active != NULL) {
 
+        UM_LOG(INFO, "processing \n%*.*s", nread, nread, buf->base);
         size_t processed = http_parser_execute(&c->active->response, &HTTP_PROC, buf->base, nread);
 
         UM_LOG(INFO, "processed %zd out of %zd", processed, nread);
@@ -290,7 +291,24 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     else if (hs_state == TLS_HS_COMPLETE) {
         uv_buf_t read_buf;
         uv_link_propagate_alloc_cb(l, 32 * 1024, &read_buf);
-        clt->engine->api->read(clt->engine->engine, b->base, nread, read_buf.base, &read_buf.len, 32 * 1024);
+
+        size_t readbuflen = read_buf.len;
+        read_buf.len = 0;
+
+        size_t out_bytes;
+        char *inptr = b->base;
+        size_t inlen = nread;
+        int rc;
+        do {
+            rc = clt->engine->api->read(clt->engine->engine, inptr, inlen,
+                    read_buf.base + read_buf.len, &out_bytes, readbuflen - read_buf.len);
+
+            UM_LOG(INFO, "produced %zd application byte (rc=%d)", out_bytes, rc);
+            read_buf.len += out_bytes;
+            inptr = NULL;
+            inlen = 0;
+        } while (rc == TLS_MORE_AVAILABLE && out_bytes > 0);
+
         uv_link_propagate_read_cb(l, read_buf.len, &read_buf);
     }
     else {
@@ -460,6 +478,7 @@ static void process_requests(uv_async_t *ar) {
 }
 
 int um_http_close(um_http_t *clt) {
+    close_connection(clt);
     free_http(clt);
     return 0;
 }
