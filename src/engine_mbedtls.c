@@ -23,6 +23,7 @@ limitations under the License.
 #include <uv_mbed/uv_mbed.h>
 #include "bio.h"
 #include "p11_mbedtls/mbed_p11.h"
+#include "um_debug.h"
 
 #if _WIN32
 #include <wincrypt.h>
@@ -367,24 +368,34 @@ mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, siz
         BIO_put(eng->in, ssl_in, ssl_in_len);
     }
 
-    int rc = mbedtls_ssl_read(eng->ssl, out, maxout);
+    int rc;
+    uint8_t *writep = (uint8_t*)out;
+    size_t total_out = 0;
 
+    do {
+        rc = mbedtls_ssl_read(eng->ssl, writep, maxout - total_out);
+
+        if (rc > 0) {
+            total_out += rc;
+            writep += rc;
+        }
+    } while(rc > 0 && (maxout - total_out) > 0);
+
+    *out_bytes = total_out;
+
+    // this indicates that more bytes are neded to complete SSL frame
     if (rc == MBEDTLS_ERR_SSL_WANT_READ) {
-        *out_bytes = 0;
-        return TLS_READ_AGAIN;
+        *out_bytes = total_out;
+        return TLS_OK;
     }
 
-    if (rc == 0) {
-        return TLS_EOF;
-    }
     if (rc < 0) {
         char err[1024];
         mbedtls_strerror(rc, err, 1024);
-        printf("read = %d(%s)", rc, err);
-        return TLS_ERR; // TODO
+        UM_LOG(ERR, "mbedTLS: %0x(%s)", rc, err);
+        return TLS_ERR;
     }
 
-    *out_bytes = rc;
     if (BIO_available(eng->in) > 0 || mbedtls_ssl_check_pending(eng->ssl)) {
         return TLS_MORE_AVAILABLE;
     }
