@@ -14,27 +14,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#ifndef UV_MBED_BIO_H
-#define UV_MBED_BIO_H
 
-#include "uv_mbed/queue.h"
+#ifndef UV_MBED_UM_DEBUG_H
+#define UV_MBED_UM_DEBUG_H
 
-typedef struct bio {
-    size_t available;
-    size_t headoffset;
-    unsigned int qlen;
-    int zerocopy;
-    STAILQ_HEAD(msgq, msg) message_q;
-} BIO;
+#define NONE 0
+#define ERR 1
+#define WARN 2
+#define INFO 3
+#define VERB 4
+#define TRACE 5
 
-// zerocopy means that buffer passed into BIO_put will be owned/released by BIO,
-// this avoids an extra alloc/copy operation
-BIO* BIO_new(int zerocopy);
-void BIO_free(BIO*);
+extern int um_log_level;
+extern void um_log(const char* fmt, ...);
 
-int BIO_put(BIO *, const uint8_t *buf, size_t len);
-int BIO_read(BIO*, uint8_t *buf, size_t len);
-size_t BIO_available(BIO*);
+#define UM_LOG(lvl, fmt, ...) do {\
+if ((lvl) <= um_log_level) um_log(__FILE__ ":%d " #lvl " " fmt "\n", __LINE__, ##__VA_ARGS__ ); \
+}while(0)
 
-#endif //UV_MBED_BIO_H
-
+#endif //UV_MBED_UM_DEBUG_H

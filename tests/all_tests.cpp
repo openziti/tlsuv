@@ -14,27 +14,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#ifndef UV_MBED_BIO_H
-#define UV_MBED_BIO_H
+#define CATCH_CONFIG_RUNNER
 
-#include "uv_mbed/queue.h"
+#include <uv_mbed/uv_mbed.h>
+#include "catch.hpp"
 
-typedef struct bio {
-    size_t available;
-    size_t headoffset;
-    unsigned int qlen;
-    int zerocopy;
-    STAILQ_HEAD(msgq, msg) message_q;
-} BIO;
+int main( int argc, char* argv[] ) {
 
-// zerocopy means that buffer passed into BIO_put will be owned/released by BIO,
-// this avoids an extra alloc/copy operation
-BIO* BIO_new(int zerocopy);
-void BIO_free(BIO*);
+    // enable full logging during tests
+    uv_mbed_set_debug(5, stdout);
+    int result = Catch::Session().run( argc, argv );
 
-int BIO_put(BIO *, const uint8_t *buf, size_t len);
-int BIO_read(BIO*, uint8_t *buf, size_t len);
-size_t BIO_available(BIO*);
-
-#endif //UV_MBED_BIO_H
-
+    return result;
+}

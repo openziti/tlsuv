@@ -14,27 +14,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#ifndef UV_MBED_BIO_H
-#define UV_MBED_BIO_H
 
-#include "uv_mbed/queue.h"
+#ifndef UV_MBED_WIN32_COMPAT_H
+#define UV_MBED_WIN32_COMPAT_H
 
-typedef struct bio {
-    size_t available;
-    size_t headoffset;
-    unsigned int qlen;
-    int zerocopy;
-    STAILQ_HEAD(msgq, msg) message_q;
-} BIO;
+#if _WIN32
 
-// zerocopy means that buffer passed into BIO_put will be owned/released by BIO,
-// this avoids an extra alloc/copy operation
-BIO* BIO_new(int zerocopy);
-void BIO_free(BIO*);
+#define strcasecmp _stricmp
+#define strncasecmp _strnicmp
 
-int BIO_put(BIO *, const uint8_t *buf, size_t len);
-int BIO_read(BIO*, uint8_t *buf, size_t len);
-size_t BIO_available(BIO*);
-
-#endif //UV_MBED_BIO_H
-
+#if !defined (strndup_DEFINED)
+#define strndup_DEFINED
+static char* strndup(char* p, size_t len) {
+    char *s = malloc(len + 1);
+    strncpy(s, p, len);
+    s[len] = '\0';
+    return s;
+}
+#endif // strndup_DEFINED
+#endif
+#endif //UV_MBED_WIN32_COMPAT_H

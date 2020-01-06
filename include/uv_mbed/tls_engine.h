@@ -1,11 +1,31 @@
-//
-// Created by eugene on 8/12/19.
-//
+/*
+Copyright 2019 NetFoundry, Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 #ifndef UV_MBED_TLS_ENGINE_H
 #define UV_MBED_TLS_ENGINE_H
 
 #include <stdlib.h>
+
+#if _WIN32
+#pragma comment (lib, "crypt32.lib")
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef enum tls_handshake_st {
     TLS_HS_CONTINUE,
@@ -98,7 +118,7 @@ typedef struct {
      * if `cert_buf is NULL` certificate is loaded from HSM as well, matched by `key_id` (TODO: not implemented yet)
      */
     int (*set_own_cert_pkcs11)(void *ctx, const char *cert_buf, size_t cert_len,
-            const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
+                               const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
 
 } tls_context_api;
 
@@ -109,4 +129,7 @@ struct tls_context_s {
 
 tls_context *default_tls_context(const char *ca, size_t ca_len);
 
+#ifdef __cplusplus
+}
+#endif
 #endif //UV_MBED_TLS_ENGINE_H

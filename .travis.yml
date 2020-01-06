@@ -1,17 +1,28 @@
 language: c
 
-compiler:
-        - gcc
-        - clang
+jobs:
+  include:
+    - stage: build all
+      os: linux
+      dist: bionic
+      compiler: gcc
 
-os:
-        - linux
-        - osx
-        - windows
+    - #stage: MacOS build
+      os: osx
+      osx_image: xcode11.2
+      compiler: gcc
+
+    - #stage: Win64 build
+      os: windows
+      compiler: gcc
 
 before_script:
-        - mkdir build
-        - cd build
-        - cmake ..
+  - env
+  - mkdir build
+  - cd build
+  - cmake --config Debug ..
 
-script: cmake --build .
+script:
+  - cmake --build . --target uv_mbed
+  - cmake --build . --target all_tests
+  - ctest -VV --no-compress-output -C Debug -T Test

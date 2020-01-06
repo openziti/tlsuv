@@ -1,3 +1,4 @@
+#if ($HEADER_COMMENTS)
 /*
 Copyright 2019 NetFoundry, Inc.
 
@@ -14,27 +15,5 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#ifndef UV_MBED_BIO_H
-#define UV_MBED_BIO_H
-
-#include "uv_mbed/queue.h"
-
-typedef struct bio {
-    size_t available;
-    size_t headoffset;
-    unsigned int qlen;
-    int zerocopy;
-    STAILQ_HEAD(msgq, msg) message_q;
-} BIO;
-
-// zerocopy means that buffer passed into BIO_put will be owned/released by BIO,
-// this avoids an extra alloc/copy operation
-BIO* BIO_new(int zerocopy);
-void BIO_free(BIO*);
-
-int BIO_put(BIO *, const uint8_t *buf, size_t len);
-int BIO_read(BIO*, uint8_t *buf, size_t len);
-size_t BIO_available(BIO*);
-
-#endif //UV_MBED_BIO_H
+#end
 
