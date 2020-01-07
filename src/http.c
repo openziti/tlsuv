@@ -37,6 +37,8 @@ static void tls_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
 static int tls_write(uv_link_t *link, uv_link_t *source, const uv_buf_t bufs[],
                      unsigned int nbufs, uv_stream_t *send_handle, uv_link_write_cb cb, void *arg);
 
+static void tls_close(uv_link_t *link, uv_link_t *source, uv_link_close_cb cb);
+
 static int http_status_cb(http_parser *parser, const char *status, size_t len);
 
 static int http_message_cb(http_parser *parser);
@@ -74,7 +76,7 @@ static const uv_link_methods_t http_methods = {
 };
 
 static const uv_link_methods_t tls_methods = {
-        .close = uv_link_default_close,
+        .close = tls_close,
         .read_start = tls_read_start,
         .write = tls_write,
         .alloc_cb_override = uv_link_default_alloc_cb_override,
@@ -199,12 +201,11 @@ static void connect_cb(uv_connect_t *req, int status) {
         clt->http_link.data = clt;
 
         if (clt->ssl) {
-            clt->tls_link = malloc(sizeof(uv_link_t));
-            uv_link_init(clt->tls_link, &tls_methods);
-            clt->tls_link->data = clt;
+            uv_link_init(&clt->tls_link, &tls_methods);
+            clt->tls_link.data = clt;
 
-            uv_link_chain((uv_link_t *) &clt->conn_src, clt->tls_link);
-            uv_link_chain(clt->tls_link, &clt->http_link);
+            uv_link_chain((uv_link_t *) &clt->conn_src, &clt->tls_link);
+            uv_link_chain(&clt->tls_link, &clt->http_link);
         }
         else {
             uv_link_chain((uv_link_t *) &clt->conn_src, &clt->http_link);
@@ -350,6 +351,16 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
     cb(source, 0, arg);
 
     return rc;
+}
+
+static void tls_close(uv_link_t *l, uv_link_t *source, uv_link_close_cb close_cb) {
+    UM_LOG(VERB, "closing TLS link");
+    um_http_t *clt = l->data;
+
+    clt->tls->api->free_engine(clt->engine);
+    clt->engine = NULL;
+
+    close_cb(source);
 }
 
 static void req_write_cb(uv_link_t *source, int status, void *arg) {
@@ -509,7 +520,6 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     clt->ssl = false;
     clt->tls = NULL;
     clt->engine = NULL;
-    clt->tls_link = NULL;
     clt->active = NULL;
     clt->connected = false;
 
@@ -593,7 +603,7 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path) {
     STAILQ_INSERT_TAIL(&c->requests, r, _next);
 
     uv_timer_stop(&c->idle_timer);
-    uv_ref(&c->proc);
+    uv_ref((uv_handle_t *) &c->proc);
     uv_async_send(&c->proc);
 
     return r;
@@ -747,10 +757,6 @@ static void free_http(um_http_t *clt) {
         clt->engine = NULL;
     }
     clt->tls = NULL;
-    if (clt->tls_link != NULL) {
-        free(clt->tls_link);
-        clt->tls_link = NULL;
-    }
 
     if (clt->active) {
         free_req(clt->active);

@@ -120,7 +120,7 @@ typedef struct um_http_s {
     uv_tcp_t conn;
     uv_link_source_t conn_src;
     uv_link_t http_link;
-    uv_link_t *tls_link;
+    uv_link_t tls_link;
 
     long idle_time;
     uv_timer_t idle_timer;
