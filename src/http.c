@@ -190,29 +190,48 @@ static void requests_fail(um_http_t *c, int code) {
 }
 
 static void connect_cb(uv_connect_t *req, int status) {
-    um_http_t *c = req->data;
+    um_http_t *clt = req->data;
+    UM_LOG(VERB, "connected status = %d", status);
 
     if (status == 0) {
-        uv_link_read_start(&c->http_link);
+        uv_link_source_init(&clt->conn_src, (uv_stream_t *) &clt->conn);
+        uv_link_init(&clt->http_link, &http_methods);
+        clt->http_link.data = clt;
 
-        if (!c->ssl) {
-            c->connected = true;
-            uv_async_send(&c->proc);
+        if (clt->ssl) {
+            clt->tls_link = malloc(sizeof(uv_link_t));
+            uv_link_init(clt->tls_link, &tls_methods);
+            clt->tls_link->data = clt;
+
+            uv_link_chain((uv_link_t *) &clt->conn_src, clt->tls_link);
+            uv_link_chain(clt->tls_link, &clt->http_link);
+        }
+        else {
+            uv_link_chain((uv_link_t *) &clt->conn_src, &clt->http_link);
+        }
+
+        uv_link_read_start(&clt->http_link);
+
+        if (!clt->ssl) {
+            clt->connected = true;
+            uv_async_send(&clt->proc);
         }
     }
     else {
-        requests_fail(c, status);
+        requests_fail(clt, status);
     }
 
     free(req);
 }
 
 static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr) {
+    UM_LOG(VERB, "resolved status = %d", status);
     um_http_t *c = req->data;
 
     if (status == 0) {
         uv_connect_t *conn_req = malloc(sizeof(uv_connect_t));
         conn_req->data = c;
+        uv_tcp_init(req->loop, &c->conn);
         uv_tcp_connect(conn_req, &c->conn, addr->ai_addr, connect_cb);
         uv_freeaddrinfo(addr);
     }
@@ -396,7 +415,6 @@ static void close_connection(um_http_t *c) {
     uv_timer_stop(&c->idle_timer);
     if (c->connected) {
         c->connected = false;
-        uv_close((uv_handle_t *) &c->proc, NULL);
         uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
     }
 }
@@ -545,23 +563,6 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     uv_async_init(l, &clt->proc, process_requests);
     uv_unref((uv_handle_t *) &clt->proc);
     clt->proc.data = clt;
-    uv_tcp_init(l, &clt->conn);
-    uv_link_source_init(&clt->conn_src, (uv_stream_t *) &clt->conn);
-
-    uv_link_init(&clt->http_link, &http_methods);
-    clt->http_link.data = clt;
-
-    if (clt->ssl) {
-        clt->tls_link = malloc(sizeof(uv_link_t));
-        uv_link_init(clt->tls_link, &tls_methods);
-        clt->tls_link->data = clt;
-
-        uv_link_chain((uv_link_t *) &clt->conn_src, clt->tls_link);
-        uv_link_chain(clt->tls_link, &clt->http_link);
-    }
-    else {
-        uv_link_chain((uv_link_t *) &clt->conn_src, &clt->http_link);
-    }
 
     return 0;
 }
@@ -591,7 +592,6 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path) {
     STAILQ_INSERT_TAIL(&c->requests, r, _next);
 
     uv_timer_stop(&c->idle_timer);
-    uv_ref((uv_handle_t *) &c->proc);
     uv_async_send(&c->proc);
 
     return r;

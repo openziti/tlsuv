@@ -11,6 +11,8 @@ add_executable(sample-cf sample-cf.c)
 target_link_libraries(sample-cf PUBLIC uv_mbed)
 target_include_directories(sample-cf PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
-add_executable(um-curl um-curl.c)
-target_link_libraries(um-curl
-        PUBLIC uv_mbed)
+add_executable(um-curl um-curl.c common.c)
+target_link_libraries(um-curl PUBLIC uv_mbed)
+
+add_executable(repeat-fetch repeat-fetch.c common.c)
+target_link_libraries(repeat-fetch PUBLIC uv_mbed)

@@ -1,6 +1,5 @@
-#if ($HEADER_COMMENTS)
 /*
-Copyright $YEAR NetFoundry, Inc.
+Copyright 2020 NetFoundry, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,5 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#end
 
+#ifndef UV_MBED_COMMON_H
+#define UV_MBED_COMMON_H
+
+#include <uv_mbed/um_http.h>
+
+void resp_cb(um_http_req_t *req, int code, um_header_list *headers);
+
+void body_cb(um_http_req_t *req, const char *body, ssize_t len);
+
+#endif //UV_MBED_COMMON_H

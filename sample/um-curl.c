@@ -17,33 +17,7 @@ limitations under the License.
 #include <uv_mbed/um_http.h>
 #include <string.h>
 #include <uv_mbed/uv_mbed.h>
-
-void resp_cb(um_http_req_t *req, int code, um_header_list *headers) {
-    if (code < 0) {
-        fprintf(stderr, "ERROR: %d(%s)", code, uv_strerror(code));
-        exit(code);
-    }
-    um_http_hdr *h;
-    printf("Response (%d) >>>\nHeaders >>>\n", code);
-    if (headers) {
-        LIST_FOREACH(h, headers, _next) {
-            printf("\t%s: %s\n", h->name, h->value);
-        }
-    }
-}
-
-void body_cb(um_http_req_t *req, const char *body, ssize_t len) {
-    if (len == UV_EOF) {
-        printf("====================\nRequest completed\n");
-    }
-    else if (len < 0) {
-        fprintf(stderr, "error(%zd) %s", len, uv_strerror(len));
-        exit(-1);
-    }
-    else {
-        printf("%*.*s", (int) len, (int) len, body);
-    }
-}
+#include "common.h"
 
 int main(int argc, char **argv) {
     uv_mbed_set_debug(5, stdout);
