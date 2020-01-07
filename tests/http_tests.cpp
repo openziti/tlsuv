@@ -259,7 +259,7 @@ TEST_CASE("http_tests", "[http]") {
 }
 
 TEST_CASE("client_cert_test","[http]") {
-    uv_loop_t *loop = uv_default_loop();
+    uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp;
     um_http_init(loop, &clt, "https://client.badssl.com");
@@ -364,6 +364,8 @@ TEST_CASE("client_cert_test","[http]") {
 
     um_http_close(&clt);
     uv_run(loop, UV_RUN_ONCE);
+    uv_loop_close(loop);
+    free(loop);
 }
 
 const int ONE_SECOND = 1000000;
