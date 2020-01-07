@@ -88,7 +88,7 @@ TEST_CASE("http_tests", "[http]") {
 
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
-    uv_loop_t *loop = uv_loop_new();
+    uv_loop_t *loop = uv_default_loop();
     um_http_t clt;
     uv_timer_t *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
     uv_timer_init(loop, timer);
@@ -251,15 +251,15 @@ TEST_CASE("http_tests", "[http]") {
     }
     um_http_close(&clt);
     uv_timer_stop(timer);
-    uv_close((uv_handle_t *)timer, nullptr);
 
-    uv_loop_close(loop);
-    free(timer);
-    free(loop);
+    uv_close(reinterpret_cast<uv_handle_t *>(timer), [](uv_handle_t* h){ free(h); });
+
+    // need to run loop one to process all closing handles
+    uv_run(loop, UV_RUN_ONCE);
 }
 
 TEST_CASE("client_cert_test","[http]") {
-    uv_loop_t *loop = uv_loop_new();
+    uv_loop_t *loop = uv_default_loop();
     um_http_t clt;
     resp_capture resp;
     um_http_init(loop, &clt, "https://client.badssl.com");
@@ -280,10 +280,9 @@ TEST_CASE("client_cert_test","[http]") {
         int body_len = resp.body.size();
         int content_len = atoi(resp.headers["Content-Length"].c_str());
 
-        THEN("response body size matches") {
+        AND_THEN("response body size matches") {
             REQUIRE(body_len == content_len);
         }
-        um_http_close(&clt);
     }
 
     WHEN("client cert set") {
@@ -360,12 +359,12 @@ TEST_CASE("client_cert_test","[http]") {
         THEN("response body size matches") {
             REQUIRE(body_len == content_len);
         }
-        um_http_close(&clt);
         tls->api->free_ctx(tls);
     }
 
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(&clt);
+    uv_print_active_handles(loop, stderr);
+    uv_run(loop, UV_RUN_ONCE);
 }
 
 const int ONE_SECOND = 1000000;
@@ -411,6 +410,7 @@ TEST_CASE("client_idle_test","[http]") {
 
         um_http_close(&clt);
     }
+    uv_run(loop, UV_RUN_ONCE);
 
     uv_loop_close(loop);
     free(loop);
@@ -457,6 +457,7 @@ TEST_CASE("server_idle_close","[.]") {
 
         um_http_close(&clt);
     }
+    uv_run(loop, UV_RUN_ONCE);
 
     uv_loop_close(loop);
     free(loop);

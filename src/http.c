@@ -509,6 +509,9 @@ static void process_requests(uv_async_t *ar) {
 
 int um_http_close(um_http_t *clt) {
     close_connection(clt);
+    uv_close((uv_handle_t *) &clt->idle_timer, NULL);
+    uv_close((uv_handle_t *) &clt->proc, NULL);
+
     free_http(clt);
     return 0;
 }
