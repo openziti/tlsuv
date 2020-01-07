@@ -444,6 +444,7 @@ static void process_requests(uv_async_t *ar) {
             if (c->idle_time >= 0) {
                 UM_LOG(INFO, "no more requests, scheduling idle(%ld) close", c->idle_time);
                 uv_timer_start(&c->idle_timer, idle_timeout, c->idle_time, 0);
+                uv_unref((uv_handle_t *) &c->proc);
             }
         }
         else {
@@ -592,6 +593,7 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path) {
     STAILQ_INSERT_TAIL(&c->requests, r, _next);
 
     uv_timer_stop(&c->idle_timer);
+    uv_ref(&c->proc);
     uv_async_send(&c->proc);
 
     return r;
