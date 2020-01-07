@@ -1,5 +1,5 @@
 /*
-Copyright 2019 NetFoundry, Inc.
+Copyright 2019-2020 NetFoundry, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -251,11 +251,15 @@ TEST_CASE("http_tests", "[http]") {
     }
     um_http_close(&clt);
     uv_timer_stop(timer);
-    free(timer);
+
+    uv_close(reinterpret_cast<uv_handle_t *>(timer), [](uv_handle_t* h){ free(h); });
+
+    // need to run loop one to process all closing handles
+    uv_run(loop, UV_RUN_ONCE);
 }
 
 TEST_CASE("client_cert_test","[http]") {
-    uv_loop_t *loop = uv_default_loop();
+    uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp;
     um_http_init(loop, &clt, "https://client.badssl.com");
@@ -276,10 +280,9 @@ TEST_CASE("client_cert_test","[http]") {
         int body_len = resp.body.size();
         int content_len = atoi(resp.headers["Content-Length"].c_str());
 
-        THEN("response body size matches") {
+        AND_THEN("response body size matches") {
             REQUIRE(body_len == content_len);
         }
-        um_http_close(&clt);
     }
 
     WHEN("client cert set") {
@@ -356,9 +359,13 @@ TEST_CASE("client_cert_test","[http]") {
         THEN("response body size matches") {
             REQUIRE(body_len == content_len);
         }
-        um_http_close(&clt);
         tls->api->free_ctx(tls);
     }
+
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+    uv_loop_close(loop);
+    free(loop);
 }
 
 const int ONE_SECOND = 1000000;
@@ -368,7 +375,7 @@ static long duration(uv_timeval64_t &start, uv_timeval64_t &stop) {
 }
 
 TEST_CASE("client_idle_test","[http]") {
-    uv_loop_t *loop = uv_default_loop();
+    uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp;
     um_http_init(loop, &clt, "https://httpbin.org");
@@ -404,6 +411,10 @@ TEST_CASE("client_idle_test","[http]") {
 
         um_http_close(&clt);
     }
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
 }
 
 // hidden test
@@ -447,5 +458,9 @@ TEST_CASE("server_idle_close","[.]") {
 
         um_http_close(&clt);
     }
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
 }
 

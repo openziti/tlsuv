@@ -1,5 +1,5 @@
 /*
-Copyright 2019 NetFoundry, Inc.
+Copyright 2019-2020 NetFoundry, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -120,7 +120,7 @@ typedef struct um_http_s {
     uv_tcp_t conn;
     uv_link_source_t conn_src;
     uv_link_t http_link;
-    uv_link_t *tls_link;
+    uv_link_t tls_link;
 
     long idle_time;
     uv_timer_t idle_timer;

@@ -1,5 +1,5 @@
 /*
-Copyright 2019 NetFoundry, Inc.
+Copyright 2019-2020 NetFoundry, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -36,6 +36,8 @@ static void tls_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
 
 static int tls_write(uv_link_t *link, uv_link_t *source, const uv_buf_t bufs[],
                      unsigned int nbufs, uv_stream_t *send_handle, uv_link_write_cb cb, void *arg);
+
+static void tls_close(uv_link_t *link, uv_link_t *source, uv_link_close_cb cb);
 
 static int http_status_cb(http_parser *parser, const char *status, size_t len);
 
@@ -74,7 +76,7 @@ static const uv_link_methods_t http_methods = {
 };
 
 static const uv_link_methods_t tls_methods = {
-        .close = uv_link_default_close,
+        .close = tls_close,
         .read_start = tls_read_start,
         .write = tls_write,
         .alloc_cb_override = uv_link_default_alloc_cb_override,
@@ -190,29 +192,47 @@ static void requests_fail(um_http_t *c, int code) {
 }
 
 static void connect_cb(uv_connect_t *req, int status) {
-    um_http_t *c = req->data;
+    um_http_t *clt = req->data;
+    UM_LOG(VERB, "connected status = %d", status);
 
     if (status == 0) {
-        uv_link_read_start(&c->http_link);
+        uv_link_source_init(&clt->conn_src, (uv_stream_t *) &clt->conn);
+        uv_link_init(&clt->http_link, &http_methods);
+        clt->http_link.data = clt;
 
-        if (!c->ssl) {
-            c->connected = true;
-            uv_async_send(&c->proc);
+        if (clt->ssl) {
+            uv_link_init(&clt->tls_link, &tls_methods);
+            clt->tls_link.data = clt;
+
+            uv_link_chain((uv_link_t *) &clt->conn_src, &clt->tls_link);
+            uv_link_chain(&clt->tls_link, &clt->http_link);
+        }
+        else {
+            uv_link_chain((uv_link_t *) &clt->conn_src, &clt->http_link);
+        }
+
+        uv_link_read_start(&clt->http_link);
+
+        if (!clt->ssl) {
+            clt->connected = true;
+            uv_async_send(&clt->proc);
         }
     }
     else {
-        requests_fail(c, status);
+        requests_fail(clt, status);
     }
 
     free(req);
 }
 
 static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr) {
+    UM_LOG(VERB, "resolved status = %d", status);
     um_http_t *c = req->data;
 
     if (status == 0) {
         uv_connect_t *conn_req = malloc(sizeof(uv_connect_t));
         conn_req->data = c;
+        uv_tcp_init(req->loop, &c->conn);
         uv_tcp_connect(conn_req, &c->conn, addr->ai_addr, connect_cb);
         uv_freeaddrinfo(addr);
     }
@@ -333,6 +353,16 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
     return rc;
 }
 
+static void tls_close(uv_link_t *l, uv_link_t *source, uv_link_close_cb close_cb) {
+    UM_LOG(VERB, "closing TLS link");
+    um_http_t *clt = l->data;
+
+    clt->tls->api->free_engine(clt->engine);
+    clt->engine = NULL;
+
+    close_cb(source);
+}
+
 static void req_write_cb(uv_link_t *source, int status, void *arg) {
     UM_LOG(INFO, "request write completed: %d", status);
     free(arg);
@@ -396,7 +426,6 @@ static void close_connection(um_http_t *c) {
     uv_timer_stop(&c->idle_timer);
     if (c->connected) {
         c->connected = false;
-        uv_close((uv_handle_t *) &c->proc, NULL);
         uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
     }
 }
@@ -426,6 +455,7 @@ static void process_requests(uv_async_t *ar) {
             if (c->idle_time >= 0) {
                 UM_LOG(INFO, "no more requests, scheduling idle(%ld) close", c->idle_time);
                 uv_timer_start(&c->idle_timer, idle_timeout, c->idle_time, 0);
+                uv_unref((uv_handle_t *) &c->proc);
             }
         }
         else {
@@ -479,6 +509,9 @@ static void process_requests(uv_async_t *ar) {
 
 int um_http_close(um_http_t *clt) {
     close_connection(clt);
+    uv_close((uv_handle_t *) &clt->idle_timer, NULL);
+    uv_close((uv_handle_t *) &clt->proc, NULL);
+
     free_http(clt);
     return 0;
 }
@@ -490,7 +523,6 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     clt->ssl = false;
     clt->tls = NULL;
     clt->engine = NULL;
-    clt->tls_link = NULL;
     clt->active = NULL;
     clt->connected = false;
 
@@ -545,23 +577,6 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     uv_async_init(l, &clt->proc, process_requests);
     uv_unref((uv_handle_t *) &clt->proc);
     clt->proc.data = clt;
-    uv_tcp_init(l, &clt->conn);
-    uv_link_source_init(&clt->conn_src, (uv_stream_t *) &clt->conn);
-
-    uv_link_init(&clt->http_link, &http_methods);
-    clt->http_link.data = clt;
-
-    if (clt->ssl) {
-        clt->tls_link = malloc(sizeof(uv_link_t));
-        uv_link_init(clt->tls_link, &tls_methods);
-        clt->tls_link->data = clt;
-
-        uv_link_chain((uv_link_t *) &clt->conn_src, clt->tls_link);
-        uv_link_chain(clt->tls_link, &clt->http_link);
-    }
-    else {
-        uv_link_chain((uv_link_t *) &clt->conn_src, &clt->http_link);
-    }
 
     return 0;
 }
@@ -745,10 +760,6 @@ static void free_http(um_http_t *clt) {
         clt->engine = NULL;
     }
     clt->tls = NULL;
-    if (clt->tls_link != NULL) {
-        free(clt->tls_link);
-        clt->tls_link = NULL;
-    }
 
     if (clt->active) {
         free_req(clt->active);

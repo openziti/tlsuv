@@ -1,5 +1,5 @@
 /*
-Copyright 2019-2020 NetFoundry, Inc.
+Copyright 2020 NetFoundry, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,21 +15,13 @@ limitations under the License.
 */
 
 
-#ifndef UV_MBED_UM_DEBUG_H
-#define UV_MBED_UM_DEBUG_H
+#ifndef UV_MBED_COMMON_H
+#define UV_MBED_COMMON_H
 
-#define NONE 0
-#define ERR 1
-#define WARN 2
-#define INFO 3
-#define VERB 4
-#define TRACE 5
+#include <uv_mbed/um_http.h>
 
-extern int um_log_level;
-extern void um_log(const char* fmt, ...);
+void resp_cb(um_http_req_t *req, int code, um_header_list *headers);
 
-#define UM_LOG(lvl, fmt, ...) do {\
-if ((lvl) <= um_log_level) um_log(__FILE__ ":%d " #lvl " " fmt "\n", __LINE__, ##__VA_ARGS__ ); \
-}while(0)
+void body_cb(um_http_req_t *req, const char *body, ssize_t len);
 
-#endif //UV_MBED_UM_DEBUG_H
+#endif //UV_MBED_COMMON_H

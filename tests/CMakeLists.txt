@@ -13,4 +13,3 @@ target_link_libraries(all_tests
 
 include(CTest)
 add_test(http_tests all_tests [http])
-add_test(model_tests all_tests [model])
