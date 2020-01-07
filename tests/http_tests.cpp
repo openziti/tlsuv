@@ -363,7 +363,6 @@ TEST_CASE("client_cert_test","[http]") {
     }
 
     um_http_close(&clt);
-    uv_print_active_handles(loop, stderr);
     uv_run(loop, UV_RUN_ONCE);
 }
 
