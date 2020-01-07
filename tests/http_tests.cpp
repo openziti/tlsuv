@@ -88,7 +88,7 @@ TEST_CASE("http_tests", "[http]") {
 
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
-    uv_loop_t *loop = uv_default_loop();
+    uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     uv_timer_t *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
     uv_timer_init(loop, timer);
@@ -251,11 +251,15 @@ TEST_CASE("http_tests", "[http]") {
     }
     um_http_close(&clt);
     uv_timer_stop(timer);
+    uv_close((uv_handle_t *)timer, nullptr);
+
+    uv_loop_close(loop);
     free(timer);
+    free(loop);
 }
 
 TEST_CASE("client_cert_test","[http]") {
-    uv_loop_t *loop = uv_default_loop();
+    uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp;
     um_http_init(loop, &clt, "https://client.badssl.com");
@@ -359,6 +363,9 @@ TEST_CASE("client_cert_test","[http]") {
         um_http_close(&clt);
         tls->api->free_ctx(tls);
     }
+
+    uv_loop_close(loop);
+    free(loop);
 }
 
 const int ONE_SECOND = 1000000;
@@ -368,7 +375,7 @@ static long duration(uv_timeval64_t &start, uv_timeval64_t &stop) {
 }
 
 TEST_CASE("client_idle_test","[http]") {
-    uv_loop_t *loop = uv_default_loop();
+    uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp;
     um_http_init(loop, &clt, "https://httpbin.org");
@@ -404,6 +411,9 @@ TEST_CASE("client_idle_test","[http]") {
 
         um_http_close(&clt);
     }
+
+    uv_loop_close(loop);
+    free(loop);
 }
 
 // hidden test
@@ -447,5 +457,8 @@ TEST_CASE("server_idle_close","[.]") {
 
         um_http_close(&clt);
     }
+
+    uv_loop_close(loop);
+    free(loop);
 }
 
