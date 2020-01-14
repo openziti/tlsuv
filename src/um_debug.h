@@ -22,8 +22,9 @@ limitations under the License.
 #define ERR 1
 #define WARN 2
 #define INFO 3
-#define VERB 4
-#define TRACE 5
+#define DEBG 4
+#define VERB 5
+#define TRACE 6
 
 extern int um_log_level;
 extern void um_log(const char* fmt, ...);

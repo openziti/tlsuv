@@ -117,12 +117,12 @@ static int http_header_value_cb(http_parser *parser, const char *v, size_t len) 
 }
 
 static int http_status_cb(http_parser *parser, const char *status, size_t len) {
-    UM_LOG(INFO, "status = %d %*.*s", parser->status_code, (int) len, (int) len, status);
+    UM_LOG(VERB, "status = %d %*.*s", parser->status_code, (int) len, (int) len, status);
     return 0;
 }
 
 static int http_message_cb(http_parser *parser) {
-    UM_LOG(INFO, "message complete");
+    UM_LOG(VERB, "message complete");
     um_http_req_t *r = parser->data;
     r->state = completed;
     if (r->body_cb != NULL) {
@@ -152,10 +152,10 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 
     if (c->active != NULL) {
 
-        UM_LOG(INFO, "processing \n%*.*s", nread, nread, buf->base);
+        UM_LOG(TRACE, "processing \n%*.*s", nread, nread, buf->base);
         size_t processed = http_parser_execute(&c->active->response, &HTTP_PROC, buf->base, nread);
 
-        UM_LOG(INFO, "processed %zd out of %zd", processed, nread);
+        UM_LOG(TRACE, "processed %zd out of %zd", processed, nread);
         if (c->active->state == completed) {
             um_http_req_t *hr = c->active;
             c->active = NULL;
@@ -164,8 +164,8 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 
             uv_async_send(&c->proc);
         }
-    } else {
-        UM_LOG(ERR, "received %zd bytes without active request");
+    } else if (nread > 0) {
+        UM_LOG(ERR, "received %zd bytes without active request", nread);
     }
 
     if (buf && buf->base) {
@@ -262,7 +262,7 @@ static int tls_read_start(uv_link_t *l) {
     uv_buf_t buf;
     buf.base = malloc(32 * 1024);
     tls_handshake_state st = clt->engine->api->handshake(clt->engine->engine, NULL, 0, buf.base, &buf.len, 32 * 1024);
-    UM_LOG(INFO, "starting TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
+    UM_LOG(VERB, "starting TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
 
     return uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, buf.base);
 }
@@ -279,13 +279,13 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
 
     tls_handshake_state hs_state = clt->engine->api->handshake_state(clt->engine->engine);
     if (hs_state == TLS_HS_CONTINUE) {
-        UM_LOG(INFO, "continuing TLS handshake(%zd bytes received)", nread);
+        UM_LOG(VERB, "continuing TLS handshake(%zd bytes received)", nread);
         uv_buf_t buf;
         buf.base = malloc(32 * 1024);
         tls_handshake_state st =
                 clt->engine->api->handshake(clt->engine->engine, b->base, nread, buf.base, &buf.len, 32 * 1024);
 
-        UM_LOG(INFO, "continuing TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
+        UM_LOG(VERB, "continuing TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
         if (buf.len > 0) {
             uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, buf.base);
         }
@@ -294,7 +294,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         }
 
         if (st == TLS_HS_COMPLETE) {
-            UM_LOG(INFO, "handshake completed");
+            UM_LOG(VERB, "handshake completed");
             clt->connected = true;
             uv_async_send(&clt->proc);
         }
@@ -323,7 +323,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
             rc = clt->engine->api->read(clt->engine->engine, inptr, inlen,
                     read_buf.base + read_buf.len, &out_bytes, readbuflen - read_buf.len);
 
-            UM_LOG(INFO, "produced %zd application byte (rc=%d)", out_bytes, rc);
+            UM_LOG(VERB, "produced %zd application byte (rc=%d)", out_bytes, rc);
             read_buf.len += out_bytes;
             inptr = NULL;
             inlen = 0;
@@ -332,7 +332,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         uv_link_propagate_read_cb(l, read_buf.len, &read_buf);
     }
     else {
-        UM_LOG(INFO, "hs_state = %d", hs_state);
+        UM_LOG(VERB, "hs_state = %d", hs_state);
     }
 
     if (b != NULL && b->base != NULL) {
@@ -364,12 +364,12 @@ static void tls_close(uv_link_t *l, uv_link_t *source, uv_link_close_cb close_cb
 }
 
 static void req_write_cb(uv_link_t *source, int status, void *arg) {
-    UM_LOG(INFO, "request write completed: %d", status);
+    UM_LOG(VERB, "request write completed: %d", status);
     free(arg);
 }
 
 static void req_write_body_cb(uv_link_t *source, int status, void *arg) {
-    UM_LOG(INFO, "request body write completed: %d", status);
+    UM_LOG(VERB, "request body write completed: %d", status);
     struct body_chunk_s *chunk = arg;
     if (chunk->cb) {
         chunk->cb(chunk->req, chunk->chunk, status);
@@ -425,12 +425,14 @@ static void send_body(um_http_req_t *req) {
 static void close_connection(um_http_t *c) {
     uv_timer_stop(&c->idle_timer);
     if (c->connected) {
+        UM_LOG(VERB, "closing connection");
         c->connected = false;
         uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
     }
 }
 
 static void idle_timeout(uv_timer_t *t) {
+    UM_LOG(VERB, "idle timeout triggered");
     um_http_t *clt = t->data;
     close_connection(clt);
 }
@@ -439,13 +441,13 @@ static void process_requests(uv_async_t *ar) {
     um_http_t *c = ar->data;
 
     if (!c->connected) {
-        UM_LOG(INFO, "client not connected, starting connect sequence");
+        UM_LOG(VERB, "client not connected, starting connect sequence");
         uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
         resolv_req->data = c;
         uv_getaddrinfo(ar->loop, resolv_req, resolve_cb, c->host, c->port, NULL);
     }
     else {
-        UM_LOG(INFO, "client connected, processing request");
+        UM_LOG(VERB, "client connected, processing request");
 
         if (c->active != NULL) {
             return;
@@ -453,7 +455,7 @@ static void process_requests(uv_async_t *ar) {
 
         if (STAILQ_EMPTY(&c->requests)) {
             if (c->idle_time >= 0) {
-                UM_LOG(INFO, "no more requests, scheduling idle(%ld) close", c->idle_time);
+                UM_LOG(VERB, "no more requests, scheduling idle(%ld) close", c->idle_time);
                 uv_timer_start(&c->idle_timer, idle_timeout, c->idle_time, 0);
                 uv_unref((uv_handle_t *) &c->proc);
             }
@@ -497,7 +499,7 @@ static void process_requests(uv_async_t *ar) {
             }
             req.len += snprintf(req.base + req.len, 8196 - req.len,
                                 "\r\n");
-            UM_LOG(VERB, "writing request >>> %*.*s", req.len, req.len, req.base);
+            UM_LOG(TRACE, "writing request >>> %*.*s", req.len, req.len, req.base);
             uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_cb, req.base);
             c->active->state = headers_sent;
 
