@@ -116,7 +116,7 @@ typedef struct um_http_s {
 
     um_header_list headers;
 
-    bool connected;
+    int connected;
     uv_tcp_t conn;
     uv_link_source_t conn_src;
     uv_link_t http_link;
