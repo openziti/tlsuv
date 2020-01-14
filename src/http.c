@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 #include "um_debug.h"
 #include "win32_compat.h"
@@ -56,6 +57,12 @@ static void close_connection(um_http_t *c);
 static void free_req(um_http_req_t *req);
 
 static void free_http(um_http_t *clt);
+
+enum status {
+    Disconnected,
+    Connecting,
+    Connected
+};
 
 struct body_chunk_s {
     char *chunk;
@@ -214,7 +221,7 @@ static void connect_cb(uv_connect_t *req, int status) {
         uv_link_read_start(&clt->http_link);
 
         if (!clt->ssl) {
-            clt->connected = true;
+            clt->connected = Connected;
             uv_async_send(&clt->proc);
         }
     }
@@ -279,6 +286,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
 
     tls_handshake_state hs_state = clt->engine->api->handshake_state(clt->engine->engine);
     if (hs_state == TLS_HS_CONTINUE) {
+        assert(clt->connected == Connecting);
         UM_LOG(VERB, "continuing TLS handshake(%zd bytes received)", nread);
         uv_buf_t buf;
         buf.base = malloc(32 * 1024);
@@ -295,7 +303,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
 
         if (st == TLS_HS_COMPLETE) {
             UM_LOG(VERB, "handshake completed");
-            clt->connected = true;
+            clt->connected = Connected;
             uv_async_send(&clt->proc);
         }
         else if (st == TLS_HS_ERROR) {
@@ -424,9 +432,9 @@ static void send_body(um_http_req_t *req) {
 
 static void close_connection(um_http_t *c) {
     uv_timer_stop(&c->idle_timer);
-    if (c->connected) {
+    if (c->connected != Disconnected ) {
         UM_LOG(VERB, "closing connection");
-        c->connected = false;
+        c->connected = Disconnected;
         uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
     }
 }
@@ -440,13 +448,14 @@ static void idle_timeout(uv_timer_t *t) {
 static void process_requests(uv_async_t *ar) {
     um_http_t *c = ar->data;
 
-    if (!c->connected) {
+    if (c->connected == Disconnected) {
+        c->connected = Connecting;
         UM_LOG(VERB, "client not connected, starting connect sequence");
         uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
         resolv_req->data = c;
         uv_getaddrinfo(ar->loop, resolv_req, resolve_cb, c->host, c->port, NULL);
     }
-    else {
+    else if (c->connected == Connected) {
         UM_LOG(VERB, "client connected, processing request");
 
         if (c->active != NULL) {
@@ -526,7 +535,7 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     clt->tls = NULL;
     clt->engine = NULL;
     clt->active = NULL;
-    clt->connected = false;
+    clt->connected = Disconnected;
 
     clt->idle_time = DEFAULT_IDLE_TIMEOUT;
     uv_timer_init(l, &clt->idle_timer);
