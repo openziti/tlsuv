@@ -432,7 +432,7 @@ static void send_body(um_http_req_t *req) {
 
 static void close_connection(um_http_t *c) {
     uv_timer_stop(&c->idle_timer);
-    if (c->connected != Disconnected ) {
+    if (c->connected == Connected ) {
         UM_LOG(VERB, "closing connection");
         c->connected = Disconnected;
         uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
