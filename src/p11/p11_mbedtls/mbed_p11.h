@@ -18,6 +18,7 @@ limitations under the License.
 
 
 #ifdef _WIN32
+#pragma pack(push, cryptoki, 1)
 #define CK_PTR *
 #define CK_DECLARE_FUNCTION(returnType, name)  returnType __declspec(dllimport) name
 #define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType __declspec(dllimport) (* name)
@@ -34,6 +35,10 @@ limitations under the License.
 #endif
 
 #include "pkcs11/pkcs11.h"
+
+#ifdef _WIN32
+#pragma pack(pop, cryptoki)
+#endif
 
 #ifndef ZITI_SDK_MBED_P11_H
 #define ZITI_SDK_MBED_P11_H
