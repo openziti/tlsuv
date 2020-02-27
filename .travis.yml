@@ -16,7 +16,7 @@ jobs:
       os: windows
       compiler: gcc
       install:
-        - choco install visualstudio2019community
+        - choco install visualstudio2019buildtools
 
 before_script:
   - env
