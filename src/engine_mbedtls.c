@@ -117,11 +117,14 @@ tls_context *default_tls_context(const char *ca, size_t ca_len) {
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
 
 static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, size_t cabuf_len) {
+#ifdef _WIN32
+#else
     char *tls_debug = getenv("MBEDTLS_DEBUG");
     if (tls_debug != NULL) {
         int level = (int) strtol(tls_debug, NULL, 10);
         mbedtls_debug_set_threshold(level);
     }
+#endif
 
     mbedtls_ssl_config_init(ssl_config);
     mbedtls_ssl_conf_dbg(ssl_config, tls_debug_f, stdout);
@@ -161,7 +164,7 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
         if (!(hCertStore = CertOpenSystemStore(0, "ROOT")))
         {
             printf("The first system store did not open.");
-            return -1;
+            return;
         }
         while (pCertContext = CertEnumCertificatesInStore(hCertStore, pCertContext)) {
             mbedtls_x509_crt_parse(ca, pCertContext->pbCertEncoded, pCertContext->cbCertEncoded);
@@ -358,7 +361,7 @@ static int mbedtls_write(void *engine, const char *data, size_t data_len, char *
         wrote += rc;
     }
     *out_bytes = um_BIO_read(eng->out, (unsigned char *)out, maxout);
-    return um_BIO_available(eng->out);
+    return (int)um_BIO_available(eng->out);
 }
 
 static int
