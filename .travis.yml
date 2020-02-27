@@ -22,7 +22,8 @@ before_script:
   - env
   - mkdir build
   - cd build
-  - cmake --config Debug ..
+  - if [ "$TRAVIS_OS_NAME" = windows ]; then cmake -G "Visual Studio 16 2019" .. -DCMAKE_INSTALL_INCLUDEDIR=include -A x64; fi
+  - if [ "$TRAVIS_OS_NAME" != windows ]; then cmake --config Debug ..; fi
 
 script:
   - cmake --build . --target uv_mbed
