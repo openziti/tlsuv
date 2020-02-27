@@ -31,7 +31,7 @@ struct msg {
     STAILQ_ENTRY(msg) next;
 };
 
-BIO *BIO_new(int zerocopy) {
+BIO *um_BIO_new(int zerocopy) {
     BIO* bio = calloc(1, sizeof(BIO));
     bio->available = 0;
     bio->headoffset = 0;
@@ -42,7 +42,7 @@ BIO *BIO_new(int zerocopy) {
     return bio;
 }
 
-void BIO_free(BIO* b) {
+void um_BIO_free(BIO* b) {
     while(!STAILQ_EMPTY(&b->message_q)) {
         struct msg *m = STAILQ_FIRST(&b->message_q);
         STAILQ_REMOVE_HEAD(&b->message_q, next);
@@ -53,11 +53,11 @@ void BIO_free(BIO* b) {
     free(b);
 }
 
-size_t BIO_available(BIO* bio) {
+size_t um_BIO_available(BIO* bio) {
     return bio->available;
 }
 
-int BIO_put(BIO *bio, const uint8_t *buf, size_t len) {
+int um_BIO_put(BIO *bio, const uint8_t *buf, size_t len) {
     struct msg *m = malloc(sizeof(struct msg));
     if (m == NULL) {
         return -1;
@@ -83,7 +83,7 @@ int BIO_put(BIO *bio, const uint8_t *buf, size_t len) {
     return len;
 }
 
-int BIO_read(BIO *bio, uint8_t *buf, size_t len) {
+int um_BIO_read(BIO *bio, uint8_t *buf, size_t len) {
 
     size_t total = 0;
 
