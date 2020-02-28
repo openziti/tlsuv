@@ -12,18 +12,11 @@ jobs:
       osx_image: xcode11.2
       compiler: gcc
 
-    - #stage: Win64 build
-      os: windows
-      compiler: gcc
-      install:
-        - choco install visualstudio2019buildtools
-
 before_script:
   - env
   - mkdir build
   - cd build
-  - if [ "$TRAVIS_OS_NAME" = windows ]; then cmake -G "Visual Studio 16 2019" .. -DCMAKE_INSTALL_INCLUDEDIR=include -A x64; fi
-  - if [ "$TRAVIS_OS_NAME" != windows ]; then cmake --config Debug ..; fi
+  - cmake --config Debug ..
 
 script:
   - cmake --build . --target uv_mbed
