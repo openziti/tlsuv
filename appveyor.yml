@@ -6,6 +6,7 @@ os: Visual Studio 2019
 
 install:
   - env
+  - git submodule update --init --recursive
   - mkdir build
   - cd build
   - cmake --config Debug ..
