@@ -2,7 +2,11 @@
 platform:
   - x64
 
-os: Visual Studio 2019
+# os: Visual Studio 2019
+
+matrix:
+  - os: Visual Studio 2017
+  - os: Visual Studio 2019
 
 install:
   - env
