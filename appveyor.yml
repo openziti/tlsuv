@@ -4,9 +4,14 @@ platform:
 
 # os: Visual Studio 2019
 
-matrix:
-  - os: Visual Studio 2017
-  - os: Visual Studio 2019
+environment:
+
+  matrix:
+    # first group
+    - os: Visual Studio 2017
+
+    # second group
+    - os: Visual Studio 2019
 
 install:
   - env
