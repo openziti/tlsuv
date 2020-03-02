@@ -25,16 +25,16 @@ typedef struct bio {
     unsigned int qlen;
     int zerocopy;
     STAILQ_HEAD(msgq, msg) message_q;
-} BIO;
+} um_BIO;
 
-// zerocopy means that buffer passed into BIO_put will be owned/released by BIO,
+// zerocopy means that buffer passed into um_BIO_put will be owned/released by BIO,
 // this avoids an extra alloc/copy operation
-BIO* BIO_new(int zerocopy);
-void BIO_free(BIO*);
+um_BIO* um_BIO_new(int zerocopy);
+void um_BIO_free(um_BIO*);
 
-int BIO_put(BIO *, const uint8_t *buf, size_t len);
-int BIO_read(BIO*, uint8_t *buf, size_t len);
-size_t BIO_available(BIO*);
+int um_BIO_put(um_BIO *, const uint8_t *buf, size_t len);
+int um_BIO_read(um_BIO*, uint8_t *buf, size_t len);
+size_t um_BIO_available(um_BIO*);
 
 #endif //UV_MBED_BIO_H
 
