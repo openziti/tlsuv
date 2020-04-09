@@ -72,7 +72,7 @@ void resp_capture_cb(um_http_resp_t *resp, void *data) {
     rc->http_version = resp->http_version;
 
     um_http_hdr *h;
-    LIST_FOREACH(h, &resp->headers, _next) {
+    for (h = resp->headers; h != NULL && h->name != nullptr; h++) {
         rc->headers[h->name] = h->value;
     }
 
@@ -440,7 +440,6 @@ TEST_CASE("server_idle_close","[.]") {
 extern "C" void uv_mbed_set_debug(int level, FILE *out);
 
 TEST_CASE("basic_test", "[http]") {
-    uv_mbed_set_debug(5, stderr);
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp(resp_body_cb);

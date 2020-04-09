@@ -84,7 +84,8 @@ typedef struct um_http_resp_s {
     int code;
     char *status;
 
-    um_header_list headers;
+    int nh;
+    um_http_hdr *headers;
 
     /** @brief callback called with response body data. May be called multiple times, last one with `len` of `UV_EOF` */
     um_http_body_cb body_cb;

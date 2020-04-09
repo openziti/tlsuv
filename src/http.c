@@ -111,16 +111,17 @@ static int http_headers_complete_cb(http_parser *p) {
 
 static int http_header_field_cb(http_parser *parser, const char *f, size_t len) {
     um_http_req_t *req = parser->data;
-    um_http_hdr *h = malloc(sizeof(um_http_hdr));
-    h->name = strndup(f, len);
-    LIST_INSERT_HEAD(&req->resp.headers, h, _next);
+    if (req->resp.headers == NULL) {
+        req->resp.headers = calloc(20, sizeof(um_http_hdr));
+    }
+    req->resp.headers[req->resp.nh].name = strndup(f, len);
     return 0;
 }
 
 static int http_header_value_cb(http_parser *parser, const char *v, size_t len) {
     um_http_req_t *req = parser->data;
-    um_http_hdr *h = LIST_FIRST(&req->resp.headers);
-    h->value = strndup(v, len);
+    req->resp.headers[req->resp.nh++].value = strndup(v, len);
+
     return 0;
 }
 
@@ -773,7 +774,13 @@ static void free_hdr_list(um_header_list *l) {
 
 static void free_req(um_http_req_t *req) {
     free_hdr_list(&req->req_headers);
-    free_hdr_list(&req->resp.headers);
+    if (req->resp.headers) {
+        for (um_http_hdr *h = req->resp.headers; h->name != NULL; h++) {
+            free(h->name);
+            free(h->value);
+        }
+        free(req->resp.headers);
+    }
     if (req->resp.status) {
         free(req->resp.status);
     }
