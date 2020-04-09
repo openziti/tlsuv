@@ -52,7 +52,8 @@ static int http_header_value_cb(http_parser *parser, const char *v, size_t len);
 
 static int http_headers_complete_cb(http_parser *p);
 
-static void requests_fail(um_http_t *c, int code);
+static void requests_fail(um_http_t *c, int code, const char *msg);
+
 static void close_connection(um_http_t *c);
 static void free_req(um_http_req_t *req);
 
@@ -103,7 +104,7 @@ static int http_headers_complete_cb(http_parser *p) {
     um_http_req_t *req = p->data;
     req->state = headers_received;
     if (req->resp_cb != NULL) {
-        req->resp_cb(req, p->status_code, &req->resp_headers);
+        req->resp_cb(&req->resp, req->data);
     }
     return 0;
 }
@@ -112,19 +113,24 @@ static int http_header_field_cb(http_parser *parser, const char *f, size_t len) 
     um_http_req_t *req = parser->data;
     um_http_hdr *h = malloc(sizeof(um_http_hdr));
     h->name = strndup(f, len);
-    LIST_INSERT_HEAD(&req->resp_headers, h, _next);
+    LIST_INSERT_HEAD(&req->resp.headers, h, _next);
     return 0;
 }
 
 static int http_header_value_cb(http_parser *parser, const char *v, size_t len) {
     um_http_req_t *req = parser->data;
-    um_http_hdr *h = LIST_FIRST(&req->resp_headers);
+    um_http_hdr *h = LIST_FIRST(&req->resp.headers);
     h->value = strndup(v, len);
     return 0;
 }
 
 static int http_status_cb(http_parser *parser, const char *status, size_t len) {
-    UM_LOG(VERB, "status = %d %*.*s", parser->status_code, (int) len, (int) len, status);
+    UM_LOG(VERB, "status = %d %.*s", parser->status_code, (int) len, status);
+    um_http_req_t *r = parser->data;
+    r->resp.code = (int) parser->status_code;
+    snprintf(r->resp.http_version, sizeof(r->resp.http_version), "%d.%d", parser->http_major, parser->http_minor);
+    r->resp.status = calloc(1, len);
+    strncpy(r->resp.status, status, len);
     return 0;
 }
 
@@ -132,16 +138,16 @@ static int http_message_cb(http_parser *parser) {
     UM_LOG(VERB, "message complete");
     um_http_req_t *r = parser->data;
     r->state = completed;
-    if (r->body_cb != NULL) {
-        r->body_cb(r, NULL, UV_EOF);
+    if (r->resp.body_cb != NULL) {
+        r->resp.body_cb(r, NULL, UV_EOF);
     }
     return 0;
 }
 
 static int http_body_cb(http_parser *parser, const char *body, size_t len) {
     um_http_req_t *r = parser->data;
-    if (r->body_cb != NULL) {
-        r->body_cb(r, body, len);
+    if (r->resp.body_cb != NULL) {
+        r->resp.body_cb(r, body, len);
     }
     return 0;
 }
@@ -150,8 +156,9 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     um_http_t *c = link->data;
 
     if (nread < 0) {
-        UM_LOG(WARN, "received %zd (%s)", nread, uv_strerror(nread));
-        requests_fail(c, nread);
+        const char *err = uv_strerror(nread);
+        UM_LOG(WARN, "received %zd (%s)", nread, err);
+        requests_fail(c, nread, err);
 
         close_connection(c);
         return;
@@ -160,7 +167,7 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     if (c->active != NULL) {
 
         UM_LOG(TRACE, "processing \n%*.*s", nread, nread, buf->base);
-        size_t processed = http_parser_execute(&c->active->response, &HTTP_PROC, buf->base, nread);
+        size_t processed = http_parser_execute(&c->active->parser, &HTTP_PROC, buf->base, nread);
 
         UM_LOG(TRACE, "processed %zd out of %zd", processed, nread);
         if (c->active->state == completed) {
@@ -180,9 +187,11 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     }
 }
 
-static void requests_fail(um_http_t *c, int code) {
+static void requests_fail(um_http_t *c, int code, const char *msg) {
     if (c->active != NULL && c->active->resp_cb != NULL) {
-        c->active->resp_cb(c->active, code, NULL);
+        c->active->resp.code = code;
+        c->active->resp.status = strdup(msg);
+        c->active->resp_cb(&c->active->resp, c->active->data);
     }
 
     um_http_req_t *r;
@@ -190,7 +199,9 @@ static void requests_fail(um_http_t *c, int code) {
         r = STAILQ_FIRST(&c->requests);
         STAILQ_REMOVE_HEAD(&c->requests, _next);
         if (r->resp_cb != NULL) {
-            r->resp_cb(r, code, NULL);
+            r->resp.code = code;
+            r->resp.status = strdup(msg);
+            r->resp_cb(&r->resp, r->data);
             uv_unref((uv_handle_t *) &c->proc);
         }
         free_req(r);
@@ -226,7 +237,7 @@ static void connect_cb(uv_connect_t *req, int status) {
         }
     }
     else {
-        requests_fail(clt, status);
+        requests_fail(clt, status, uv_strerror(status));
     }
 
     free(req);
@@ -244,7 +255,7 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
         uv_freeaddrinfo(addr);
     }
     else {
-        requests_fail(c, status);
+        requests_fail(c, status, uv_strerror(status));
     }
     free(req);
 }
@@ -601,10 +612,10 @@ void um_http_set_ssl(um_http_t *clt, tls_context *tls) {
     clt->tls = tls;
 }
 
-um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path) {
+um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, um_http_resp_cb resp_cb, void *ctx) {
     um_http_req_t *r = calloc(1, sizeof(um_http_req_t));
     r->client = c;
-    r->response.data = r;
+    r->parser.data = r;
     r->method = strdup(method);
     r->path = strdup(path);
     r->req_body = NULL;
@@ -612,7 +623,11 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path) {
     r->req_size = -1;
     r->state = created;
 
-    http_parser_init(&r->response, HTTP_RESPONSE);
+    r->resp.req = r;
+    r->resp_cb = resp_cb;
+    r->data = ctx;
+
+    http_parser_init(&r->parser, HTTP_RESPONSE);
 
     STAILQ_INSERT_TAIL(&c->requests, r, _next);
 
@@ -758,7 +773,10 @@ static void free_hdr_list(um_header_list *l) {
 
 static void free_req(um_http_req_t *req) {
     free_hdr_list(&req->req_headers);
-    free_hdr_list(&req->resp_headers);
+    free_hdr_list(&req->resp.headers);
+    if (req->resp.status) {
+        free(req->resp.status);
+    }
     free(req->path);
     free(req->method);
 }
