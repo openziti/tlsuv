@@ -167,11 +167,13 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 
     if (c->active != NULL) {
 
-        UM_LOG(TRACE, "processing \n%*.*s", nread, nread, buf->base);
-        size_t processed = http_parser_execute(&c->active->parser, &HTTP_PROC, buf->base, nread);
+        if (nread > 0) {
+            UM_LOG(TRACE, "processing \n%*.*s", nread, nread, buf->base);
+            size_t processed = http_parser_execute(&c->active->parser, &HTTP_PROC, buf->base, nread);
+            UM_LOG(VERB, "processed %zd out of %zd", processed, nread);
+        }
 
-        UM_LOG(TRACE, "processed %zd out of %zd", processed, nread);
-        if (c->active->state == completed) {
+		if (c->active->state == completed) {
             um_http_req_t *hr = c->active;
             c->active = NULL;
             free_req(hr);

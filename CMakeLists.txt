@@ -49,6 +49,12 @@ target_link_libraries(uv_mbed
         PUBLIC mbedx509
         PUBLIC mbedcrypto)
 
+if (WIN32)
+    target_link_libraries(uv_mbed
+            PUBLIC crypt32)
+
+endif()
+
 install(DIRECTORY include/uv_mbed DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(TARGETS uv_mbed
         ARCHIVE DESTINATION lib)

@@ -26,9 +26,8 @@ int main(int argc, char **argv) {
     um_http_t clt;
     um_http_init(loop, &clt, "https://httpbin.org");
 
-    um_http_req_t *r = um_http_req(&clt, "POST", "/post");
-    r->resp_cb = resp_cb;
-    r->body_cb = body_cb;
+    um_http_req_t *r = um_http_req(&clt, "POST", "/post", resp_cb, NULL);
+    r->resp.body_cb = body_cb;
 
     const char *msg = "this is a test";
     um_http_req_data(r, msg, strlen(msg), NULL);
