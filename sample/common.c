@@ -17,19 +17,17 @@ limitations under the License.
 
 #include "common.h"
 
-void resp_cb(um_http_req_t *req, int code, um_header_list *headers) {
-    if (code < 0) {
-        fprintf(stderr, "ERROR: %d(%s)", code, uv_strerror(code));
-        exit(code);
+void resp_cb(um_http_resp_t *resp, void *data) {
+    if (resp->code < 0) {
+        fprintf(stderr, "ERROR: %d(%s)", resp->code, uv_strerror(resp->code));
+        exit(-1);
     }
     um_http_hdr *h;
-    printf("Response (%d) >>>\nHeaders >>>\n", code);
-    if (headers) {
-        LIST_FOREACH(h, headers, _next) {
-            printf("\t%s: %s\n", h->name, h->value);
-        }
-        printf("\n");
+    printf("Response (%d) >>>\nHeaders >>>\n", resp->code);
+    for (h = resp->headers; h != NULL && h->name != NULL; h++) {
+        printf("\t%s: %s\n", h->name, h->value);
     }
+    printf("\n");
 }
 
 void body_cb(um_http_req_t *req, const char *body, ssize_t len) {

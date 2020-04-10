@@ -20,8 +20,7 @@ limitations under the License.
 
 #include <uv_mbed/um_http.h>
 
-void resp_cb(um_http_req_t *req, int code, um_header_list *headers);
-
+void resp_cb(um_http_resp_t *resp, void *data);
 void body_cb(um_http_req_t *req, const char *body, ssize_t len);
 
 #endif //UV_MBED_COMMON_H

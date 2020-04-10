@@ -29,9 +29,8 @@ uv_timer_t time_timer;
 static void timer_cb(uv_timer_t *timer) {
     if (count-- > 0) {
         printf(">>> calling time service count left = %d\n\n", count);
-        um_http_req_t *req = um_http_req(&time_clt, "GET", "/api/timezone/EST");
-        req->resp_cb = resp_cb;
-        req->body_cb = body_cb;
+        um_http_req_t *req = um_http_req(&time_clt, "GET", "/api/timezone/EST", resp_cb, NULL);
+        req->resp.body_cb = body_cb;
     } else {
         uv_timer_stop(timer);
     }

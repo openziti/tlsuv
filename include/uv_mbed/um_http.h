@@ -50,12 +50,13 @@ typedef struct um_http_hdr_s {
  */
 typedef LIST_HEAD(hdr_list, um_http_hdr_s) um_header_list;
 
+typedef struct um_http_resp_s um_http_resp_t;
 typedef struct um_http_req_s um_http_req_t;
 
 /**
  * HTTP response callback type.
  */
-typedef void (*um_http_resp_cb)(um_http_req_t *req, int http_code, um_header_list *headers);
+typedef void (*um_http_resp_cb)(um_http_resp_t *resp, void *ctx);
 
 /**
  * HTTP body callback type.
@@ -74,6 +75,23 @@ typedef enum http_request_state {
 } http_request_state;
 
 /**
+ * @brief HTTP responce object passed into #um_http_resp_cb.
+ */
+typedef struct um_http_resp_s {
+    um_http_req_t *req;
+
+    char http_version[4];
+    int code;
+    char *status;
+
+    int nh;
+    um_http_hdr *headers;
+
+    /** @brief callback called with response body data. May be called multiple times, last one with `len` of `UV_EOF` */
+    um_http_body_cb body_cb;
+} um_http_resp_t;
+
+/**
  * HTTP request object.
  *
  */
@@ -82,23 +100,21 @@ typedef struct um_http_req_s {
     struct um_http_s *client;
     char *method;
     char *path;
-    http_parser response;
+    http_parser parser;
     enum http_request_state state;
 
     bool req_chunked;
     ssize_t req_size;
     void *req_body;
     um_header_list req_headers;
-    um_header_list resp_headers;
 
     /** @brief callback called after server has sent response headers. Called before #body_cb */
     um_http_resp_cb resp_cb;
 
-    /** @brief callback called with response body data. May be called multiple times, last one with `len` of `UV_EOF` */
-    um_http_body_cb body_cb;
-
     /*! request context */
     void *data;
+
+    um_http_resp_t resp;
 
     STAILQ_ENTRY(um_http_req_s) _next;
 } um_http_req_t;
@@ -186,9 +202,11 @@ int um_http_close(um_http_t *l);
  * @param clt HTTP client
  * @param method HTTP method
  * @param path request URI (including query)
+ * @param resp_cb callback called after server has sent response headers.
+ * @param ctx arbitrary data passed back in #resp_cb
  * @return request that should be modified by setting callbacks, headers, etc
  */
-um_http_req_t *um_http_req(um_http_t *clt, const char *method, const char *path);
+um_http_req_t *um_http_req(um_http_t *clt, const char *method, const char *path, um_http_resp_cb resp_cb, void *ctx);
 
 /**
  * Set request header

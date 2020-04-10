@@ -27,16 +27,25 @@ using namespace Catch::Matchers;
 
 class resp_capture {
 public:
-    ssize_t code;
+
+    um_http_body_cb body_cb;
+
+    resp_capture(um_http_body_cb cb) : body_cb(cb) {}
+
+    resp_capture() : resp_capture(nullptr) {}
+
+    string http_version;
+    ssize_t code{};
+    string status;
     map<string, string> headers;
 
     string body;
     string req_body;
 
-    bool resp_body_end_called;
-    bool req_body_cb_called;
+    bool resp_body_end_called{};
+    bool req_body_cb_called{};
 
-    uv_timeval64_t resp_endtime;
+    uv_timeval64_t resp_endtime{};
 };
 
 void req_body_cb(um_http_req_t *req, const char *chunk, ssize_t status) {
@@ -56,16 +65,18 @@ void resp_body_cb(um_http_req_t *req, const char *chunk, ssize_t len) {
     }
 }
 
-void resp_capture_cb(um_http_req_t *req, int code, um_header_list *headers) {
-    auto rc = static_cast<resp_capture *>(req->data);
-    rc->code = code;
+void resp_capture_cb(um_http_resp_t *resp, void *data) {
+    auto rc = static_cast<resp_capture *>(data);
+    rc->code = resp->code;
+    rc->status = resp->status ? resp->status : "no status";
+    rc->http_version = resp->http_version;
 
-    if (headers != nullptr) {
-        um_http_hdr *h;
-        LIST_FOREACH(h, headers, _next) {
-            rc->headers[h->name] = h->value;
-        }
+    um_http_hdr *h;
+    for (h = resp->headers; h != NULL && h->name != nullptr; h++) {
+        rc->headers[h->name] = h->value;
     }
+
+    resp->body_cb = rc->body_cb;
 }
 
 void test_timeout(uv_timer_t *t) {
@@ -80,7 +91,7 @@ void send_part2(uv_timer_t *t) {
     um_http_req_data(req, part2.c_str(), part2.length(), req_body_cb);
     um_http_req_end(req);
 
-    uv_close(reinterpret_cast<uv_handle_t *>(t), nullptr);
+    uv_close((uv_handle_t *) (t), nullptr);
 
 }
 
@@ -94,13 +105,11 @@ TEST_CASE("http_tests", "[http]") {
     uv_timer_init(loop, timer);
     uv_unref((uv_handle_t *) timer);
     uv_timer_start(timer, test_timeout, 5000, 0);
-    struct resp_capture resp = {0};
+    resp_capture resp(resp_body_cb);
 
     WHEN("resolve failure " << scheme) {
         um_http_init(loop, &clt, (scheme + "://not.a.real.host").c_str());
-        um_http_req_t *req = um_http_req(&clt, "GET", "/");
-        req->data = &resp;
-        req->resp_cb = resp_capture_cb;
+        um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
         uv_run(loop, UV_RUN_DEFAULT);
 
@@ -110,9 +119,7 @@ TEST_CASE("http_tests", "[http]") {
     WHEN(scheme << " connect failure") {
         string url = scheme + "://localhost:1222";
         um_http_init(loop, &clt, url.c_str());
-        um_http_req_t *req = um_http_req(&clt, "GET", "/");
-        req->data = &resp;
-        req->resp_cb = resp_capture_cb;
+        um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
         uv_run(loop, UV_RUN_DEFAULT);
 
@@ -121,9 +128,7 @@ TEST_CASE("http_tests", "[http]") {
 
     WHEN(scheme << " redirect google.com ") {
         um_http_init(loop, &clt, (scheme + "://google.com").c_str());
-        um_http_req_t *req = um_http_req(&clt, "GET", "/");
-        req->data = &resp;
-        req->resp_cb = resp_capture_cb;
+        um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
         uv_run(loop, UV_RUN_DEFAULT);
 
@@ -134,9 +139,7 @@ TEST_CASE("http_tests", "[http]") {
 
     WHEN(scheme << " redirect") {
         um_http_init(loop, &clt, "http://httpbin.org");
-        um_http_req_t *req = um_http_req(&clt, "GET", "/redirect/2");
-        req->data = &resp;
-        req->resp_cb = resp_capture_cb;
+        um_http_req_t *req = um_http_req(&clt, "GET", "/redirect/2", resp_capture_cb, &resp);
 
         uv_run(loop, UV_RUN_DEFAULT);
 
@@ -147,10 +150,7 @@ TEST_CASE("http_tests", "[http]") {
 
     WHEN(scheme << " body GET") {
         um_http_init(loop, &clt, "http://httpbin.org");
-        um_http_req_t *req = um_http_req(&clt, "GET", "/get");
-        req->data = &resp;
-        req->resp_cb = resp_capture_cb;
-        req->body_cb = resp_body_cb;
+        um_http_req_t *req = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
 
         uv_run(loop, UV_RUN_DEFAULT);
 
@@ -166,17 +166,11 @@ TEST_CASE("http_tests", "[http]") {
         um_http_init(loop, &clt, "http://httpbin.org");
         um_http_header(&clt, "Client-Header", "This is client header");
 
-        um_http_req_t *req = um_http_req(&clt, "GET", "/get");
+        um_http_req_t *req = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
         um_http_req_header(req, "Request-Header", "this is request header");
-        req->data = &resp;
-        req->resp_cb = resp_capture_cb;
-        req->body_cb = resp_body_cb;
 
-        struct resp_capture resp2 = {0};
-        um_http_req_t *req2 = um_http_req(&clt, "GET", "/get");
-        req2->data = &resp2;
-        req2->resp_cb = resp_capture_cb;
-        req2->body_cb = resp_body_cb;
+        resp_capture resp2(resp_body_cb);
+        um_http_req_t *req2 = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp2);
 
         uv_run(loop, UV_RUN_DEFAULT);
 
@@ -191,10 +185,7 @@ TEST_CASE("http_tests", "[http]") {
 
     WHEN(scheme << " POST body") {
         um_http_init(loop, &clt, (scheme + "://httpbin.org").c_str());
-        um_http_req_t *req = um_http_req(&clt, "POST", "/post");
-        req->data = &resp;
-        req->resp_cb = resp_capture_cb;
-        req->body_cb = resp_body_cb;
+        um_http_req_t *req = um_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
         string req_body("this is a test message");
         um_http_req_data(req, req_body.c_str(), req_body.length(), req_body_cb);
 
@@ -216,12 +207,9 @@ TEST_CASE("http_tests", "[http]") {
 
     WHEN(scheme << " posting chunked") {
         um_http_init(loop, &clt, (scheme + "://httpbin.org").c_str());
-        um_http_req_t *req = um_http_req(&clt, "POST", "/post");
+        um_http_req_t *req = um_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
         um_http_req_header(req, "Transfer-Encoding", "chunked");
 
-        req->data = &resp;
-        req->resp_cb = resp_capture_cb;
-        req->body_cb = resp_body_cb;
         string part1("this is part1");
         um_http_req_data(req, part1.c_str(), part1.length(), req_body_cb);
 
@@ -261,13 +249,9 @@ TEST_CASE("http_tests", "[http]") {
 TEST_CASE("client_cert_test","[http]") {
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
-    resp_capture resp;
+    resp_capture resp(resp_body_cb);
     um_http_init(loop, &clt, "https://client.badssl.com");
-    um_http_req_t *req = um_http_req(&clt, "GET", "/");
-
-    req->data = &resp;
-    req->resp_cb = resp_capture_cb;
-    req->body_cb = resp_body_cb;
+    um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
     WHEN("client cert NOT set") {
 
@@ -377,24 +361,18 @@ static long duration(uv_timeval64_t &start, uv_timeval64_t &stop) {
 TEST_CASE("client_idle_test","[http]") {
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
-    resp_capture resp;
-    um_http_init(loop, &clt, "https://httpbin.org");
-    um_http_idle_keepalive(&clt, 5000);
-    um_http_req_t *req = um_http_req(&clt, "GET", "/get");
 
-    req->data = &resp;
-    req->resp_cb = [](um_http_req_t *req, int c, um_header_list *headers){
-        auto r = static_cast<resp_capture*>(req->data);
-        r->code = c;
-    };
-
-    req->body_cb = [](um_http_req_t* req, const char* b, ssize_t len){
-        auto r = static_cast<resp_capture*>(req->data);
+    um_http_body_cb bodyCb = [](um_http_req_t *req, const char *b, ssize_t len) {
+        auto r = static_cast<resp_capture *>(req->data);
 
         if (len == UV_EOF) {
             uv_gettimeofday(&r->resp_endtime);
         }
     };
+    resp_capture resp(bodyCb);
+    um_http_init(loop, &clt, "https://httpbin.org");
+    um_http_idle_keepalive(&clt, 5000);
+    um_http_req_t *req = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
 
     WHEN("client idle timeout is set to 5 seconds") {
         uv_timeval64_t start;
@@ -422,24 +400,19 @@ TEST_CASE("client_idle_test","[http]") {
 TEST_CASE("server_idle_close","[.]") {
     uv_loop_t *loop = uv_default_loop();
     um_http_t clt;
-    resp_capture resp;
-    um_http_init(loop, &clt, "http://www.aptivate.org");
-    um_http_idle_keepalive(&clt, -1);
-    um_http_req_t *req = um_http_req(&clt, "GET", "/");
 
-    req->data = &resp;
-    req->resp_cb = [](um_http_req_t *req, int c, um_header_list *headers){
-        auto r = static_cast<resp_capture*>(req->data);
-        r->code = c;
-    };
-
-    req->body_cb = [](um_http_req_t* req, const char* b, ssize_t len){
-        auto r = static_cast<resp_capture*>(req->data);
+    um_http_body_cb body_cb = [](um_http_req_t *req, const char *b, ssize_t len) {
+        auto r = static_cast<resp_capture *>(req->data);
 
         if (len == UV_EOF) {
             uv_gettimeofday(&r->resp_endtime);
         }
     };
+    resp_capture resp(body_cb);
+
+    um_http_init(loop, &clt, "http://www.aptivate.org");
+    um_http_idle_keepalive(&clt, -1);
+    um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
     WHEN("client timeout is set to -1") {
         uv_timeval64_t start;
@@ -464,3 +437,30 @@ TEST_CASE("server_idle_close","[.]") {
     free(loop);
 }
 
+extern "C" void uv_mbed_set_debug(int level, FILE *out);
+
+TEST_CASE("basic_test", "[http]") {
+    uv_loop_t *loop = uv_loop_new();
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+    um_http_init(loop, &clt, "http://httpbin.org");
+    um_http_req_t *req = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
+
+    WHEN("client idle timeout is set to 5 seconds") {
+        uv_run(loop, UV_RUN_DEFAULT);
+
+        THEN("request should be fast and then idle for 5 seconds") {
+            CHECK(resp.code == HTTP_STATUS_OK);
+            CHECK_THAT(resp.http_version, Equals("1.1"));
+            CHECK_THAT(resp.status, Equals("OK"));
+
+            CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
+        }
+
+        um_http_close(&clt);
+    }
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
+}

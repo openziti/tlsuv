@@ -21,8 +21,13 @@ limitations under the License.
 
 int main( int argc, char* argv[] ) {
 
-    // enable full logging during tests
-    uv_mbed_set_debug(5, stdout);
+    const char* debug = getenv("UM_TEST_DEBUG");
+    if (debug) {
+        // enable logging during tests
+        long level = strtol(debug, NULL, 10);
+        uv_mbed_set_debug((int)level, stdout);
+
+    }
     int result = Catch::Session().run( argc, argv );
 
     return result;
