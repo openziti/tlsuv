@@ -52,6 +52,7 @@ typedef LIST_HEAD(hdr_list, um_http_hdr_s) um_header_list;
 
 typedef struct um_http_resp_s um_http_resp_t;
 typedef struct um_http_req_s um_http_req_t;
+typedef struct um_http_s um_http_t;
 
 /**
  * HTTP response callback type.
@@ -120,6 +121,16 @@ typedef struct um_http_req_s {
 } um_http_req_t;
 
 /**
+ * Custom source link connect callback type
+ */
+typedef void (*um_http_custom_connect_cb)(um_http_t *c, int status);
+
+/**
+ * Custom source link connect method type
+ */
+typedef int (*um_http_custom_connect_t)(uv_loop_t *l, um_http_t *c, um_http_custom_connect_cb cb);
+
+/**
  * @brief HTTP client struct
  */
 typedef struct um_http_s {
@@ -135,6 +146,9 @@ typedef struct um_http_s {
     int connected;
     uv_tcp_t conn;
     uv_link_source_t conn_src;
+    uv_link_t *custom_src;
+    um_http_custom_connect_t custom_connect;
+
     uv_link_t http_link;
     uv_link_t tls_link;
 
@@ -180,7 +194,14 @@ int um_http_idle_keepalive(um_http_t *clt, long millis);
 void um_http_set_ssl(um_http_t *clt, tls_context *tls);
 
 /**
- * \brief Set header on the client.
+ *  @brief Set custom source link
+ * 
+ *  Set a source link that will be used in place of TCP link ssource
+ */
+void um_http_set_link_source(um_http_t *clt, uv_link_t *src, um_http_custom_connect_t connect);
+
+/**
+ * @brief Set header on the client.
  *
  * All requests execute by the client will get that request header. Pass `value==NULL` to unset the header.
  * @param clt

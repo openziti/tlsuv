@@ -212,32 +212,46 @@ static void requests_fail(um_http_t *c, int code, const char *msg) {
     }
 }
 
+static void make_links(um_http_t *clt, uv_link_t *conn_src) {
+    uv_link_init(&clt->http_link, &http_methods);
+    clt->http_link.data = clt;
+
+    if (clt->ssl) {
+        uv_link_init(&clt->tls_link, &tls_methods);
+        clt->tls_link.data = clt;
+
+        uv_link_chain((uv_link_t *) conn_src, &clt->tls_link);
+        uv_link_chain(&clt->tls_link, &clt->http_link);
+    }
+    else {
+        uv_link_chain((uv_link_t *) conn_src, &clt->http_link);
+    }
+
+    uv_link_read_start(&clt->http_link);
+
+    if (!clt->ssl) {
+        clt->connected = Connected;
+        uv_async_send(&clt->proc);
+    }
+}
+
+static void custom_connect_cb(um_http_t *clt, int status) {
+    UM_LOG(VERB, "custom connected status = %d", status);
+    if (status == 0) {
+        make_links(clt, clt->custom_src);
+    } 
+    else {
+        requests_fail(clt, status, uv_strerror(status));
+    }
+}
+
 static void connect_cb(uv_connect_t *req, int status) {
     um_http_t *clt = req->data;
     UM_LOG(VERB, "connected status = %d", status);
 
     if (status == 0) {
         uv_link_source_init(&clt->conn_src, (uv_stream_t *) &clt->conn);
-        uv_link_init(&clt->http_link, &http_methods);
-        clt->http_link.data = clt;
-
-        if (clt->ssl) {
-            uv_link_init(&clt->tls_link, &tls_methods);
-            clt->tls_link.data = clt;
-
-            uv_link_chain((uv_link_t *) &clt->conn_src, &clt->tls_link);
-            uv_link_chain(&clt->tls_link, &clt->http_link);
-        }
-        else {
-            uv_link_chain((uv_link_t *) &clt->conn_src, &clt->http_link);
-        }
-
-        uv_link_read_start(&clt->http_link);
-
-        if (!clt->ssl) {
-            clt->connected = Connected;
-            uv_async_send(&clt->proc);
-        }
+        make_links(clt, (uv_link_t *) &clt->conn_src);
     }
     else {
         requests_fail(clt, status, uv_strerror(status));
@@ -465,9 +479,14 @@ static void process_requests(uv_async_t *ar) {
     if (c->connected == Disconnected) {
         c->connected = Connecting;
         UM_LOG(VERB, "client not connected, starting connect sequence");
-        uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
-        resolv_req->data = c;
-        uv_getaddrinfo(ar->loop, resolv_req, resolve_cb, c->host, c->port, NULL);
+        if (c->custom_src != NULL) {
+            UM_LOG(VERB, "custom src found, calling custom connect");
+            c->custom_connect(ar->loop, c, custom_connect_cb);
+        } else {
+            uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
+            resolv_req->data = c;
+            uv_getaddrinfo(ar->loop, resolv_req, resolve_cb, c->host, c->port, NULL);
+        }
     }
     else if (c->connected == Connected) {
         UM_LOG(VERB, "client connected, processing request");
@@ -613,6 +632,12 @@ int um_http_idle_keepalive(um_http_t *clt, long millis) {
 
 void um_http_set_ssl(um_http_t *clt, tls_context *tls) {
     clt->tls = tls;
+}
+
+void um_http_set_link_source(um_http_t *clt, uv_link_t *src, um_http_custom_connect_t connect) {
+    UM_LOG(DEBG, "setting custom link sourcce");
+    clt->custom_src = src;
+    clt->custom_connect = connect;
 }
 
 um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, um_http_resp_cb resp_cb, void *ctx) {
