@@ -481,8 +481,9 @@ static void process_requests(uv_async_t *ar) {
         UM_LOG(VERB, "client not connected, starting connect sequence");
         if (c->custom_src != NULL) {
             UM_LOG(VERB, "custom src found, calling custom connect");
-            c->custom_connect(ar->loop, c, custom_connect_cb);
-        } else {
+            c->custom_connect(c, custom_connect_cb);
+        } 
+        else {
             uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
             resolv_req->data = c;
             uv_getaddrinfo(ar->loop, resolv_req, resolve_cb, c->host, c->port, NULL);

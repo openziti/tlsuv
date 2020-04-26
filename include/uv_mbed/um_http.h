@@ -128,7 +128,7 @@ typedef void (*um_http_custom_connect_cb)(um_http_t *c, int status);
 /**
  * Custom source link connect method type
  */
-typedef int (*um_http_custom_connect_t)(uv_loop_t *l, um_http_t *c, um_http_custom_connect_cb cb);
+typedef int (*um_http_custom_connect_t)(um_http_t *c, um_http_custom_connect_cb cb);
 
 /**
  * @brief HTTP client struct
