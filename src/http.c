@@ -574,6 +574,7 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     clt->engine = NULL;
     clt->active = NULL;
     clt->connected = Disconnected;
+    clt->custom_src = NULL;
 
     clt->idle_time = DEFAULT_IDLE_TIMEOUT;
     uv_timer_init(l, &clt->idle_timer);
