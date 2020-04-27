@@ -196,7 +196,7 @@ void um_http_set_ssl(um_http_t *clt, tls_context *tls);
 /**
  *  @brief Set custom source link
  * 
- *  Set a source link that will be used in place of TCP link ssource
+ *  Set a source link that will be used in place of TCP link source
  */
 void um_http_set_link_source(um_http_t *clt, uv_link_t *src, um_http_custom_connect_t connect);
 
