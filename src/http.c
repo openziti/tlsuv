@@ -557,6 +557,10 @@ int um_http_close(um_http_t *clt) {
     uv_close((uv_handle_t *) &clt->idle_timer, NULL);
     uv_close((uv_handle_t *) &clt->proc, NULL);
 
+    if (clt->custom_src != NULL) {
+        clt->custom_link_release(clt->custom_src);
+    }
+
     free_http(clt);
     return 0;
 }
@@ -635,10 +639,10 @@ void um_http_set_ssl(um_http_t *clt, tls_context *tls) {
     clt->tls = tls;
 }
 
-void um_http_set_link_source(um_http_t *clt, uv_link_t *src, um_http_custom_connect_t connect) {
-    UM_LOG(DEBG, "setting custom link sourcce");
+void um_http_set_link_source(um_http_t *clt, uv_link_t *src, um_http_custom_connect_t connect, um_http_close_cb ccb) {
     clt->custom_src = src;
     clt->custom_connect = connect;
+    clt->custom_link_release = ccb;
 }
 
 um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, um_http_resp_cb resp_cb, void *ctx) {

@@ -131,6 +131,11 @@ typedef void (*um_http_custom_connect_cb)(um_http_t *c, int status);
 typedef int (*um_http_custom_connect_t)(um_http_t *c, um_http_custom_connect_cb cb);
 
 /**
+ *  Release resources associated with custom source link on `um_http_close()`
+ */
+typedef void (*um_http_close_cb)(uv_link_t *l);
+
+/**
  * @brief HTTP client struct
  */
 typedef struct um_http_s {
@@ -146,8 +151,10 @@ typedef struct um_http_s {
     int connected;
     uv_tcp_t conn;
     uv_link_source_t conn_src;
+
     uv_link_t *custom_src;
     um_http_custom_connect_t custom_connect;
+    um_http_close_cb custom_link_release;
 
     uv_link_t http_link;
     uv_link_t tls_link;
@@ -198,7 +205,7 @@ void um_http_set_ssl(um_http_t *clt, tls_context *tls);
  * 
  *  Set a source link that will be used in place of TCP link source
  */
-void um_http_set_link_source(um_http_t *clt, uv_link_t *src, um_http_custom_connect_t connect);
+void um_http_set_link_source(um_http_t *clt, uv_link_t *src, um_http_custom_connect_t c, um_http_close_cb rcb);
 
 /**
  * @brief Set header on the client.
