@@ -18,6 +18,7 @@ limitations under the License.
 #include <string.h>
 #include "uv_mbed/uv_mbed.h"
 #include "uv-common.h"
+#include "um_debug.h"
 
 #if _WIN32
 // this function is declared INLINE in a libuv .h file. As such we have had to 
@@ -46,7 +47,6 @@ void uv__stream_init(uv_loop_t* loop, uv_stream_t* stream, uv_handle_type type);
 
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
-static void init_ssl(uv_mbed_t *mbed);
 static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res);
 
 static void tcp_connect_cb(uv_connect_t* req, int status);
@@ -190,14 +190,21 @@ int uv_mbed_free(uv_mbed_t *mbed) {
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str)
 {
-    ((void) level);
     printf("%s:%04d: %s", file, line, str );
     fflush(  stdout );
 }
 
-static void alloc_cb(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
-    buf->base = (char*) malloc(suggested_size);
-    buf->len = buf->base != NULL ? suggested_size : 0;
+static void um_alloc_cb(uv_handle_t *h, size_t suggested_size, uv_buf_t *buf) {
+    uv_mbed_t *mbed = h->data;
+
+    // still in handshake, allocate memory internally
+    if (mbed->tls_engine->api->handshake_state(mbed->tls_engine->engine) == TLS_HS_CONTINUE) {
+        buf->base = (char*) malloc(suggested_size);
+        buf->len = buf->base != NULL ? suggested_size : 0;
+    } else {
+        // call client alloc to allow client signal backpressure via ENOBUFS
+        mbed->_stream.alloc_cb((uv_handle_t *) mbed, suggested_size, buf);
+    }
 }
 
 static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res) {
@@ -233,25 +240,33 @@ static void tcp_read_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
                 mbed->conn_req->cb(mbed->conn_req, 0);
                 mbed->conn_req = NULL;
             }
+
+            if (buf->base != NULL) {
+                free(buf->base);
+            }
         }
         else {
-            int rc;
-            char *input = buf->base;
-            do {
-                uv_buf_t b = uv_buf_init(NULL, 0);
-                mbed->_stream.alloc_cb((uv_handle_t *) mbed, 64 * 1024, &b);
-                ssize_t recv = 0;
-                if (b.base == NULL || b.len == 0) {
-                    recv = UV_ENOBUFS;
-                    rc = TLS_OK;
+            int rc = TLS_MORE_AVAILABLE;
+            ssize_t recv = 0;
+            uv_buf_t local_buf;
+            while (rc == TLS_MORE_AVAILABLE) {
+                // NB: we use client allocated memory in buf for input and output
+                rc = mbed->tls_engine->api->read(mbed->tls_engine->engine, buf->base, nread, buf->base, (size_t *) &recv,
+                                                     buf->len);
+                mbed->_stream.read_cb((uv_stream_t *) mbed, recv, buf);
+
+                if (rc == TLS_MORE_AVAILABLE) {
+                    // more data in TSL engine, use local buf
+                    mbed->_stream.alloc_cb((uv_handle_t *) mbed, 64 * 1024, &local_buf);
+                    if (local_buf.base == 0 || local_buf.len == 0) { // client can't take any more
+                        mbed->_stream.read_cb((uv_stream_t*)mbed, ENOBUFS, &local_buf);
+                        break;
+                    } else {
+                        nread = 0;
+                        buf = &local_buf;
+                    }
                 }
-                else {
-                    rc = mbed->tls_engine->api->read(mbed->tls_engine->engine, input, nread, b.base, (size_t *) &recv,
-                                                     b.len);
-                    input = NULL;
-                }
-                mbed->_stream.read_cb((uv_stream_t *) mbed, recv, &b);
-            } while (rc == TLS_MORE_AVAILABLE);
+            }
         }
     }
 
@@ -260,16 +275,11 @@ static void tcp_read_cb (uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf
        if (mbed->conn_req != NULL) {
             mbed->conn_req->cb(mbed->conn_req, nread);
             mbed->conn_req = NULL;
+            free(buf->base);
        }
-       else if (mbed->_stream.alloc_cb != NULL) {
-            uv_buf_t b = uv_buf_init(NULL, 0);
-            mbed->_stream.alloc_cb((uv_handle_t *) mbed, 1024, &b);
-            mbed->_stream.read_cb((uv_stream_t *) mbed, nread, &b);
+       else {
+            mbed->_stream.read_cb((uv_stream_t *) mbed, nread, buf);
         }
-    }
-
-    if (buf->base != NULL) {
-        free(buf->base);
     }
 }
 
@@ -280,11 +290,12 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
     }
     else {
         req->handle->data = mbed;
-        uv_read_start(req->handle, alloc_cb, tcp_read_cb);
+        uv_read_start(req->handle, um_alloc_cb, tcp_read_cb);
         // start handshake
         size_t out_size = 32 * 1024;
         char *out = malloc(out_size);
         size_t out_len;
+        UM_LOG(VERB, "starting handshake");
         mbed->tls_engine->api->handshake(mbed->tls_engine->engine, NULL, 0, out, &out_len, out_size);
         mbed_tcp_write(mbed, out, out_len, NULL);
     }
