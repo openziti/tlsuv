@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 #include "uv_mbed/um_http.h"
+#include "uv_mbed/tcp_src.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -235,46 +236,14 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
     }
 }
 
-static void custom_connect_cb(um_http_t *clt, int status) {
-    UM_LOG(VERB, "custom connected status = %d", status);
+static void src_connect_cb(um_http_src_t *src, int status) {
+    UM_LOG(VERB, "src connected status = %d", status);
     if (status == 0) {
-        make_links(clt, clt->custom_src);
+        make_links(src->clt, src->link);
     } 
     else {
-        requests_fail(clt, status, uv_strerror(status));
+        requests_fail(src->clt, status, uv_strerror(status));
     }
-}
-
-static void connect_cb(uv_connect_t *req, int status) {
-    um_http_t *clt = req->data;
-    UM_LOG(VERB, "connected status = %d", status);
-
-    if (status == 0) {
-        uv_link_source_init(&clt->conn_src, (uv_stream_t *) &clt->conn);
-        make_links(clt, (uv_link_t *) &clt->conn_src);
-    }
-    else {
-        requests_fail(clt, status, uv_strerror(status));
-    }
-
-    free(req);
-}
-
-static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr) {
-    UM_LOG(VERB, "resolved status = %d", status);
-    um_http_t *c = req->data;
-
-    if (status == 0) {
-        uv_connect_t *conn_req = malloc(sizeof(uv_connect_t));
-        conn_req->data = c;
-        uv_tcp_init(req->loop, &c->conn);
-        uv_tcp_connect(conn_req, &c->conn, addr->ai_addr, connect_cb);
-        uv_freeaddrinfo(addr);
-    }
-    else {
-        requests_fail(c, status, uv_strerror(status));
-    }
-    free(req);
 }
 
 static void link_close_cb(uv_link_t *l) {}
@@ -479,15 +448,7 @@ static void process_requests(uv_async_t *ar) {
     if (c->connected == Disconnected) {
         c->connected = Connecting;
         UM_LOG(VERB, "client not connected, starting connect sequence");
-        if (c->custom_src != NULL) {
-            UM_LOG(VERB, "custom src found, calling custom connect");
-            c->custom_connect(c, custom_connect_cb);
-        } 
-        else {
-            uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
-            resolv_req->data = c;
-            uv_getaddrinfo(ar->loop, resolv_req, resolve_cb, c->host, c->port, NULL);
-        }
+        c->src->connect(c->src, src_connect_cb);
     }
     else if (c->connected == Connected) {
         UM_LOG(VERB, "client connected, processing request");
@@ -557,15 +518,15 @@ int um_http_close(um_http_t *clt) {
     uv_close((uv_handle_t *) &clt->idle_timer, NULL);
     uv_close((uv_handle_t *) &clt->proc, NULL);
 
-    if (clt->custom_src != NULL) {
-        clt->custom_link_release(clt->custom_src);
+    if (clt->src != NULL) { 
+        clt->src->release(clt->src);
     }
 
     free_http(clt);
     return 0;
 }
 
-int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
+int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http_src_t *src) {
     STAILQ_INIT(&clt->requests);
     LIST_INIT(&clt->headers);
 
@@ -574,7 +535,8 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     clt->engine = NULL;
     clt->active = NULL;
     clt->connected = Disconnected;
-    clt->custom_src = NULL;
+    clt->src = src;
+    src->clt = clt;
 
     clt->idle_time = DEFAULT_IDLE_TIMEOUT;
     uv_timer_init(l, &clt->idle_timer);
@@ -631,6 +593,11 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     return 0;
 }
 
+int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
+    tcp_src_init(l, &clt->default_src);
+    return um_http_init_with_src(l, clt, url, (um_http_src_t *)&clt->default_src);    
+}
+
 int um_http_idle_keepalive(um_http_t *clt, long millis) {
     clt->idle_time = millis;
     return 0;
@@ -638,12 +605,6 @@ int um_http_idle_keepalive(um_http_t *clt, long millis) {
 
 void um_http_set_ssl(um_http_t *clt, tls_context *tls) {
     clt->tls = tls;
-}
-
-void um_http_set_link_source(um_http_t *clt, uv_link_t *src, um_http_custom_connect_t connect, um_http_close_cb ccb) {
-    clt->custom_src = src;
-    clt->custom_connect = connect;
-    clt->custom_link_release = ccb;
 }
 
 um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, um_http_resp_cb resp_cb, void *ctx) {

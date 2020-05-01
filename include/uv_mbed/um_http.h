@@ -30,6 +30,7 @@ limitations under the License.
 #include <stdbool.h>
 #include "queue.h"
 #include "tls_engine.h"
+#include "tcp_src.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -121,21 +122,6 @@ typedef struct um_http_req_s {
 } um_http_req_t;
 
 /**
- * Custom source link connect callback type
- */
-typedef void (*um_http_custom_connect_cb)(um_http_t *c, int status);
-
-/**
- * Custom source link connect method type
- */
-typedef int (*um_http_custom_connect_t)(um_http_t *c, um_http_custom_connect_cb cb);
-
-/**
- *  Release resources associated with custom source link on `um_http_close()`
- */
-typedef void (*um_http_close_cb)(uv_link_t *l);
-
-/**
  * @brief HTTP client struct
  */
 typedef struct um_http_s {
@@ -149,12 +135,8 @@ typedef struct um_http_s {
     um_header_list headers;
 
     int connected;
-    uv_tcp_t conn;
-    uv_link_source_t conn_src;
-
-    uv_link_t *custom_src;
-    um_http_custom_connect_t custom_connect;
-    um_http_close_cb custom_link_release;
+    um_http_src_t *src;
+    tcp_src_t default_src;
 
     uv_link_t http_link;
     uv_link_t tls_link;
@@ -175,6 +157,20 @@ typedef struct um_http_s {
  * @return 0 or error code
  */
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url);
+
+/**
+ * @brief Initialize HTTP client with source link
+ * 
+ * Initialize HTTP client with a source link that will be used in place of TCP link source
+ * 
+ * @param l libuv loop to execute
+ * @param clt client struct
+ * @param url url to initialize client with. Only scheme, host, port(optional) are used.
+ * @param src source link to be used in place of TCP
+ * 
+ * @return 0 or error code
+ */
+int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http_src_t *src);
 
 /**
  * \brief Set idle timeout.
@@ -199,13 +195,6 @@ int um_http_idle_keepalive(um_http_t *clt, long millis);
  * @see tls_context
  */
 void um_http_set_ssl(um_http_t *clt, tls_context *tls);
-
-/**
- *  @brief Set custom source link
- * 
- *  Set a source link that will be used in place of TCP link source
- */
-void um_http_set_link_source(um_http_t *clt, uv_link_t *src, um_http_custom_connect_t c, um_http_close_cb rcb);
 
 /**
  * @brief Set header on the client.
