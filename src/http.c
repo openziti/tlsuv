@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 #include "uv_mbed/um_http.h"
+#include "uv_mbed/tcp_src.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -212,55 +213,37 @@ static void requests_fail(um_http_t *c, int code, const char *msg) {
     }
 }
 
-static void connect_cb(uv_connect_t *req, int status) {
-    um_http_t *clt = req->data;
-    UM_LOG(VERB, "connected status = %d", status);
+static void make_links(um_http_t *clt, uv_link_t *conn_src) {
+    uv_link_init(&clt->http_link, &http_methods);
+    clt->http_link.data = clt;
 
-    if (status == 0) {
-        uv_link_source_init(&clt->conn_src, (uv_stream_t *) &clt->conn);
-        uv_link_init(&clt->http_link, &http_methods);
-        clt->http_link.data = clt;
+    if (clt->ssl) {
+        uv_link_init(&clt->tls_link, &tls_methods);
+        clt->tls_link.data = clt;
 
-        if (clt->ssl) {
-            uv_link_init(&clt->tls_link, &tls_methods);
-            clt->tls_link.data = clt;
-
-            uv_link_chain((uv_link_t *) &clt->conn_src, &clt->tls_link);
-            uv_link_chain(&clt->tls_link, &clt->http_link);
-        }
-        else {
-            uv_link_chain((uv_link_t *) &clt->conn_src, &clt->http_link);
-        }
-
-        uv_link_read_start(&clt->http_link);
-
-        if (!clt->ssl) {
-            clt->connected = Connected;
-            uv_async_send(&clt->proc);
-        }
+        uv_link_chain((uv_link_t *) conn_src, &clt->tls_link);
+        uv_link_chain(&clt->tls_link, &clt->http_link);
     }
     else {
-        requests_fail(clt, status, uv_strerror(status));
+        uv_link_chain((uv_link_t *) conn_src, &clt->http_link);
     }
 
-    free(req);
+    uv_link_read_start(&clt->http_link);
+
+    if (!clt->ssl) {
+        clt->connected = Connected;
+        uv_async_send(&clt->proc);
+    }
 }
 
-static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr) {
-    UM_LOG(VERB, "resolved status = %d", status);
-    um_http_t *c = req->data;
-
+static void src_connect_cb(um_http_src_t *src, int status) {
+    UM_LOG(VERB, "src connected status = %d", status);
     if (status == 0) {
-        uv_connect_t *conn_req = malloc(sizeof(uv_connect_t));
-        conn_req->data = c;
-        uv_tcp_init(req->loop, &c->conn);
-        uv_tcp_connect(conn_req, &c->conn, addr->ai_addr, connect_cb);
-        uv_freeaddrinfo(addr);
-    }
+        make_links(src->clt, src->link);
+    } 
     else {
-        requests_fail(c, status, uv_strerror(status));
+        requests_fail(src->clt, status, uv_strerror(status));
     }
-    free(req);
 }
 
 static void link_close_cb(uv_link_t *l) {}
@@ -465,9 +448,7 @@ static void process_requests(uv_async_t *ar) {
     if (c->connected == Disconnected) {
         c->connected = Connecting;
         UM_LOG(VERB, "client not connected, starting connect sequence");
-        uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
-        resolv_req->data = c;
-        uv_getaddrinfo(ar->loop, resolv_req, resolve_cb, c->host, c->port, NULL);
+        c->src->connect(c->src, src_connect_cb);
     }
     else if (c->connected == Connected) {
         UM_LOG(VERB, "client connected, processing request");
@@ -537,11 +518,15 @@ int um_http_close(um_http_t *clt) {
     uv_close((uv_handle_t *) &clt->idle_timer, NULL);
     uv_close((uv_handle_t *) &clt->proc, NULL);
 
+    if (clt->src != NULL) { 
+        clt->src->release(clt->src);
+    }
+
     free_http(clt);
     return 0;
 }
 
-int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
+int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http_src_t *src) {
     STAILQ_INIT(&clt->requests);
     LIST_INIT(&clt->headers);
 
@@ -550,6 +535,8 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     clt->engine = NULL;
     clt->active = NULL;
     clt->connected = Disconnected;
+    clt->src = src;
+    src->clt = clt;
 
     clt->idle_time = DEFAULT_IDLE_TIMEOUT;
     uv_timer_init(l, &clt->idle_timer);
@@ -604,6 +591,11 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     clt->proc.data = clt;
 
     return 0;
+}
+
+int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
+    tcp_src_init(l, &clt->default_src);
+    return um_http_init_with_src(l, clt, url, (um_http_src_t *)&clt->default_src);    
 }
 
 int um_http_idle_keepalive(um_http_t *clt, long millis) {

@@ -30,6 +30,7 @@ limitations under the License.
 #include <stdbool.h>
 #include "queue.h"
 #include "tls_engine.h"
+#include "tcp_src.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,6 +53,7 @@ typedef LIST_HEAD(hdr_list, um_http_hdr_s) um_header_list;
 
 typedef struct um_http_resp_s um_http_resp_t;
 typedef struct um_http_req_s um_http_req_t;
+typedef struct um_http_s um_http_t;
 
 /**
  * HTTP response callback type.
@@ -133,8 +135,9 @@ typedef struct um_http_s {
     um_header_list headers;
 
     int connected;
-    uv_tcp_t conn;
-    uv_link_source_t conn_src;
+    um_http_src_t *src;
+    tcp_src_t default_src;
+
     uv_link_t http_link;
     uv_link_t tls_link;
 
@@ -154,6 +157,20 @@ typedef struct um_http_s {
  * @return 0 or error code
  */
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url);
+
+/**
+ * @brief Initialize HTTP client with source link
+ * 
+ * Initialize HTTP client with a source link that will be used in place of TCP link source
+ * 
+ * @param l libuv loop to execute
+ * @param clt client struct
+ * @param url url to initialize client with. Only scheme, host, port(optional) are used.
+ * @param src source link to be used in place of TCP
+ * 
+ * @return 0 or error code
+ */
+int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http_src_t *src);
 
 /**
  * \brief Set idle timeout.
@@ -180,7 +197,7 @@ int um_http_idle_keepalive(um_http_t *clt, long millis);
 void um_http_set_ssl(um_http_t *clt, tls_context *tls);
 
 /**
- * \brief Set header on the client.
+ * @brief Set header on the client.
  *
  * All requests execute by the client will get that request header. Pass `value==NULL` to unset the header.
  * @param clt

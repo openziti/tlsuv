@@ -17,6 +17,7 @@ set(uv_mbed_sources
         src/bio.c
         src/engine_mbedtls.c
         src/http.c
+        src/tcp_src.c
         src/um_debug.c
         src/um_debug.h
         )
