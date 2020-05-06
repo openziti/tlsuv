@@ -470,7 +470,6 @@ static void process_requests(uv_async_t *ar) {
             STAILQ_REMOVE_HEAD(&c->requests, _next);
 
             uv_buf_t req;
-            bool need_host = true; 
             req.base = malloc(8196);
             req.len = snprintf(req.base, 8196,
                                "%s %s HTTP/1.1\r\n",
@@ -493,6 +492,7 @@ static void process_requests(uv_async_t *ar) {
             }
 
             um_http_hdr *h;
+            bool need_host = true; 
             LIST_FOREACH(h, &c->headers, _next) {
                 if (strcasecmp(h->name, "Host") == 0) {
                     need_host = false;
