@@ -472,9 +472,8 @@ static void process_requests(uv_async_t *ar) {
             uv_buf_t req;
             req.base = malloc(8196);
             req.len = snprintf(req.base, 8196,
-                               "%s %s HTTP/1.1\r\n"
-                               "Host: %s\r\n",
-                               c->active->method, c->active->path, c->host);
+                               "%s %s HTTP/1.1\r\n",
+                               c->active->method, c->active->path);
 
             if (strcmp(c->active->method, "POST") == 0 || strcmp(c->active->method, "PUT") == 0) {
                 if (!c->active->req_chunked && c->active->req_size == -1) {
@@ -493,13 +492,27 @@ static void process_requests(uv_async_t *ar) {
             }
 
             um_http_hdr *h;
+            bool need_host = true; 
             LIST_FOREACH(h, &c->headers, _next) {
+                if (strcasecmp(h->name, "Host") == 0) {
+                    need_host = false;
+                }
+
                 req.len += snprintf(req.base + req.len, 8196 - req.len,
                                     "%s: %s\r\n", h->name, h->value);
             }
             LIST_FOREACH(h, &c->active->req_headers, _next) {
+                if (strcasecmp(h->name, "Host") == 0) {
+                    need_host = false;
+                }
+
                 req.len += snprintf(req.base + req.len, 8196 - req.len,
                                     "%s: %s\r\n", h->name, h->value);
+            }
+
+            if (need_host) {
+                req.len += snprintf(req.base + req.len, 8196 - req.len,
+                                    "Host: %s\r\n", c->host);
             }
             req.len += snprintf(req.base + req.len, 8196 - req.len,
                                 "\r\n");
