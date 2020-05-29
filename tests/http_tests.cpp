@@ -464,3 +464,42 @@ TEST_CASE("basic_test", "[http]") {
     uv_loop_close(loop);
     free(loop);
 }
+
+
+TEST_CASE("conten_length_test", "[http]") {
+    uv_loop_t *loop = uv_loop_new();
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+    um_http_init(loop, &clt, "http://httpbin.org");
+    um_http_req_t *req = um_http_req(&clt, "POST", "/json", resp_capture_cb, &resp);
+
+    WHEN("set Content-Length first") {
+        int rc = um_http_req_header(req, "Content-Length", "20");
+        CHECK(rc == 0);
+        CHECK(req->req_body_size == 20);
+        CHECK(!req->req_chunked);
+
+        rc = um_http_req_header(req, "Transfer-Encoding", "chunked");
+        CHECK(rc == UV_EINVAL);
+        CHECK(req->req_body_size == 20);
+        CHECK(!req->req_chunked);
+    }
+
+    WHEN("set Chunked first") {
+        int rc = um_http_req_header(req, "Transfer-Encoding", "chunked");
+        CHECK(rc == 0);
+        CHECK(req->req_body_size == -1);
+        CHECK(req->req_chunked);
+
+        rc = um_http_req_header(req, "Content-Length", "20");
+        CHECK(rc == UV_EINVAL);
+        CHECK(req->req_body_size == -1);
+        CHECK(req->req_chunked);
+    }
+
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
+}

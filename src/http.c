@@ -398,6 +398,8 @@ static void send_body(um_http_req_t *req) {
     while (req->req_body != NULL) {
         struct body_chunk_s *b = req->req_body;
         req->req_body = b->next;
+        UM_LOG(VERB, "sending body chunk %ld bytes", b->len);
+        req->body_sent_size += b->len;
 
         if (req->req_chunked) {
             if (b->len > 0) {
@@ -423,6 +425,14 @@ static void send_body(um_http_req_t *req) {
         else {
             buf = uv_buf_init(b->chunk, b->len);
             uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, req_write_body_cb, b);
+            if (req->body_sent_size > req->req_body_size) {
+                UM_LOG(WARN, "Supplied data[%ld] is larger than provided Content-Length[%ld]",
+                        req->body_sent_size, req->req_body_size);
+            }
+
+            if (req->body_sent_size >= req->req_body_size) {
+                req->state = body_sent;
+            }
         }
     }
 }
@@ -475,8 +485,10 @@ static void process_requests(uv_async_t *ar) {
                                "%s %s HTTP/1.1\r\n",
                                c->active->method, c->active->path);
 
-            if (strcmp(c->active->method, "POST") == 0 || strcmp(c->active->method, "PUT") == 0) {
-                if (!c->active->req_chunked && c->active->req_size == -1) {
+            if (strcmp(c->active->method, "POST") == 0 ||
+                strcmp(c->active->method, "PUT") == 0 ||
+                strcmp(c->active->method, "PATCH") == 0) {
+                if (!c->active->req_chunked && c->active->req_body_size == -1) {
                     size_t req_len = 0;
                     struct body_chunk_s *chunk = c->active->req_body;
                     while (chunk != NULL) {
@@ -628,7 +640,8 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, u
     r->path = strdup(path);
     r->req_body = NULL;
     r->req_chunked = false;
-    r->req_size = -1;
+    r->req_body_size = -1;
+    r->body_sent_size = 0;
     r->state = created;
 
     r->resp.req = r;
@@ -683,7 +696,7 @@ int um_http_req_header(um_http_req_t *req, const char *name, const char *value) 
         strcmp(value, "chunked") == 0) {
 
         // Content-Length was set already
-        if (req->req_size != -1) {
+        if (req->req_body_size != -1) {
             return UV_EINVAL;
         }
 
@@ -695,8 +708,8 @@ int um_http_req_header(um_http_req_t *req, const char *name, const char *value) 
         if (req->req_chunked) {
             return UV_EINVAL;
         }
-
-        req->req_chunked = true;
+        req->req_body_size = strtol(value, NULL, 10);
+        req->req_chunked = false;
     }
 
     LIST_INSERT_HEAD(&req->req_headers, h, _next);

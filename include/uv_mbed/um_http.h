@@ -106,7 +106,8 @@ typedef struct um_http_req_s {
     enum http_request_state state;
 
     bool req_chunked;
-    ssize_t req_size;
+    ssize_t req_body_size;
+    ssize_t body_sent_size;
     void *req_body;
     um_header_list req_headers;
 
