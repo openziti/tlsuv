@@ -236,13 +236,14 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
     }
 }
 
-static void src_connect_cb(um_http_src_t *src, int status) {
+static void src_connect_cb(um_http_src_t *src, int status, void *ctx) {
     UM_LOG(VERB, "src connected status = %d", status);
+    um_http_t *clt = ctx;
     if (status == 0) {
-        make_links(src->clt, src->link);
+        make_links(clt, src->link);
     } 
     else {
-        requests_fail(src->clt, status, uv_strerror(status));
+        requests_fail(clt, status, uv_strerror(status));
     }
 }
 
@@ -458,7 +459,7 @@ static void process_requests(uv_async_t *ar) {
     if (c->connected == Disconnected) {
         c->connected = Connecting;
         UM_LOG(VERB, "client not connected, starting connect sequence");
-        c->src->connect(c->src, src_connect_cb);
+        c->src->connect(c->src, c->host, c->port, src_connect_cb, c);
     }
     else if (c->connected == Connected) {
         UM_LOG(VERB, "client connected, processing request");
@@ -561,7 +562,6 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http
     clt->active = NULL;
     clt->connected = Disconnected;
     clt->src = src;
-    src->clt = clt;
 
     clt->idle_time = DEFAULT_IDLE_TIMEOUT;
     uv_timer_init(l, &clt->idle_timer);
@@ -659,9 +659,9 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, u
     return r;
 }
 
-void um_http_header(um_http_t *clt, const char *name, const char *value) {
+void set_http_header(um_header_list *hl, const char* name, const char *value) {
     um_http_hdr *h;
-    LIST_FOREACH(h, &clt->headers, _next) {
+    LIST_FOREACH(h, hl, _next) {
         if (strcmp(h->name, name) == 0) {
             break;
         }
@@ -679,12 +679,16 @@ void um_http_header(um_http_t *clt, const char *name, const char *value) {
     if (h == NULL) {
         h = malloc(sizeof(um_http_hdr));
         h->name = strdup(name);
-        LIST_INSERT_HEAD(&clt->headers, h, _next);
+        LIST_INSERT_HEAD(hl, h, _next);
     } else {
         free(h->value);
     }
 
     h->value = strdup(value);
+}
+
+void um_http_header(um_http_t *clt, const char *name, const char *value) {
+    set_http_header(&clt->headers, name, value);
 }
 
 int um_http_req_header(um_http_req_t *req, const char *name, const char *value) {
