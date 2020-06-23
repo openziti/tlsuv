@@ -14,10 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-//
-// Created by eugene on 6/12/20.
-//
-
 #ifndef UV_MBED_UM_WEBSOCKET_H
 #define UV_MBED_UM_WEBSOCKET_H
 
@@ -62,8 +58,6 @@ int um_websocket_close(um_websocket_t *ws, uv_close_cb);
 
 #ifdef __cplusplus
 }
-
-
 #endif
 
 #endif //UV_MBED_UM_WEBSOCKET_H

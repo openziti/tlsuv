@@ -17,6 +17,7 @@ limitations under the License.
 #include "uv_mbed/um_websocket.h"
 #include "um_debug.h"
 #include "http_req.h"
+#include "portable_endian.h"
 
 #include <string.h>
 #include <uv_mbed/um_http.h>
