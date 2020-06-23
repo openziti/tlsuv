@@ -1,6 +1,7 @@
 
 set(test_srcs
         http_tests.cpp
+        ws_tests.cpp
         )
 
 ENABLE_LANGUAGE(CXX)

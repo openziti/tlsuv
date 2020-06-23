@@ -31,6 +31,7 @@ limitations under the License.
 #include "queue.h"
 #include "tls_engine.h"
 #include "tcp_src.h"
+#include "tls_link.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -140,7 +141,7 @@ typedef struct um_http_s {
     tcp_src_t default_src;
 
     uv_link_t http_link;
-    uv_link_t tls_link;
+    tls_link_t tls_link;
 
     long idle_time;
     uv_timer_t idle_timer;

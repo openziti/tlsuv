@@ -24,7 +24,7 @@ static void tcp_src_release(um_http_src_t *sl);
 
 int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     tl->loop = l;
-    tl->link = malloc(sizeof(uv_link_source_t));
+    tl->link = calloc(1, sizeof(uv_link_source_t));
     tl->connect = tcp_src_connect;
     tl->connect_cb = NULL;
     tl->release = tcp_src_release;
@@ -49,7 +49,7 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
 
     UM_LOG(VERB, "resolved status = %d", status);
     if (status == 0) {
-        uv_connect_t *conn_req = malloc(sizeof(uv_connect_t));
+        uv_connect_t *conn_req = calloc(1, sizeof(uv_connect_t));
         conn_req->data = sl;
         uv_tcp_init(sl->loop, &sl->conn);
         uv_tcp_connect(conn_req, &sl->conn, addr->ai_addr, tcp_connect_cb);
