@@ -164,5 +164,6 @@ int um_tls_init(tls_link_t *tls, tls_engine *engine, tls_handshake_cb cb) {
     uv_link_init((uv_link_t *) tls, &tls_methods);
     tls->engine = engine;
     tls->hs_cb = cb;
+    tls->state = initial;
     return 0;
 }
