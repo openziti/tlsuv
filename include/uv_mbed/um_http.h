@@ -31,6 +31,7 @@ limitations under the License.
 #include "queue.h"
 #include "tls_engine.h"
 #include "tcp_src.h"
+#include "tls_link.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -86,8 +87,8 @@ typedef struct um_http_resp_s {
     int code;
     char *status;
 
-    int nh;
-    um_http_hdr *headers;
+    char *curr_header;
+    um_header_list headers;
 
     /** @brief callback called with response body data. May be called multiple times, last one with `len` of `UV_EOF` */
     um_http_body_cb body_cb;
@@ -140,7 +141,7 @@ typedef struct um_http_s {
     tcp_src_t default_src;
 
     uv_link_t http_link;
-    uv_link_t tls_link;
+    tls_link_t tls_link;
 
     long idle_time;
     uv_timer_t idle_timer;

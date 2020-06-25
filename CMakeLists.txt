@@ -20,6 +20,9 @@ set(uv_mbed_sources
         src/tcp_src.c
         src/um_debug.c
         src/um_debug.h
+        src/websocket.c
+        src/http_req.c
+        src/tls_link.c
         )
 
 set(p11_sources

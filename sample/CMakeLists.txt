@@ -16,3 +16,6 @@ target_link_libraries(um-curl PUBLIC uv_mbed)
 
 add_executable(repeat-fetch repeat-fetch.c common.c)
 target_link_libraries(repeat-fetch PUBLIC uv_mbed)
+
+add_executable(ws-client ws-client.c)
+target_link_libraries(ws-client PUBLIC uv_mbed)

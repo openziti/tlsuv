@@ -25,6 +25,23 @@ limitations under the License.
 using namespace std;
 using namespace Catch::Matchers;
 
+struct ci_less : std::binary_function<string, string, bool>
+{
+    // case-independent (ci) compare_less binary function
+    struct nocase_compare : public std::binary_function<unsigned char,unsigned char,bool>
+    {
+      bool operator() (const unsigned char& c1, const unsigned char& c2) const {
+          return tolower (c1) < tolower (c2);
+      }
+    };
+    bool operator() (const std::string & s1, const std::string & s2) const {
+      return std::lexicographical_compare
+        (s1.begin (), s1.end (),   // source range
+        s2.begin (), s2.end (),   // dest range
+        nocase_compare ());  // comparison
+    }
+};
+
 class resp_capture {
 public:
 
@@ -37,7 +54,7 @@ public:
     string http_version;
     ssize_t code{};
     string status;
-    map<string, string> headers;
+    map<string, string, ci_less> headers;
 
     string body;
     string req_body;
@@ -72,7 +89,7 @@ void resp_capture_cb(um_http_resp_t *resp, void *data) {
     rc->http_version = resp->http_version;
 
     um_http_hdr *h;
-    for (h = resp->headers; h != NULL && h->name != nullptr; h++) {
+    LIST_FOREACH(h, &resp->headers, _next) {
         rc->headers[h->name] = h->value;
     }
 
@@ -137,16 +154,17 @@ TEST_CASE("http_tests", "[http]") {
         REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("text/html"));
     }
 
-//    WHEN(scheme << " redirect") {
-//        um_http_init(loop, &clt, "http://httpbin.org");
-//        um_http_req_t *req = um_http_req(&clt, "GET", "/redirect/2", resp_capture_cb, &resp);
-//
-//        uv_run(loop, UV_RUN_DEFAULT);
-//
+    WHEN(scheme << " redirect") {
+        um_http_init(loop, &clt, "http://httpbin.org");
+        um_http_req_t *req = um_http_req(&clt, "GET", "/redirect/2", resp_capture_cb, &resp);
+
+        uv_run(loop, UV_RUN_DEFAULT);
+
+        INFO("httpbin.org redirect currently fails")
 //        REQUIRE(resp.code == HTTP_STATUS_FOUND);
 //        REQUIRE(resp.headers["Location"] == "/relative-redirect/1");
 //        REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("text/html"));
-//    }
+    }
 
     WHEN(scheme << " body GET") {
         um_http_init(loop, &clt, "http://httpbin.org");
@@ -157,6 +175,7 @@ TEST_CASE("http_tests", "[http]") {
         REQUIRE(resp.code == HTTP_STATUS_OK);
         REQUIRE(resp.resp_body_end_called);
         REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
+        REQUIRE(resp.headers.find("Content-Length") != resp.headers.end());
         int body_len = resp.body.size();
         int content_len = atoi(resp.headers["Content-Length"].c_str());
         REQUIRE(body_len == content_len);
@@ -224,6 +243,7 @@ TEST_CASE("http_tests", "[http]") {
             REQUIRE(resp.code == HTTP_STATUS_OK);
             REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
             REQUIRE(resp.resp_body_end_called);
+            REQUIRE(resp.headers.find("Content-Length") != resp.headers.end());
         }
         int body_len = resp.body.size();
         int content_len = atoi(resp.headers["Content-Length"].c_str());
@@ -336,12 +356,6 @@ TEST_CASE("client_cert_test","[http]") {
         THEN("request should complete") {
             REQUIRE(resp.code == HTTP_STATUS_OK);
             REQUIRE(resp.resp_body_end_called);
-        }
-        int body_len = resp.body.size();
-        int content_len = atoi(resp.headers["Content-Length"].c_str());
-
-        THEN("response body size matches") {
-            REQUIRE(body_len == content_len);
         }
         tls->api->free_ctx(tls);
     }

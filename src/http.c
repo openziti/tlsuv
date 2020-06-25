@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "um_debug.h"
 #include "win32_compat.h"
+#include "http_req.h"
 
 #define DEFAULT_IDLE_TIMEOUT 0
 
@@ -32,14 +33,7 @@ static const unsigned int U1 = 1;
 
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
 
-static int tls_read_start(uv_link_t *l);
 
-static void tls_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
-
-static int tls_write(uv_link_t *link, uv_link_t *source, const uv_buf_t bufs[],
-                     unsigned int nbufs, uv_stream_t *send_handle, uv_link_write_cb cb, void *arg);
-
-static void tls_close(uv_link_t *link, uv_link_t *source, uv_link_close_cb cb);
 
 static int http_status_cb(http_parser *parser, const char *status, size_t len);
 
@@ -56,7 +50,6 @@ static int http_headers_complete_cb(http_parser *p);
 static void requests_fail(um_http_t *c, int code, const char *msg);
 
 static void close_connection(um_http_t *c);
-static void free_req(um_http_req_t *req);
 
 static void free_http(um_http_t *clt);
 
@@ -66,15 +59,7 @@ enum status {
     Connected
 };
 
-struct body_chunk_s {
-    char *chunk;
-    size_t len;
-    um_http_body_cb cb;
 
-    um_http_req_t *req;
-
-    struct body_chunk_s *next;
-};
 
 static const uv_link_methods_t http_methods = {
         .close = uv_link_default_close,
@@ -84,75 +69,7 @@ static const uv_link_methods_t http_methods = {
         .read_cb_override = http_read_cb
 };
 
-static const uv_link_methods_t tls_methods = {
-        .close = tls_close,
-        .read_start = tls_read_start,
-        .write = tls_write,
-        .alloc_cb_override = uv_link_default_alloc_cb_override,
-        .read_cb_override = tls_read_cb
-};
 
-static http_parser_settings HTTP_PROC = {
-        .on_header_field = http_header_field_cb,
-        .on_header_value = http_header_value_cb,
-        .on_headers_complete = http_headers_complete_cb,
-        .on_status = http_status_cb,
-        .on_message_complete = http_message_cb,
-        .on_body = http_body_cb
-};
-
-static int http_headers_complete_cb(http_parser *p) {
-    um_http_req_t *req = p->data;
-    req->state = headers_received;
-    if (req->resp_cb != NULL) {
-        req->resp_cb(&req->resp, req->data);
-    }
-    return 0;
-}
-
-static int http_header_field_cb(http_parser *parser, const char *f, size_t len) {
-    um_http_req_t *req = parser->data;
-    if (req->resp.headers == NULL) {
-        req->resp.headers = calloc(20, sizeof(um_http_hdr));
-    }
-    req->resp.headers[req->resp.nh].name = strndup(f, len);
-    return 0;
-}
-
-static int http_header_value_cb(http_parser *parser, const char *v, size_t len) {
-    um_http_req_t *req = parser->data;
-    req->resp.headers[req->resp.nh++].value = strndup(v, len);
-
-    return 0;
-}
-
-static int http_status_cb(http_parser *parser, const char *status, size_t len) {
-    UM_LOG(VERB, "status = %d %.*s", parser->status_code, (int) len, status);
-    um_http_req_t *r = parser->data;
-    r->resp.code = (int) parser->status_code;
-    snprintf(r->resp.http_version, sizeof(r->resp.http_version), "%d.%d", parser->http_major, parser->http_minor);
-    r->resp.status = calloc(1, len);
-    strncpy(r->resp.status, status, len);
-    return 0;
-}
-
-static int http_message_cb(http_parser *parser) {
-    UM_LOG(VERB, "message complete");
-    um_http_req_t *r = parser->data;
-    r->state = completed;
-    if (r->resp.body_cb != NULL) {
-        r->resp.body_cb(r, NULL, UV_EOF);
-    }
-    return 0;
-}
-
-static int http_body_cb(http_parser *parser, const char *body, size_t len) {
-    um_http_req_t *r = parser->data;
-    if (r->resp.body_cb != NULL) {
-        r->resp.body_cb(r, body, len);
-    }
-    return 0;
-}
 
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     um_http_t *c = link->data;
@@ -169,15 +86,13 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     if (c->active != NULL) {
 
         if (nread > 0) {
-            UM_LOG(TRACE, "processing \n%*.*s", nread, nread, buf->base);
-            size_t processed = http_parser_execute(&c->active->parser, &HTTP_PROC, buf->base, nread);
-            UM_LOG(VERB, "processed %zd out of %zd", processed, nread);
+            http_req_process(c->active, buf->base, nread);
         }
 
 		if (c->active->state == completed) {
             um_http_req_t *hr = c->active;
             c->active = NULL;
-            free_req(hr);
+            http_req_free(hr);
             free(hr);
 
             uv_async_send(&c->proc);
@@ -208,8 +123,15 @@ static void requests_fail(um_http_t *c, int code, const char *msg) {
             r->resp_cb(&r->resp, r->data);
             uv_unref((uv_handle_t *) &c->proc);
         }
-        free_req(r);
+        http_req_free(r);
         free(r);
+    }
+}
+static void on_tls_handshake(tls_link_t *tls, int status) {
+    um_http_t *clt = tls->data;
+    if (status == TLS_HS_COMPLETE) {
+        clt->connected = Connected;
+        uv_async_send(&clt->proc);
     }
 }
 
@@ -218,14 +140,19 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
     clt->http_link.data = clt;
 
     if (clt->ssl) {
-        uv_link_init(&clt->tls_link, &tls_methods);
+        if (clt->tls == NULL) {
+            clt->tls = get_default_tls();
+        }
+        clt->engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
+
+        um_tls_init(&clt->tls_link, clt->engine, on_tls_handshake);
         clt->tls_link.data = clt;
 
-        uv_link_chain((uv_link_t *) conn_src, &clt->tls_link);
-        uv_link_chain(&clt->tls_link, &clt->http_link);
+        uv_link_chain(conn_src, (uv_link_t *) &clt->tls_link);
+        uv_link_chain((uv_link_t *) &clt->tls_link, &clt->http_link);
     }
     else {
-        uv_link_chain((uv_link_t *) conn_src, &clt->http_link);
+        uv_link_chain(conn_src, &clt->http_link);
     }
 
     uv_link_read_start(&clt->http_link);
@@ -236,137 +163,19 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
     }
 }
 
-static void src_connect_cb(um_http_src_t *src, int status) {
+static void src_connect_cb(um_http_src_t *src, int status, void *ctx) {
     UM_LOG(VERB, "src connected status = %d", status);
+    um_http_t *clt = ctx;
     if (status == 0) {
-        make_links(src->clt, src->link);
+        make_links(clt, (uv_link_t *) src->link);
     } 
     else {
-        requests_fail(src->clt, status, uv_strerror(status));
+        requests_fail(clt, status, uv_strerror(status));
     }
 }
 
 static void link_close_cb(uv_link_t *l) {}
 
-static void tls_write_cb(uv_link_t *source, int status, void *arg) {
-    if (arg != NULL) {
-        free(arg);
-    }
-}
-
-static int tls_read_start(uv_link_t *l) {
-    uv_link_default_read_start(l);
-
-    um_http_t *clt = l->data;
-    if (clt->tls == NULL) {
-        clt->tls = get_default_tls();
-    }
-    clt->engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
-
-    uv_buf_t buf;
-    buf.base = malloc(32 * 1024);
-    tls_handshake_state st = clt->engine->api->handshake(clt->engine->engine, NULL, 0, buf.base, &buf.len, 32 * 1024);
-    UM_LOG(VERB, "starting TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
-
-    return uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, buf.base);
-}
-
-static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
-    um_http_t *clt = l->data;
-
-    if (nread < 0) {
-        if (b && b->base)
-            free(b->base);
-        uv_link_propagate_read_cb(l, nread, NULL);
-        return;
-    }
-
-    tls_handshake_state hs_state = clt->engine->api->handshake_state(clt->engine->engine);
-    if (hs_state == TLS_HS_CONTINUE) {
-        assert(clt->connected == Connecting);
-        UM_LOG(VERB, "continuing TLS handshake(%zd bytes received)", nread);
-        uv_buf_t buf;
-        buf.base = malloc(32 * 1024);
-        tls_handshake_state st =
-                clt->engine->api->handshake(clt->engine->engine, b->base, nread, buf.base, &buf.len, 32 * 1024);
-
-        UM_LOG(VERB, "continuing TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
-        if (buf.len > 0) {
-            uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, buf.base);
-        }
-        else {
-            free(buf.base);
-        }
-
-        if (st == TLS_HS_COMPLETE) {
-            UM_LOG(VERB, "handshake completed");
-            clt->connected = Connected;
-            uv_async_send(&clt->proc);
-        }
-        else if (st == TLS_HS_ERROR) {
-            char err[1024];
-            int errlen = 0;
-            if (clt->engine->api->strerror) {
-                errlen = clt->engine->api->strerror(clt->engine->engine, err, sizeof(err));
-            }
-            UM_LOG(ERR, "TLS handshake error %*.*s", errlen, errlen, err);
-            uv_link_propagate_read_cb(l, UV_ECONNABORTED, NULL);
-        }
-    }
-    else if (hs_state == TLS_HS_COMPLETE) {
-        uv_buf_t read_buf;
-        uv_link_propagate_alloc_cb(l, 32 * 1024, &read_buf);
-
-        size_t readbuflen = read_buf.len;
-        read_buf.len = 0;
-
-        size_t out_bytes;
-        char *inptr = b->base;
-        size_t inlen = nread;
-        int rc;
-        do {
-            rc = clt->engine->api->read(clt->engine->engine, inptr, inlen,
-                    read_buf.base + read_buf.len, &out_bytes, readbuflen - read_buf.len);
-
-            UM_LOG(VERB, "produced %zd application byte (rc=%d)", out_bytes, rc);
-            read_buf.len += out_bytes;
-            inptr = NULL;
-            inlen = 0;
-        } while (rc == TLS_MORE_AVAILABLE && out_bytes > 0);
-
-        uv_link_propagate_read_cb(l, read_buf.len, &read_buf);
-    }
-    else {
-        UM_LOG(VERB, "hs_state = %d", hs_state);
-    }
-
-    if (b != NULL && b->base != NULL) {
-        free(b->base);
-    }
-}
-
-static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
-                     unsigned int nbufs, uv_stream_t *send_handle, uv_link_write_cb cb, void *arg) {
-    um_http_t *clt = l->data;
-    uv_buf_t buf;
-    buf.base = malloc(32 * 1024);
-    clt->engine->api->write(clt->engine->engine, bufs[0].base, bufs[0].len, buf.base, &buf.len, 32 * 1024);
-    int rc = uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, buf.base);
-
-    cb(source, 0, arg);
-
-    return rc;
-}
-
-static void tls_close(uv_link_t *l, uv_link_t *source, uv_link_close_cb close_cb) {
-    UM_LOG(VERB, "closing TLS link");
-    um_http_t *clt = l->data;
-
-    clt->tls->api->free_engine(clt->engine);
-    clt->engine = NULL;
-
-    close_cb(source);
-}
 
 static void req_write_cb(uv_link_t *source, int status, void *arg) {
     UM_LOG(VERB, "request write completed: %d", status);
@@ -458,7 +267,7 @@ static void process_requests(uv_async_t *ar) {
     if (c->connected == Disconnected) {
         c->connected = Connecting;
         UM_LOG(VERB, "client not connected, starting connect sequence");
-        c->src->connect(c->src, src_connect_cb);
+        c->src->connect(c->src, c->host, c->port, src_connect_cb, c);
     }
     else if (c->connected == Connected) {
         UM_LOG(VERB, "client connected, processing request");
@@ -481,53 +290,7 @@ static void process_requests(uv_async_t *ar) {
 
             uv_buf_t req;
             req.base = malloc(8196);
-            req.len = snprintf(req.base, 8196,
-                               "%s %s HTTP/1.1\r\n",
-                               c->active->method, c->active->path);
-
-            if (strcmp(c->active->method, "POST") == 0 ||
-                strcmp(c->active->method, "PUT") == 0 ||
-                strcmp(c->active->method, "PATCH") == 0) {
-                if (!c->active->req_chunked && c->active->req_body_size == -1) {
-                    size_t req_len = 0;
-                    struct body_chunk_s *chunk = c->active->req_body;
-                    while (chunk != NULL) {
-                        req_len += chunk->len;
-                        chunk = chunk->next;
-                    }
-                    um_http_hdr *content_length = malloc(sizeof(um_http_hdr));
-                    content_length->name = strdup("Content-Length");
-                    content_length->value = malloc(16);
-                    sprintf(content_length->value, "%ld", req_len);
-                    LIST_INSERT_HEAD(&c->active->req_headers, content_length, _next);
-                }
-            }
-
-            um_http_hdr *h;
-            bool need_host = true; 
-            LIST_FOREACH(h, &c->headers, _next) {
-                if (strcasecmp(h->name, "Host") == 0) {
-                    need_host = false;
-                }
-
-                req.len += snprintf(req.base + req.len, 8196 - req.len,
-                                    "%s: %s\r\n", h->name, h->value);
-            }
-            LIST_FOREACH(h, &c->active->req_headers, _next) {
-                if (strcasecmp(h->name, "Host") == 0) {
-                    need_host = false;
-                }
-
-                req.len += snprintf(req.base + req.len, 8196 - req.len,
-                                    "%s: %s\r\n", h->name, h->value);
-            }
-
-            if (need_host) {
-                req.len += snprintf(req.base + req.len, 8196 - req.len,
-                                    "Host: %s\r\n", c->host);
-            }
-            req.len += snprintf(req.base + req.len, 8196 - req.len,
-                                "\r\n");
+            req.len = http_req_write(c->active, req.base, 8196);
             UM_LOG(TRACE, "writing request >>> %*.*s", req.len, req.len, req.base);
             uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_cb, req.base);
             c->active->state = headers_sent;
@@ -561,7 +324,6 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http
     clt->active = NULL;
     clt->connected = Disconnected;
     clt->src = src;
-    src->clt = clt;
 
     clt->idle_time = DEFAULT_IDLE_TIMEOUT;
     uv_timer_init(l, &clt->idle_timer);
@@ -582,6 +344,7 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http
         UM_LOG(ERR, "invalid URL: no host");
         return UV_EINVAL;
     }
+    um_http_header(clt, "Host", clt->host);
 
     uint16_t port = -1;
     if (url_parse.field_set & (U1 << (unsigned int) UF_SCHEMA)) {
@@ -634,24 +397,19 @@ void um_http_set_ssl(um_http_t *clt, tls_context *tls) {
 
 um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, um_http_resp_cb resp_cb, void *ctx) {
     um_http_req_t *r = calloc(1, sizeof(um_http_req_t));
-    r->client = c;
-    r->parser.data = r;
-    r->method = strdup(method);
-    r->path = strdup(path);
-    r->req_body = NULL;
-    r->req_chunked = false;
-    r->req_body_size = -1;
-    r->body_sent_size = 0;
-    r->state = created;
+    http_req_init(r, method, path);
 
-    r->resp.req = r;
+    r->client = c;
     r->resp_cb = resp_cb;
     r->data = ctx;
 
-    http_parser_init(&r->parser, HTTP_RESPONSE);
+    // copy client headers
+    um_http_hdr *h;
+    LIST_FOREACH(h, &c->headers, _next) {
+        set_http_header(&r->req_headers, h->name, h->value);
+    }
 
     STAILQ_INSERT_TAIL(&c->requests, r, _next);
-
     uv_timer_stop(&c->idle_timer);
     uv_ref((uv_handle_t *) &c->proc);
     uv_async_send(&c->proc);
@@ -659,32 +417,10 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, u
     return r;
 }
 
+
+
 void um_http_header(um_http_t *clt, const char *name, const char *value) {
-    um_http_hdr *h;
-    LIST_FOREACH(h, &clt->headers, _next) {
-        if (strcmp(h->name, name) == 0) {
-            break;
-        }
-    }
-
-    if (value == NULL) {
-        if (h != NULL) {
-            LIST_REMOVE(h, _next);
-            free(h->value);
-            free(h->name);
-        }
-        return;
-    }
-
-    if (h == NULL) {
-        h = malloc(sizeof(um_http_hdr));
-        h->name = strdup(name);
-        LIST_INSERT_HEAD(&clt->headers, h, _next);
-    } else {
-        free(h->value);
-    }
-
-    h->value = strdup(value);
+    set_http_header(&clt->headers, name, value);
 }
 
 int um_http_req_header(um_http_req_t *req, const char *name, const char *value) {
@@ -776,38 +512,6 @@ int um_http_req_data(um_http_req_t *req, const char *body, ssize_t body_len, um_
     return 0;
 }
 
-static void free_hdr(um_http_hdr *hdr) {
-    free(hdr->name);
-    free(hdr->value);
-}
-
-static void free_hdr_list(um_header_list *l) {
-    um_http_hdr *h;
-    while (!LIST_EMPTY(l)) {
-        h = LIST_FIRST(l);
-        LIST_REMOVE(h, _next);
-
-        free_hdr(h);
-        free(h);
-    }
-}
-
-static void free_req(um_http_req_t *req) {
-    free_hdr_list(&req->req_headers);
-    if (req->resp.headers) {
-        for (um_http_hdr *h = req->resp.headers; h->name != NULL; h++) {
-            free(h->name);
-            free(h->value);
-        }
-        free(req->resp.headers);
-    }
-    if (req->resp.status) {
-        free(req->resp.status);
-    }
-    free(req->path);
-    free(req->method);
-}
-
 static void free_http(um_http_t *clt) {
     free_hdr_list(&clt->headers);
     free(clt->host);
@@ -818,7 +522,7 @@ static void free_http(um_http_t *clt) {
     clt->tls = NULL;
 
     if (clt->active) {
-        free_req(clt->active);
+        http_req_free(clt->active);
         free(clt->active);
         clt->active = NULL;
     }
@@ -826,7 +530,7 @@ static void free_http(um_http_t *clt) {
     while (!STAILQ_EMPTY(&clt->requests)) {
         um_http_req_t *req = STAILQ_FIRST(&clt->requests);
         STAILQ_REMOVE_HEAD(&clt->requests, _next);
-        free_req(req);
+        http_req_free(req);
         free(req);
     }
 }
