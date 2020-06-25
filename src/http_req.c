@@ -52,13 +52,7 @@ void http_req_init(um_http_req_t *r, const char *method, const char *path) {
 
 void http_req_free(um_http_req_t *req) {
     free_hdr_list(&req->req_headers);
-    if (req->resp.headers) {
-        for (um_http_hdr *h = req->resp.headers; h->name != NULL; h++) {
-            free(h->name);
-            free(h->value);
-        }
-        free(req->resp.headers);
-    }
+    free_hdr_list(&req->resp.headers);
     if (req->resp.status) {
         free(req->resp.status);
     }
@@ -120,6 +114,34 @@ size_t http_req_write(um_http_req_t *req, char *buf, size_t maxlen) {
     return len;
 }
 
+void set_http_headern(um_header_list *hl, const char* name, const char *value, size_t vallen) {
+    um_http_hdr *h;
+    LIST_FOREACH(h, hl, _next) {
+        if (strcmp(h->name, name) == 0) {
+            break;
+        }
+    }
+
+    if (value == NULL) {
+        if (h != NULL) {
+            LIST_REMOVE(h, _next);
+            free(h->value);
+            free(h->name);
+        }
+        return;
+    }
+
+    if (h == NULL) {
+        h = malloc(sizeof(um_http_hdr));
+        h->name = strdup(name);
+        LIST_INSERT_HEAD(hl, h, _next);
+    } else {
+        free(h->value);
+    }
+
+    h->value = strndup(value, vallen);
+}
+
 void set_http_header(um_header_list *hl, const char* name, const char *value) {
     um_http_hdr *h;
     LIST_FOREACH(h, hl, _next) {
@@ -159,17 +181,15 @@ static int http_headers_complete_cb(http_parser *p) {
 
 static int http_header_field_cb(http_parser *parser, const char *f, size_t len) {
     um_http_req_t *req = parser->data;
-    if (req->resp.headers == NULL) {
-        req->resp.headers = calloc(20, sizeof(um_http_hdr));
-    }
-    req->resp.headers[req->resp.nh].name = strndup(f, len);
+    req->resp.curr_header = strndup(f, len);
     return 0;
 }
 
 static int http_header_value_cb(http_parser *parser, const char *v, size_t len) {
     um_http_req_t *req = parser->data;
-    req->resp.headers[req->resp.nh++].value = strndup(v, len);
-
+    set_http_headern(&req->resp.headers, req->resp.curr_header, v, len);
+    free(req->resp.curr_header);
+    req->resp.curr_header = NULL;
     return 0;
 }
 

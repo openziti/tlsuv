@@ -89,7 +89,7 @@ void resp_capture_cb(um_http_resp_t *resp, void *data) {
     rc->http_version = resp->http_version;
 
     um_http_hdr *h;
-    for (h = resp->headers; h != NULL && h->name != nullptr; h++) {
+    LIST_FOREACH(h, &resp->headers, _next) {
         rc->headers[h->name] = h->value;
     }
 

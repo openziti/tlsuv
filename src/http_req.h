@@ -28,6 +28,7 @@ size_t http_req_write(um_http_req_t *req, char *buf, size_t maxlen);
 
 void free_hdr_list(um_header_list *l);
 void set_http_header(um_header_list *hl, const char* name, const char *value);
+void set_http_headern(um_header_list *hl, const char* name, const char *value, size_t vallen);
 
 struct body_chunk_s {
     char *chunk;
