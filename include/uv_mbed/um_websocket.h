@@ -27,7 +27,9 @@ extern "C" {
 
 typedef struct um_websocket_s um_websocket_t;
 
-
+/**
+ * @brief Websocket object.
+ */
 struct um_websocket_s {
     UV_HANDLE_FIELDS
 
@@ -37,7 +39,6 @@ struct um_websocket_s {
 
     char *host;
 
-    int connected;
     uv_connect_t *conn_req;
 
     um_http_src_t *src;
@@ -48,13 +49,57 @@ struct um_websocket_s {
     tls_context *tls;
 };
 
-
+/**
+ * @brief Initialize websocket
+ * @param loop loop for execution
+ * @param ws websocket object
+ * @return error code
+ */
 int um_websocket_init(uv_loop_t *loop, um_websocket_t *ws);
+
+/**
+ * @brief set #tls_context on the client.
+ * @param ws websocket
+ * @param ctx TLS context to use for `wss://` connection
+ */
 void um_websocket_set_tls(um_websocket_t *ws, tls_context *ctx);
+
+/**
+ * @brief set additional headers for initial websocket request
+ * @param ws websocket
+ * @param name header name
+ * @param value header value
+ */
 void um_websocket_set_header(um_websocket_t *ws, const char *name, const char *value);
-int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url, uv_connect_cb, uv_read_cb);
-int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_write_cb);
-int um_websocket_close(um_websocket_t *ws, uv_close_cb);
+
+/**
+ * @brief Connect websocket to a service with given URL
+ * @param req connect request
+ * @param ws websocket
+ * @param url address of the websocket server
+ * @param conn_cb callback called after websocket is connected, or failed to connect
+ * @param data_cb callback called when data is received from the server
+ * @return error code
+ */
+int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url, uv_connect_cb conn_cb, uv_read_cb data_cb);
+
+/**
+ * @brief write data to websocket
+ * @param req write request
+ * @param ws websocket
+ * @param buf data
+ * @param cb callback called after write operation is completed or failed
+ * @return error code
+ */
+int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_write_cb cb);
+
+/**
+ * @brief close websocket
+ * @param ws websocket
+ * @param cb callback called after close operation completes
+ * @return error code
+ */
+int um_websocket_close(um_websocket_t *ws, uv_close_cb cb);
 
 #ifdef __cplusplus
 }
