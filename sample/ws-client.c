@@ -51,10 +51,9 @@ static void ws_write_cb(uv_write_t *req, int status) {
 
 static void in_read_cb(uv_stream_t *h, ssize_t nread, const uv_buf_t *buf) {
     um_websocket_t *ws = h->data;
-    if (nread == UV_EOF) {
-
-    } else if (nread < 0) {
-        UM_LOG(ERR, "input read status = %d", nread);
+    if (nread < 0) {
+        if (nread != UV_EOF)
+            UM_LOG(ERR, "unexpected input error: %zd(%s)", nread, uv_strerror(nread));
         um_websocket_close(ws, NULL);
     } else {
         uv_write_t *wr = malloc(sizeof(uv_write_t));
