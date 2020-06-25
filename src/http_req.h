@@ -14,10 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-//
-// Created by eugene on 6/16/20.
-//
-
 #ifndef UV_MBED_HTTP_REQ_H
 #define UV_MBED_HTTP_REQ_H
 
