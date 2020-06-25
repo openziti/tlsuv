@@ -27,7 +27,7 @@ static void alloc_cb(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) 
 static void ws_read_cb(uv_stream_t *h, ssize_t status, const uv_buf_t *buf) {
     um_websocket_t *ws = h;
     if (status < 0) {
-        UM_LOG(ERR, "read status = %d", status);
+        fprintf(stderr, "read status = %zd\n", status);
         exit(status);
     }
 
@@ -46,21 +46,24 @@ static void connect_cb(uv_connect_t *req, int status) {
 
 static void ws_write_cb(uv_write_t *req, int status) {
     free(req->data);
+    free(req);
 }
 
 static void in_read_cb(uv_stream_t *h, ssize_t nread, const uv_buf_t *buf) {
     um_websocket_t *ws = h->data;
-    if (nread < 0) {
-        UM_LOG(ERR, "input read status = %d", nread);
-        exit(nread);
-    }
+    if (nread == UV_EOF) {
 
-    uv_write_t *wr = malloc(sizeof(uv_write_t));
-    wr->data = buf->base;
-    uv_buf_t b;
-    b.base = buf->base;
-    b.len = nread;
-    um_websocket_write(wr, ws, &b, ws_write_cb);
+    } else if (nread < 0) {
+        UM_LOG(ERR, "input read status = %d", nread);
+        um_websocket_close(ws, NULL);
+    } else {
+        uv_write_t *wr = malloc(sizeof(uv_write_t));
+        wr->data = buf->base;
+        uv_buf_t b;
+        b.base = buf->base;
+        b.len = nread;
+        um_websocket_write(wr, ws, &b, ws_write_cb);
+    }
 }
 
 
@@ -70,7 +73,7 @@ int main(int argc, char *argv[]) {
     }
 
     uv_loop_t *l = uv_default_loop();
-    uv_mbed_set_debug(TRACE, stdout);
+//    uv_mbed_set_debug(TRACE, stdout);
 
     um_websocket_t ws;
     um_websocket_init(l, &ws);
