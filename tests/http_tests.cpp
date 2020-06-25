@@ -175,6 +175,7 @@ TEST_CASE("http_tests", "[http]") {
         REQUIRE(resp.code == HTTP_STATUS_OK);
         REQUIRE(resp.resp_body_end_called);
         REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
+        REQUIRE(resp.headers.find("Content-Length") != resp.headers.end());
         int body_len = resp.body.size();
         int content_len = atoi(resp.headers["Content-Length"].c_str());
         REQUIRE(body_len == content_len);
@@ -242,6 +243,7 @@ TEST_CASE("http_tests", "[http]") {
             REQUIRE(resp.code == HTTP_STATUS_OK);
             REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
             REQUIRE(resp.resp_body_end_called);
+            REQUIRE(resp.headers.find("Content-Length") != resp.headers.end());
         }
         int body_len = resp.body.size();
         int content_len = atoi(resp.headers["Content-Length"].c_str());
