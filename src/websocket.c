@@ -40,7 +40,7 @@ static void ws_read_cb(uv_link_t* link,
                                 ssize_t nread,
                                 const uv_buf_t* buf);
 static void ws_write_cb();
-
+static void send_pong(um_websocket_t *ws, const char* ping_data, int len);
 static void tls_hs_cb(tls_link_t *tls, int status);
 
 static int ws_read_start(uv_link_t *l);
@@ -264,7 +264,6 @@ int ws_read_start(uv_link_t *l) {
 }
 
 void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
-    printf("got input p=%p\n", buf->base);
     um_websocket_t *ws = l->data;
     if (nread < 0) {
         // still connecting
@@ -336,6 +335,7 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
             break;
         case OpCode_Ping:
             UM_LOG(TRACE, "got ping");
+            send_pong(ws, dp, len);
             break;
         case OpCode_Pong:
             UM_LOG(TRACE, "got pong");
@@ -345,6 +345,20 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
     }
 
     free(buf->base);
+}
+
+static void send_pong(um_websocket_t *ws, const char* ping_data, int len) {
+    uv_buf_t buf;
+    buf.len = 2 + len;
+    buf.base = malloc(buf.len);
+
+    buf.base[0] = WS_FIN | OpCode_Pong;
+    buf.base[1] = (char)(0x7f & len);
+    if (ping_data != NULL && len > 0) {
+        memcpy(buf.base + 2, ping_data, len);
+    }
+
+    uv_link_write(&ws->ws_link, &buf, 1, NULL, ws_write_cb, buf.base);
 }
 
 static void ws_close_cb(uv_link_t *l) {
