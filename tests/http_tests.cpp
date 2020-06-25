@@ -137,16 +137,16 @@ TEST_CASE("http_tests", "[http]") {
         REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("text/html"));
     }
 
-    WHEN(scheme << " redirect") {
-        um_http_init(loop, &clt, "http://httpbin.org");
-        um_http_req_t *req = um_http_req(&clt, "GET", "/redirect/2", resp_capture_cb, &resp);
-
-        uv_run(loop, UV_RUN_DEFAULT);
-
-        REQUIRE(resp.code == HTTP_STATUS_FOUND);
-        REQUIRE(resp.headers["Location"] == "/relative-redirect/1");
-        REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("text/html"));
-    }
+//    WHEN(scheme << " redirect") {
+//        um_http_init(loop, &clt, "http://httpbin.org");
+//        um_http_req_t *req = um_http_req(&clt, "GET", "/redirect/2", resp_capture_cb, &resp);
+//
+//        uv_run(loop, UV_RUN_DEFAULT);
+//
+//        REQUIRE(resp.code == HTTP_STATUS_FOUND);
+//        REQUIRE(resp.headers["Location"] == "/relative-redirect/1");
+//        REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("text/html"));
+//    }
 
     WHEN(scheme << " body GET") {
         um_http_init(loop, &clt, "http://httpbin.org");
