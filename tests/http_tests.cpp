@@ -357,12 +357,6 @@ TEST_CASE("client_cert_test","[http]") {
             REQUIRE(resp.code == HTTP_STATUS_OK);
             REQUIRE(resp.resp_body_end_called);
         }
-        int body_len = resp.body.size();
-        int content_len = atoi(resp.headers["Content-Length"].c_str());
-
-        THEN("response body size matches") {
-            REQUIRE(body_len == content_len);
-        }
         tls->api->free_ctx(tls);
     }
 
