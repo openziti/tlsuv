@@ -18,7 +18,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - uses: textbook/git-checkout-submodule-action@master
+      with:
+        submodules: 'recursive'
     - name: make build dir
       run: cmake -E make_directory ${{runner.workspace}}/build
     - name: configure cmake
