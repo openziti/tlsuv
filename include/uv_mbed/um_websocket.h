@@ -18,7 +18,6 @@ limitations under the License.
 #define UV_MBED_UM_WEBSOCKET_H
 
 #include <uv.h>
-#include <uv/unix.h>
 #include "um_http.h"
 
 #ifdef __cplusplus

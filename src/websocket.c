@@ -18,6 +18,7 @@ limitations under the License.
 #include "um_debug.h"
 #include "http_req.h"
 #include "portable_endian.h"
+#include "win32_compat.h"
 
 #include <string.h>
 #include <uv_mbed/um_http.h>
@@ -34,6 +35,14 @@ enum OpCode {
     OpCode_Ping = 0x9U,
     OpCode_Pong = 0xAU
 };
+
+typedef struct ws_write_s {
+    uv_write_t *wr;
+    uv_write_cb cb;
+    uv_buf_t *bufs;
+    int nbufs;
+
+} ws_write_t;
 
 static void src_connect_cb(um_http_src_t *sl, int status, void *connect_ctx);
 static void ws_read_cb(uv_link_t* link,
@@ -214,8 +223,8 @@ int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_wr
     bufs.len = headerlen + buf->len;
     bufs.base = frame;
 
-    uv_write_t *ws_wreq = calloc(1, sizeof(uv_write_t));
-    ws_wreq->data = req;
+    ws_write_t *ws_wreq = calloc(1, sizeof(ws_write_t));
+    ws_wreq->wr = req;
     ws_wreq->bufs = malloc(sizeof(uv_buf_t));
     ws_wreq->bufs[0] = bufs;
     ws_wreq->nbufs = 1;
@@ -253,11 +262,11 @@ static void src_connect_cb(um_http_src_t *sl, int status, void *connect_ctx) {
 }
 
 static void ws_write_cb(uv_link_t *l, int nwrote, void *data) {
-    uv_write_t *ws_wreq = data;
+    ws_write_t *ws_wreq = data;
     UM_LOG(VERB, "write complete rc = %d", nwrote);
 
-    if (ws_wreq->data) {
-        uv_write_t *wr = ws_wreq->data;
+    if (ws_wreq->wr) {
+        uv_write_t *wr = ws_wreq->wr;
         ws_wreq->cb(wr, nwrote);
     }
     for (int i=0; i < ws_wreq->nbufs; i++) {
@@ -278,7 +287,7 @@ int ws_read_start(uv_link_t *l) {
 
     UM_LOG(VERB, "starting WebSocket handshake(sending %zd bytes)[%.*s]", buf.len, buf.len, buf.base);
 
-    uv_write_t *ws_wreq = calloc(1, sizeof(uv_write_t));
+    ws_write_t *ws_wreq = calloc(1, sizeof(ws_write_t));
     ws_wreq->bufs = malloc(sizeof(uv_buf_t));
     ws_wreq->bufs[0] = buf;
     ws_wreq->nbufs = 1;
@@ -383,7 +392,7 @@ static void send_pong(um_websocket_t *ws, const char* ping_data, int len) {
         memcpy(buf.base + 2, ping_data, len);
     }
 
-    uv_write_t *ws_wreq = calloc(1, sizeof(uv_write_t));
+    ws_write_t *ws_wreq = calloc(1, sizeof(ws_write_t));
     ws_wreq->bufs = malloc(sizeof(uv_buf_t));
     ws_wreq->bufs[0] = buf;
     ws_wreq->nbufs = 1;
