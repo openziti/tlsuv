@@ -18,6 +18,7 @@ limitations under the License.
 #include "um_debug.h"
 #include "http_req.h"
 #include "portable_endian.h"
+#include "win32_compat.h"
 
 #include <string.h>
 #include <uv_mbed/um_http.h>
