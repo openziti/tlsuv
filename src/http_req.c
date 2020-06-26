@@ -16,6 +16,7 @@ limitations under the License.
 
 #include "http_req.h"
 #include "um_debug.h"
+#include "win32_compat.h"
 #include <string.h>
 
 static void free_hdr(um_http_hdr *hdr);
