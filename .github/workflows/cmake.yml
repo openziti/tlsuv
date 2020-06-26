@@ -24,7 +24,7 @@ jobs:
     - name: make build dir
       run: cmake -E make_directory ${{runner.workspace}}/build
     - name: configure cmake
-      run: cmake -S $GITHUB_WORKSPACE -B ${{runner.workspace}}/build
+      run: cmake -S ${{runner.workspace}} -B ${{runner.workspace}}/build
     - name: build 
       run: cmake --build ${{runner.workspace}}/build 
     - name: test
