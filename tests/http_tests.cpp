@@ -357,7 +357,6 @@ TEST_CASE("client_cert_test","[http]") {
             REQUIRE(resp.code == HTTP_STATUS_OK);
             REQUIRE(resp.resp_body_end_called);
         }
-        tls->api->free_ctx(tls);
     }
 
     um_http_close(&clt);
