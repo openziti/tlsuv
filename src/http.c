@@ -88,10 +88,18 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 		if (c->active->state == completed) {
             um_http_req_t *hr = c->active;
             c->active = NULL;
+
+            const char *keep_alive_hdr = um_http_resp_header(&hr->resp, "Connection");
+            bool keep_alive = (keep_alive_hdr != NULL) && strcasecmp("keep-alive", keep_alive_hdr) == 0;
             http_req_free(hr);
             free(hr);
 
-            uv_async_send(&c->proc);
+            if (!keep_alive) {
+                close_connection(c);
+            }
+            else {
+                uv_async_send(&c->proc);
+            }
         }
     } else if (nread > 0) {
         UM_LOG(ERR, "received %zd bytes without active request", nread);
@@ -160,7 +168,12 @@ static void src_connect_cb(um_http_src_t *src, int status, void *ctx) {
     }
 }
 
-static void link_close_cb(uv_link_t *l) {}
+static void link_close_cb(uv_link_t *l) {
+    um_http_t *clt = l->data;
+    if (clt) {
+        uv_async_send(&clt->proc);
+    }
+}
 
 
 static void req_write_cb(uv_link_t *source, int status, void *arg) {
