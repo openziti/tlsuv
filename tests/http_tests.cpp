@@ -157,7 +157,9 @@ TEST_CASE("http_tests", "[http]") {
 
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
-    uv_loop_t *loop = uv_default_loop();
+    uv_loop_t l;
+    uv_loop_t* loop = &l;
+    uv_loop_init(&l);
     um_http_t clt;
     uv_timer_t *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
     uv_timer_init(loop, timer);
