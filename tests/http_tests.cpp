@@ -540,7 +540,6 @@ TEST_CASE("conten_length_test", "[http]") {
 }
 
 TEST_CASE("multiple requests", "[http]") {
-    uv_mbed_set_debug(11, stderr);
     uv_loop_t *loop = uv_loop_new();
 
     auto timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
