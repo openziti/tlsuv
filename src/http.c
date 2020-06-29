@@ -409,10 +409,6 @@ void um_http_header(um_http_t *clt, const char *name, const char *value) {
 }
 
 int um_http_req_header(um_http_req_t *req, const char *name, const char *value) {
-    um_http_hdr *h = malloc(sizeof(um_http_hdr));
-    h->name = strdup(name);
-    h->value = strdup(value);
-
     if (strcasecmp(name, "transfer-encoding") == 0 &&
         strcmp(value, "chunked") == 0) {
 

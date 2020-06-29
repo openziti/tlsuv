@@ -52,6 +52,8 @@ void http_req_init(um_http_req_t *r, const char *method, const char *path) {
 }
 
 void http_req_free(um_http_req_t *req) {
+    if (req == NULL) return;
+
     free_hdr_list(&req->req_headers);
     free_hdr_list(&req->resp.headers);
     if (req->resp.status) {
