@@ -40,6 +40,10 @@ static void on_ws_write(uv_write_t *req, int status) {
 
 }
 
+static void on_close_cb(uv_handle_t *h) {
+
+}
+
 static void on_connect(uv_connect_t *req, int status) {
     websocket_test *t = static_cast<websocket_test *>(req->data);
     um_websocket_t *ws = t->ws;
@@ -51,11 +55,9 @@ static void on_connect(uv_connect_t *req, int status) {
         const char* msg = "this is a test";
         uv_buf_t b = uv_buf_init((char*)msg, strlen(msg));
         um_websocket_write(&req, ws, &b, on_ws_write);
+    } else {
+        um_websocket_close(ws, on_close_cb);
     }
-}
-
-static void on_close_cb(uv_handle_t *h) {
-
 }
 
 static void on_ws_data(uv_stream_t *s, ssize_t nread, const uv_buf_t* buf) {
@@ -119,4 +121,5 @@ TEST_CASE("websocket tests", "[websocket]") {
         REQUIRE(test.resp.size() == 1);
         CHECK_THAT(test.resp[0],Catch::Matches("this is a test"));
     }
+
 }

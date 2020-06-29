@@ -252,6 +252,14 @@ int um_http_req_data(um_http_req_t *req, const char *body, ssize_t bodylen, um_h
  */
 void um_http_req_end(um_http_req_t *req);
 
+/**
+ * @brief return response header
+ * @param resp HTTP response
+ * @param name header name
+ * @return value of the header or NULL
+ */
+const char *um_http_resp_header(um_http_resp_t *resp, const char *name);
+
 #ifdef __cplusplus
 }
 #endif

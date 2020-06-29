@@ -21,6 +21,7 @@ limitations under the License.
 #include <map>
 #include <string>
 #include <cstring>
+#include <uv_mbed/uv_mbed.h>
 
 using namespace std;
 using namespace Catch::Matchers;
@@ -47,12 +48,12 @@ public:
 
     um_http_body_cb body_cb;
 
-    resp_capture(um_http_body_cb cb) : body_cb(cb) {}
+    resp_capture(um_http_body_cb cb) : body_cb(cb), status("not set"), code(-666) {}
 
     resp_capture() : resp_capture(nullptr) {}
 
     string http_version;
-    ssize_t code{};
+    ssize_t code;
     string status;
     map<string, string, ci_less> headers;
 
@@ -98,6 +99,7 @@ void resp_capture_cb(um_http_resp_t *resp, void *data) {
 
 void test_timeout(uv_timer_t *t) {
     printf("timeout stopping loop\n");
+    uv_print_all_handles(t->loop, stderr);
     uv_stop(t->loop);
 }
 
@@ -112,8 +114,8 @@ void send_part2(uv_timer_t *t) {
 
 }
 
-TEST_CASE("http_tests", "[http]") {
-
+TEST_CASE("conn failures", "[http]") {
+    uv_mbed_set_debug(7, stderr);
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
     uv_loop_t *loop = uv_default_loop();
@@ -121,7 +123,7 @@ TEST_CASE("http_tests", "[http]") {
     uv_timer_t *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
     uv_timer_init(loop, timer);
     uv_unref((uv_handle_t *) timer);
-    uv_timer_start(timer, test_timeout, 5000, 0);
+    uv_timer_start(timer, test_timeout, 15000, 0);
     resp_capture resp(resp_body_cb);
 
     WHEN("resolve failure " << scheme) {
@@ -142,6 +144,28 @@ TEST_CASE("http_tests", "[http]") {
 
         REQUIRE(resp.code == UV_ECONNREFUSED);
     }
+    um_http_close(&clt);
+    uv_timer_stop(timer);
+
+    uv_close(reinterpret_cast<uv_handle_t *>(timer), [](uv_handle_t *h) { free(h); });
+
+    // need to run loop one to process all closing handles
+    uv_run(loop, UV_RUN_ONCE);
+}
+
+TEST_CASE("http_tests", "[http]") {
+
+    auto scheme = GENERATE(as < std::string > {}, "http", "https");
+
+    uv_loop_t l;
+    uv_loop_t* loop = &l;
+    uv_loop_init(&l);
+    um_http_t clt;
+    uv_timer_t *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
+    uv_timer_init(loop, timer);
+    uv_unref((uv_handle_t *) timer);
+    uv_timer_start(timer, test_timeout, 5000, 0);
+    resp_capture resp(resp_body_cb);
 
     WHEN(scheme << " redirect google.com ") {
         um_http_init(loop, &clt, (scheme + "://google.com").c_str());
@@ -508,6 +532,69 @@ TEST_CASE("conten_length_test", "[http]") {
         CHECK(rc == UV_EINVAL);
         CHECK(req->req_body_size == -1);
         CHECK(req->req_chunked);
+    }
+
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
+}
+
+TEST_CASE("multiple requests", "[http]") {
+    uv_loop_t *loop = uv_loop_new();
+
+    auto timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
+    uv_timer_init(loop, timer);
+    uv_unref((uv_handle_t *) timer);
+    uv_timer_start(timer, test_timeout, 5000, 0);
+
+    um_http_t clt;
+    um_http_init(loop, &clt, "http://httpbin.org");
+
+    resp_capture resp1(resp_body_cb);
+    um_http_req_t *req1 = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp1);
+
+    resp_capture resp2(resp_body_cb);
+    um_http_req_t *req2 = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp2);
+
+    WHEN("two non-keepalive requests") {
+        um_http_req_header(req1, "Connection", "close");
+        um_http_req_header(req2, "Connection", "close");
+        uv_run(loop, UV_RUN_DEFAULT);
+
+        THEN("both requests should succeed") {
+            CHECK(resp1.code == HTTP_STATUS_OK);
+            CHECK_THAT(resp1.http_version, Equals("1.1"));
+            CHECK_THAT(resp1.status, Equals("OK"));
+            CHECK_THAT(resp1.headers["Content-Type"], Equals("application/json"));
+            CHECK_THAT(resp1.headers["Connection"], Equals("close"));
+
+            CHECK(resp2.code == HTTP_STATUS_OK);
+            CHECK_THAT(resp2.http_version, Equals("1.1"));
+            CHECK_THAT(resp2.status, Equals("OK"));
+            CHECK_THAT(resp2.headers["Content-Type"], Equals("application/json"));
+            CHECK_THAT(resp2.headers["Connection"], Equals("close"));
+        }
+    }
+
+    WHEN("two keep-alive requests") {
+        um_http_req_header(req1, "Connection", "keep-alive");
+        um_http_req_header(req2, "Connection", "keep-alive");
+        uv_run(loop, UV_RUN_DEFAULT);
+
+        THEN("both requests should succeed") {
+            CHECK(resp1.code == HTTP_STATUS_OK);
+            CHECK_THAT(resp1.http_version, Equals("1.1"));
+            CHECK_THAT(resp1.status, Equals("OK"));
+            CHECK_THAT(resp1.headers["Content-Type"], Equals("application/json"));
+            CHECK_THAT(resp1.headers["Connection"], Equals("keep-alive"));
+
+            CHECK(resp2.code == HTTP_STATUS_OK);
+            CHECK_THAT(resp2.http_version, Equals("1.1"));
+            CHECK_THAT(resp2.status, Equals("OK"));
+            CHECK_THAT(resp2.headers["Connection"], Equals("keep-alive"));
+        }
     }
 
     um_http_close(&clt);

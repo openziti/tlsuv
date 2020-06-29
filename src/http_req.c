@@ -52,6 +52,8 @@ void http_req_init(um_http_req_t *r, const char *method, const char *path) {
 }
 
 void http_req_free(um_http_req_t *req) {
+    if (req == NULL) return;
+
     free_hdr_list(&req->req_headers);
     free_hdr_list(&req->resp.headers);
     if (req->resp.status) {
@@ -169,6 +171,16 @@ void set_http_header(um_header_list *hl, const char* name, const char *value) {
     }
 
     h->value = strdup(value);
+}
+
+const char* um_http_resp_header(um_http_resp_t *resp, const char *name) {
+    um_http_hdr *h;
+    LIST_FOREACH(h, &resp->headers, _next) {
+        if (strcasecmp(h->name, name) == 0) {
+            return h->value;
+        }
+    }
+    return NULL;
 }
 
 static int http_headers_complete_cb(http_parser *p) {

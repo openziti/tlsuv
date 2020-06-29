@@ -44,6 +44,8 @@ typedef struct ws_write_s {
 
 } ws_write_t;
 
+extern tls_context *get_default_tls();
+
 static void src_connect_cb(um_http_src_t *sl, int status, void *connect_ctx);
 static void ws_read_cb(uv_link_t* link,
                                 ssize_t nread,
@@ -139,7 +141,7 @@ int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url,
     }
 
     if (ssl && ws->tls == NULL) {
-        um_websocket_set_tls(ws, default_tls_context(NULL, 0));
+        um_websocket_set_tls(ws, get_default_tls());
     }
 
     if (_url.field_set & (1U << (unsigned int) UF_HOST)) {
@@ -400,18 +402,41 @@ static void send_pong(um_websocket_t *ws, const char* ping_data, int len) {
     uv_link_write(&ws->ws_link, &buf, 1, NULL, ws_write_cb, ws_wreq);
 }
 
-static void ws_close_cb(uv_link_t *l) {
-    um_websocket_t *ws = l->data;
+static void on_ws_close(um_websocket_t *ws) {
+    if (ws == NULL) return;
     if (ws->close_cb) {
         ws->close_cb((uv_handle_t *) ws);
     }
+
+    if (ws->req) {
+        http_req_free(ws->req);
+        free(ws->req);
+        ws->req = NULL;
+    }
+    if (ws->host) {
+        free(ws->host);
+        ws->host = NULL;
+    }
+    if (ws->tls) {
+        ws->tls->api->free_engine(ws->tls_link.engine);
+    }
+    if (ws->src) {
+        ws->src->release(ws->src);
+        ws->src = NULL;
+    }
+}
+static void ws_close_cb(uv_link_t *l) {
+    um_websocket_t *ws = l->data;
+    on_ws_close(ws);
 }
 
 int um_websocket_close(um_websocket_t *ws, uv_close_cb cb) {
     ws->close_cb = cb;
-    uv_link_close(&ws->ws_link, ws_close_cb);
-    if (ws->host) {
-        free(ws->host);
+    if (ws->ws_link.data != NULL) {
+        uv_link_close(&ws->ws_link, ws_close_cb);
+    }
+    else {
+        on_ws_close(ws);
     }
     return 0;
 }

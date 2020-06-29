@@ -33,8 +33,6 @@ static const unsigned int U1 = 1;
 
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
 
-
-
 static int http_status_cb(http_parser *parser, const char *status, size_t len);
 
 static int http_message_cb(http_parser *parser);
@@ -47,7 +45,7 @@ static int http_header_value_cb(http_parser *parser, const char *v, size_t len);
 
 static int http_headers_complete_cb(http_parser *p);
 
-static void requests_fail(um_http_t *c, int code, const char *msg);
+static void fail_active_request(um_http_t *c, int code, const char *msg);
 
 static void close_connection(um_http_t *c);
 
@@ -59,8 +57,6 @@ enum status {
     Connected
 };
 
-
-
 static const uv_link_methods_t http_methods = {
         .close = uv_link_default_close,
         .read_start = uv_link_default_read_start,
@@ -69,15 +65,15 @@ static const uv_link_methods_t http_methods = {
         .read_cb_override = http_read_cb
 };
 
-
-
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     um_http_t *c = link->data;
 
     if (nread < 0) {
-        const char *err = uv_strerror(nread);
-        UM_LOG(WARN, "received %zd (%s)", nread, err);
-        requests_fail(c, nread, err);
+        if (c->active) {
+            const char *err = uv_strerror(nread);
+            UM_LOG(ERR, "connection error before active request could complete %zd (%s)", nread, err);
+            fail_active_request(c, nread, err);
+        }
 
         close_connection(c);
         return;
@@ -92,10 +88,18 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 		if (c->active->state == completed) {
             um_http_req_t *hr = c->active;
             c->active = NULL;
+
+            const char *keep_alive_hdr = um_http_resp_header(&hr->resp, "Connection");
+            bool keep_alive = (keep_alive_hdr != NULL) && strcasecmp("keep-alive", keep_alive_hdr) == 0;
             http_req_free(hr);
             free(hr);
 
-            uv_async_send(&c->proc);
+            if (!keep_alive) {
+                close_connection(c);
+            }
+            else {
+                uv_async_send(&c->proc);
+            }
         }
     } else if (nread > 0) {
         UM_LOG(ERR, "received %zd bytes without active request", nread);
@@ -106,25 +110,14 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     }
 }
 
-static void requests_fail(um_http_t *c, int code, const char *msg) {
+static void fail_active_request(um_http_t *c, int code, const char *msg) {
     if (c->active != NULL && c->active->resp_cb != NULL) {
         c->active->resp.code = code;
         c->active->resp.status = strdup(msg);
         c->active->resp_cb(&c->active->resp, c->active->data);
-    }
-
-    um_http_req_t *r;
-    while (!STAILQ_EMPTY(&c->requests)) {
-        r = STAILQ_FIRST(&c->requests);
-        STAILQ_REMOVE_HEAD(&c->requests, _next);
-        if (r->resp_cb != NULL) {
-            r->resp.code = code;
-            r->resp.status = strdup(msg);
-            r->resp_cb(&r->resp, r->data);
-            uv_unref((uv_handle_t *) &c->proc);
-        }
-        http_req_free(r);
-        free(r);
+        http_req_free(c->active);
+        free(c->active);
+        c->active = NULL;
     }
 }
 static void on_tls_handshake(tls_link_t *tls, int status) {
@@ -170,11 +163,17 @@ static void src_connect_cb(um_http_src_t *src, int status, void *ctx) {
         make_links(clt, (uv_link_t *) src->link);
     } 
     else {
-        requests_fail(clt, status, uv_strerror(status));
+        fail_active_request(clt, status, uv_strerror(status));
+        uv_async_send(&clt->proc);
     }
 }
 
-static void link_close_cb(uv_link_t *l) {}
+static void link_close_cb(uv_link_t *l) {
+    um_http_t *clt = l->data;
+    if (clt) {
+        uv_async_send(&clt->proc);
+    }
+}
 
 
 static void req_write_cb(uv_link_t *source, int status, void *arg) {
@@ -248,10 +247,13 @@ static void send_body(um_http_req_t *req) {
 
 static void close_connection(um_http_t *c) {
     uv_timer_stop(&c->idle_timer);
-    if (c->connected == Connected ) {
-        UM_LOG(VERB, "closing connection");
-        c->connected = Disconnected;
-        uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
+    switch (c->connected) {
+        case Connected:
+            UM_LOG(VERB, "closing connection");
+            uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
+        case Connecting:
+            c->connected = Disconnected;
+            break;
     }
 }
 
@@ -264,6 +266,20 @@ static void idle_timeout(uv_timer_t *t) {
 static void process_requests(uv_async_t *ar) {
     um_http_t *c = ar->data;
 
+    if (c->active == NULL && !STAILQ_EMPTY(&c->requests)) {
+        c->active = STAILQ_FIRST(&c->requests);
+        STAILQ_REMOVE_HEAD(&c->requests, _next);
+    }
+
+    if (c->active == NULL) {
+        if (c->connected == Connected && c->idle_time >= 0) {
+            UM_LOG(VERB, "no more requests, scheduling idle(%ld) close", c->idle_time);
+            uv_timer_start(&c->idle_timer, idle_timeout, c->idle_time, 0);
+        }
+        uv_unref((uv_handle_t *) &c->proc);
+        return;
+    }
+
     if (c->connected == Disconnected) {
         c->connected = Connecting;
         UM_LOG(VERB, "client not connected, starting connect sequence");
@@ -271,33 +287,15 @@ static void process_requests(uv_async_t *ar) {
     }
     else if (c->connected == Connected) {
         UM_LOG(VERB, "client connected, processing request");
+        uv_buf_t req;
+        req.base = malloc(8196);
+        req.len = http_req_write(c->active, req.base, 8196);
+        UM_LOG(TRACE, "writing request >>> %*.*s", req.len, req.len, req.base);
+        uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_cb, req.base);
+        c->active->state = headers_sent;
 
-        if (c->active != NULL) {
-            return;
-        }
-
-        if (STAILQ_EMPTY(&c->requests)) {
-            if (c->idle_time >= 0) {
-                UM_LOG(VERB, "no more requests, scheduling idle(%ld) close", c->idle_time);
-                uv_timer_start(&c->idle_timer, idle_timeout, c->idle_time, 0);
-                uv_unref((uv_handle_t *) &c->proc);
-            }
-        }
-        else {
-
-            c->active = STAILQ_FIRST(&c->requests);
-            STAILQ_REMOVE_HEAD(&c->requests, _next);
-
-            uv_buf_t req;
-            req.base = malloc(8196);
-            req.len = http_req_write(c->active, req.base, 8196);
-            UM_LOG(TRACE, "writing request >>> %*.*s", req.len, req.len, req.base);
-            uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_cb, req.base);
-            c->active->state = headers_sent;
-
-            // send body
-            send_body(c->active);
-        }
+        // send body
+        send_body(c->active);
     }
 }
 
@@ -424,10 +422,6 @@ void um_http_header(um_http_t *clt, const char *name, const char *value) {
 }
 
 int um_http_req_header(um_http_req_t *req, const char *name, const char *value) {
-    um_http_hdr *h = malloc(sizeof(um_http_hdr));
-    h->name = strdup(name);
-    h->value = strdup(value);
-
     if (strcasecmp(name, "transfer-encoding") == 0 &&
         strcmp(value, "chunked") == 0) {
 
@@ -448,7 +442,7 @@ int um_http_req_header(um_http_req_t *req, const char *name, const char *value) 
         req->req_chunked = false;
     }
 
-    LIST_INSERT_HEAD(&req->req_headers, h, _next);
+    set_http_header(&req->req_headers, name, value);
     return 0;
 }
 
