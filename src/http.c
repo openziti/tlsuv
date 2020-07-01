@@ -286,16 +286,22 @@ static void process_requests(uv_async_t *ar) {
         c->src->connect(c->src, c->host, c->port, src_connect_cb, c);
     }
     else if (c->connected == Connected) {
-        UM_LOG(VERB, "client connected, processing request");
-        uv_buf_t req;
-        req.base = malloc(8196);
-        req.len = http_req_write(c->active, req.base, 8196);
-        UM_LOG(TRACE, "writing request >>> %*.*s", req.len, req.len, req.base);
-        uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_cb, req.base);
-        c->active->state = headers_sent;
+        UM_LOG(VERB, "client connected, processing request[%s] state[%d]", c->active->path, c->active->state);
+        if (c->active->state < headers_sent) {
+            UM_LOG(VERB, "sending request[%s] headers", c->active->path);
+            uv_buf_t req;
+            req.base = malloc(8196);
+            req.len = http_req_write(c->active, req.base, 8196);
+            UM_LOG(TRACE, "writing request >>> %*.*s", req.len, req.len, req.base);
+            uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_cb, req.base);
+            c->active->state = headers_sent;
+        }
 
         // send body
-        send_body(c->active);
+        if (c->active->state < body_sent) {
+            UM_LOG(VERB, "sending request[%s] body", c->active->path);
+            send_body(c->active);
+        }
     }
 }
 
@@ -466,9 +472,7 @@ void um_http_req_end(um_http_req_t *req) {
             prev->next = chunk;
         }
 
-        if (req->client->active == req) {
-            send_body(req);
-        }
+        uv_async_send(&req->client->proc);
     }
 }
 
@@ -500,9 +504,7 @@ int um_http_req_data(um_http_req_t *req, const char *body, ssize_t body_len, um_
         prev->next = chunk;
     }
 
-    if (req->client->active == req) {
-        send_body(req);
-    }
+    uv_async_send(&req->client->proc);
     return 0;
 }
 
