@@ -163,6 +163,8 @@ static void src_connect_cb(um_http_src_t *src, int status, void *ctx) {
         make_links(clt, (uv_link_t *) src->link);
     } 
     else {
+        UM_LOG(DEBG, "failed to connect: %d(%s)", status, uv_strerror(status));
+        clt->connected = Disconnected;
         fail_active_request(clt, status, uv_strerror(status));
         uv_async_send(&clt->proc);
     }
