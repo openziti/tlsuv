@@ -10,6 +10,8 @@ set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 add_subdirectory(libuv)
 set_target_properties(uv_a PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/libuv/include)
+set_target_properties(uv PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/libuv/include)
 
 add_library(http-parser STATIC http-parser/http_parser.c)
 target_include_directories(http-parser PUBLIC http-parser)

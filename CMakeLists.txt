@@ -35,6 +35,8 @@ add_library(uv_mbed STATIC
         ${p11_sources}
         )
 
+set_property(TARGET uv_mbed PROPERTY C_STANDARD 99)
+
 target_include_directories(uv_mbed
         PUBLIC
         $<INSTALL_INTERFACE:include>
