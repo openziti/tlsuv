@@ -389,7 +389,7 @@ static void send_pong(um_websocket_t *ws, const char* ping_data, int len) {
     buf.base = malloc(buf.len);
 
     buf.base[0] = WS_FIN | OpCode_Pong;
-    buf.base[1] = (char)(0x7f & len);
+    buf.base[1] = (char)(WS_MASK | (0x7f & len));
     if (ping_data != NULL && len > 0) {
         memcpy(buf.base + 2, ping_data, len);
     }
