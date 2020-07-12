@@ -51,7 +51,7 @@ static void ws_read_cb(uv_link_t* link,
                                 ssize_t nread,
                                 const uv_buf_t* buf);
 static void ws_write_cb();
-static void send_pong(um_websocket_t *ws, const char* ping_data, int len);
+static void send_pong(um_websocket_t *ws, const char* ping_data, int len, bool masked, uint8_t mask[4]);
 static void tls_hs_cb(tls_link_t *tls, int status);
 
 static int ws_read_start(uv_link_t *l);
@@ -370,8 +370,8 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
             ws->read_cb((uv_stream_t *) ws, UV_EOF, buf);
             break;
         case OpCode_Ping:
-            UM_LOG(TRACE, "got ping");
-            send_pong(ws, dp, len);
+            UM_LOG(TRACE, "got ping masked=%d len=%d", masked, len);
+            send_pong(ws, dp, len, masked, mask);
             break;
         case OpCode_Pong:
             UM_LOG(TRACE, "got pong");
@@ -383,15 +383,35 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
     free(buf->base);
 }
 
-static void send_pong(um_websocket_t *ws, const char* ping_data, int len) {
+static void send_pong(um_websocket_t *ws, const char* ping_data, int len, bool masked, uint8_t mask[4]) {
     uv_buf_t buf;
     buf.len = 2 + len;
+    if (masked) {
+        buf.len += sizeof(mask);
+    }
     buf.base = malloc(buf.len);
 
     buf.base[0] = WS_FIN | OpCode_Pong;
     buf.base[1] = (char)(WS_MASK | (0x7f & len));
-    if (ping_data != NULL && len > 0) {
-        memcpy(buf.base + 2, ping_data, len);
+
+    char *ptr = buf.base + 2;
+
+    if (masked) {
+
+        memcpy(ptr, mask, sizeof(mask));
+        ptr += sizeof(mask);
+
+        if (ping_data != NULL && len > 0) {
+
+            for (size_t i = 0; i < buf.len; i++) {
+                *((char*)ptr + i) = mask[i % 4] ^ *(ping_data + i);
+            }
+        }
+
+    } else {
+        if (ping_data != NULL && len > 0) {
+            memcpy(ptr, ping_data, len);
+        }
     }
 
     ws_write_t *ws_wreq = calloc(1, sizeof(ws_write_t));
