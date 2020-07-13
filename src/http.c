@@ -89,8 +89,18 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
             um_http_req_t *hr = c->active;
             c->active = NULL;
 
+            bool keep_alive = true;
             const char *keep_alive_hdr = um_http_resp_header(&hr->resp, "Connection");
-            bool keep_alive = (keep_alive_hdr != NULL) && strcasecmp("keep-alive", keep_alive_hdr) == 0;
+            if (strcmp(hr->resp.http_version, "1.1") == 0) {
+                if (keep_alive_hdr && strcasecmp("close", keep_alive_hdr) == 0)
+                    keep_alive = false;
+            } else if (strcmp(hr->resp.http_version, "1.0") == 0) {
+                keep_alive = keep_alive_hdr && strcasecmp("keep-alive", keep_alive_hdr) == 0;
+            } else {
+                UM_LOG(WARN, "unexpected HTTP version(%s)", hr->resp.http_version);
+                keep_alive = false;
+            }
+
             http_req_free(hr);
             free(hr);
 

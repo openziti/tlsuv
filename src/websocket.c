@@ -370,7 +370,7 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
             ws->read_cb((uv_stream_t *) ws, UV_EOF, buf);
             break;
         case OpCode_Ping:
-            UM_LOG(TRACE, "got ping");
+            UM_LOG(TRACE, "got ping masked=%d len=%d", masked, len);
             send_pong(ws, dp, len);
             break;
         case OpCode_Pong:
@@ -384,14 +384,24 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
 }
 
 static void send_pong(um_websocket_t *ws, const char* ping_data, int len) {
+    UM_LOG(TRACE, "send_pong len=%d", len);
+    uint8_t mask[4];
     uv_buf_t buf;
-    buf.len = 2 + len;
+    buf.len = 2 + sizeof(mask) + len;
     buf.base = malloc(buf.len);
 
     buf.base[0] = WS_FIN | OpCode_Pong;
-    buf.base[1] = (char)(0x7f & len);
+    buf.base[1] = (char)(WS_MASK | (0x7f & len));
+
+    char *ptr = buf.base + 2;
+    *(int*)&mask = rand();
+    memcpy(ptr, mask, sizeof(mask));
+    ptr += sizeof(mask);
+
     if (ping_data != NULL && len > 0) {
-        memcpy(buf.base + 2, ping_data, len);
+        for (size_t i = 0; i < buf.len; i++) {
+            *((char*)ptr + i) = mask[i % 4] ^ *(ping_data + i);
+        }
     }
 
     ws_write_t *ws_wreq = calloc(1, sizeof(ws_write_t));
