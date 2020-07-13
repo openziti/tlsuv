@@ -51,7 +51,7 @@ static void ws_read_cb(uv_link_t* link,
                                 ssize_t nread,
                                 const uv_buf_t* buf);
 static void ws_write_cb();
-static void send_pong(um_websocket_t *ws, const char* ping_data, int len, bool masked, uint8_t mask[4]);
+static void send_pong(um_websocket_t *ws, const char* ping_data, int len);
 static void tls_hs_cb(tls_link_t *tls, int status);
 
 static int ws_read_start(uv_link_t *l);
@@ -371,7 +371,7 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
             break;
         case OpCode_Ping:
             UM_LOG(TRACE, "got ping masked=%d len=%d", masked, len);
-            send_pong(ws, dp, len, masked, mask);
+            send_pong(ws, dp, len);
             break;
         case OpCode_Pong:
             UM_LOG(TRACE, "got pong");
@@ -383,34 +383,24 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
     free(buf->base);
 }
 
-static void send_pong(um_websocket_t *ws, const char* ping_data, int len, bool masked, uint8_t mask[4]) {
+static void send_pong(um_websocket_t *ws, const char* ping_data, int len) {
+    UM_LOG(TRACE, "send_pong len=%d", len);
+    uint8_t mask[4];
     uv_buf_t buf;
-    buf.len = 2 + len;
-    if (masked) {
-        buf.len += sizeof(mask);
-    }
+    buf.len = 2 + sizeof(mask) + len;
     buf.base = malloc(buf.len);
 
     buf.base[0] = WS_FIN | OpCode_Pong;
     buf.base[1] = (char)(WS_MASK | (0x7f & len));
 
     char *ptr = buf.base + 2;
+    *(int*)&mask = rand();
+    memcpy(ptr, mask, sizeof(mask));
+    ptr += sizeof(mask);
 
-    if (masked) {
-
-        memcpy(ptr, mask, sizeof(mask));
-        ptr += sizeof(mask);
-
-        if (ping_data != NULL && len > 0) {
-
-            for (size_t i = 0; i < buf.len; i++) {
-                *((char*)ptr + i) = mask[i % 4] ^ *(ping_data + i);
-            }
-        }
-
-    } else {
-        if (ping_data != NULL && len > 0) {
-            memcpy(ptr, ping_data, len);
+    if (ping_data != NULL && len > 0) {
+        for (size_t i = 0; i < buf.len; i++) {
+            *((char*)ptr + i) = mask[i % 4] ^ *(ping_data + i);
         }
     }
 
