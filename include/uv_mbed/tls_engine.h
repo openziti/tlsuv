@@ -89,6 +89,12 @@ typedef struct {
     int (*read)(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
 
     int (*strerror)(void *engine, char *err_out, size_t out_len);
+
+    /**
+     * resets state of the engine so it can be used on the next connection.
+     * @param engine
+     */
+    int (*reset)(void *engine);
 } tls_engine_api;
 
 typedef struct {

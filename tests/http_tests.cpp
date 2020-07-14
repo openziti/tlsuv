@@ -603,3 +603,33 @@ TEST_CASE("multiple requests", "[http]") {
     uv_loop_close(loop);
     free(loop);
 }
+
+// test proper client->engine cleanup between requests
+// run in valgrind to see any leaks
+TEST_CASE("TLS reconnect", "[http]") {
+    uv_loop_t *loop = uv_loop_new();
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+    resp_capture resp2(resp_body_cb);
+
+    tls_context *tls = default_tls_context(NULL, 0);
+    um_http_init(loop, &clt, "https://httpbin.org");
+    um_http_set_ssl(&clt, tls);
+    um_http_header(&clt, "Connection", "close");
+
+    um_http_req_t *req = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
+    um_http_req_t *req2 = um_http_req(&clt, "GET", "/anything", resp_capture_cb, &resp2);
+
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    CHECK(resp.code == 200);
+    CHECK(resp2.code == 200);
+
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
+
+    tls->api->free_ctx(tls);
+}

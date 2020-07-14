@@ -52,6 +52,7 @@ struct mbedtls_context {
 
 struct mbedtls_engine {
     mbedtls_ssl_context *ssl;
+    mbedtls_ssl_session *session;
     BIO *in;
     BIO *out;
 };
@@ -72,6 +73,7 @@ static int
 mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
 
 static int mbedtls_close(void *engine, char *out, size_t *out_bytes, size_t maxout);
+static int mbedtls_reset(void *engine);
 
 static void mbedtls_free(tls_engine *engine);
 
@@ -91,6 +93,7 @@ static tls_engine_api mbedtls_engine_api = {
         .close = mbedtls_close,
         .write = mbedtls_write,
         .read = mbedtls_read,
+        .reset = mbedtls_reset,
 };
 
 
@@ -227,6 +230,19 @@ static void mbedtls_free_ctx(tls_context *ctx) {
     free(ctx);
 }
 
+static int mbedtls_reset(void *engine) {
+    struct mbedtls_engine *e = engine;
+    if (e->session == NULL) {
+        e->session = calloc(1, sizeof(mbedtls_ssl_session));
+    }
+    if (mbedtls_ssl_get_session(e->ssl, e->session) != 0) {
+        mbedtls_ssl_session_free(e->session);
+        free(e->session);
+        e->session = NULL;
+    }
+    return mbedtls_ssl_session_reset(e->ssl);
+}
+
 static void mbedtls_free(tls_engine *engine) {
     struct mbedtls_engine *e = engine->engine;
     um_BIO_free(e->in);
@@ -234,6 +250,10 @@ static void mbedtls_free(tls_engine *engine) {
 
     mbedtls_ssl_free(e->ssl);
     free(e->ssl);
+    if (e->session) {
+        mbedtls_ssl_session_free(e->session);
+        free(e->session);
+    }
     free(e);
     free(engine);
 }
@@ -331,6 +351,10 @@ mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *
     if (in_bytes > 0) {
         um_BIO_put(eng->in, (const unsigned char *)in, in_bytes);
     }
+    if (eng->ssl->state == MBEDTLS_SSL_HELLO_REQUEST && eng->session) {
+        mbedtls_ssl_set_session(eng->ssl, eng->session);
+        mbedtls_ssl_session_free(eng->session);
+    }
     int state = mbedtls_ssl_handshake(eng->ssl);
     char err[1024];
     mbedtls_strerror(state, err, 1024);
@@ -385,8 +409,11 @@ mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, siz
 
     // this indicates that more bytes are neded to complete SSL frame
     if (rc == MBEDTLS_ERR_SSL_WANT_READ) {
-        *out_bytes = total_out;
         return TLS_OK;
+    }
+
+    if (rc == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+        return TLS_EOF;
     }
 
     if (rc < 0) {
