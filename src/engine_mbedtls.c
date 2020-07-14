@@ -409,12 +409,10 @@ mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, siz
 
     // this indicates that more bytes are neded to complete SSL frame
     if (rc == MBEDTLS_ERR_SSL_WANT_READ) {
-        *out_bytes = total_out;
         return TLS_OK;
     }
 
     if (rc == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
-        *out_bytes = total_out;
         return TLS_EOF;
     }
 
