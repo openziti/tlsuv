@@ -146,7 +146,9 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
         if (clt->tls == NULL) {
             clt->tls = get_default_tls();
         }
-        clt->engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
+        if (!clt->engine) {
+            clt->engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
+        }
 
         um_tls_init(&clt->tls_link, clt->engine, on_tls_handshake);
         clt->tls_link.data = clt;

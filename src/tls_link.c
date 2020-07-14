@@ -152,7 +152,10 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
 
 static void tls_close(uv_link_t *l, uv_link_t *source, uv_link_close_cb close_cb) {
     UM_LOG(VERB, "closing TLS link");
-
+    tls_link_t *tls = (tls_link_t *) l;
+    if (tls->engine->api->reset) {
+        tls->engine->api->reset(tls->engine->engine);
+    }
     close_cb(source);
 }
 
