@@ -48,6 +48,8 @@ struct mbedtls_context {
     mbedtls_ssl_config config;
     mbedtls_pk_context *own_key;
     mbedtls_x509_crt *own_cert;
+    int (*cert_verify_f)(void *cert, void *v_ctx);
+    void *verify_ctx;
 };
 
 struct mbedtls_engine {
@@ -55,6 +57,7 @@ struct mbedtls_engine {
     mbedtls_ssl_session *session;
     BIO *in;
     BIO *out;
+    int error;
 };
 
 static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
@@ -74,10 +77,12 @@ mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, siz
 
 static int mbedtls_close(void *engine, char *out, size_t *out_bytes, size_t maxout);
 static int mbedtls_reset(void *engine);
+static const char* mbedtls_error(void *eng);
 
 static void mbedtls_free(tls_engine *engine);
-
 static void mbedtls_free_ctx(tls_context *ctx);
+static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx);
+static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen);
 
 static tls_context_api mbedtls_context_api = {
         .new_engine = new_mbedtls_engine,
@@ -85,6 +90,8 @@ static tls_context_api mbedtls_context_api = {
         .free_ctx = mbedtls_free_ctx,
         .set_own_cert = mbedtls_set_own_cert,
         .set_own_cert_pkcs11 = mbedtls_set_own_cert_p11,
+        .set_cert_verify = mbedtls_set_cert_verify,
+        .verify_signature =  mbedtls_verify_signature,
 };
 
 static tls_engine_api mbedtls_engine_api = {
@@ -94,6 +101,7 @@ static tls_engine_api mbedtls_engine_api = {
         .write = mbedtls_write,
         .read = mbedtls_read,
         .reset = mbedtls_reset,
+        .strerror = mbedtls_error
 };
 
 
@@ -102,6 +110,13 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *ca, siz
 static int mbed_ssl_recv(void *ctx, uint8_t *buf, size_t len);
 
 static int mbed_ssl_send(void *ctx, const uint8_t *buf, size_t len);
+
+static const char* mbedtls_error(void *eng) {
+    static char errbuf[1024];
+    struct mbedtls_engine *e = eng;
+    mbedtls_strerror(e->error, errbuf, sizeof(errbuf));
+    return errbuf;
+}
 
 static tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len) {
     tls_context *ctx = calloc(1, sizeof(tls_context));
@@ -144,7 +159,7 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
     mbedtls_x509_crt_init(ca);
 
     if (cabuf != NULL) {
-        int rc = mbedtls_x509_crt_parse(ca, (const unsigned char *)cabuf, cabuf_len);
+        int rc = cabuf_len > 0 ? mbedtls_x509_crt_parse(ca, (const unsigned char *)cabuf, cabuf_len) : 0;
         if (rc < 0) {
             char err[1024];
             mbedtls_strerror(rc, err, sizeof(err));
@@ -204,6 +219,66 @@ static tls_engine *new_mbedtls_engine(void *ctx, const char *host) {
 
     return engine;
 }
+
+static int cert_verify_cb(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
+    struct mbedtls_context *c = ctx;
+    if (depth > 0) {
+        *flags = (*flags) & ~MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+        return 0;
+    }
+
+    if (depth == 0 && c->cert_verify_f) {
+        int rc = c->cert_verify_f(crt, c->verify_ctx);
+        if (rc == 0) {
+            *flags = (*flags) & ~MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+        } else {
+            return MBEDTLS_ERR_X509_CERT_VERIFY_FAILED;
+        }
+    }
+    return 0;
+}
+
+static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx) {
+    struct mbedtls_context *c = ctx->ctx;
+    c->cert_verify_f = verify_f;
+    c->verify_ctx = v_ctx;
+    mbedtls_ssl_conf_verify(&c->config, cert_verify_cb, c);
+}
+
+static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
+
+    int type;
+    const mbedtls_md_info_t *md_info = NULL;
+    switch (md) {
+        case SHA256:
+            type = MBEDTLS_MD_SHA256;
+            md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+            break;
+        case SHA384:
+            type = MBEDTLS_MD_SHA384;
+            md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA384);
+            break;
+        case SHA512:
+            type = MBEDTLS_MD_SHA512;
+            md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA512);
+            break;
+        default:
+            return -1;
+    }
+
+    unsigned char hash[MBEDTLS_MD_MAX_SIZE];
+    if (mbedtls_md(md_info, (uint8_t *)data, datalen, hash) != 0) {
+        return -1;
+    }
+
+    mbedtls_x509_crt *crt = cert;
+    if (mbedtls_pk_verify(&crt->pk, type, hash, 0, (uint8_t *)sig, siglen) != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
 
 static void mbedtls_free_ctx(tls_context *ctx) {
     struct mbedtls_context *c = ctx->ctx;
@@ -367,6 +442,7 @@ mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *
         return TLS_HS_CONTINUE;
     }
     else {
+        eng->error = state;
         return TLS_HS_ERROR;
     }
 }
@@ -377,6 +453,7 @@ static int mbedtls_write(void *engine, const char *data, size_t data_len, char *
     while (data_len > wrote) {
         int rc = mbedtls_ssl_write(eng->ssl, (const unsigned char *)(data + wrote), data_len - wrote);
         if (rc < 0) {
+            eng->error = rc;
             return TLS_ERR;
         }
         wrote += rc;
@@ -417,6 +494,7 @@ mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, siz
     }
 
     if (rc < 0) {
+        eng->error = rc;
         char err[1024];
         mbedtls_strerror(rc, err, 1024);
         UM_LOG(ERR, "mbedTLS: %0x(%s)", rc, err);

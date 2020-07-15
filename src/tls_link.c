@@ -95,12 +95,11 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
             tls->hs_cb(tls, TLS_HS_COMPLETE);
         }
         else if (st == TLS_HS_ERROR) {
-            char err[1024];
-            int errlen = 0;
+            const char *err = NULL;
             if (tls->engine->api->strerror) {
-                errlen = tls->engine->api->strerror(tls->engine->engine, err, sizeof(err));
+                err = tls->engine->api->strerror(tls->engine->engine);
             }
-            UM_LOG(ERR, "TLS handshake error %*.*s", errlen, errlen, err);
+            UM_LOG(ERR, "TLS handshake error %s", err);
             tls->hs_cb(tls, st);
             uv_link_propagate_read_cb(l, UV_ECONNABORTED, NULL);
         }

@@ -41,6 +41,12 @@ enum TLS_RESULT {
     TLS_MORE_AVAILABLE = -4,
 };
 
+enum hash_algo {
+    SHA256,
+    SHA384,
+    SHA512
+};
+
 typedef struct {
 
     tls_handshake_state (*handshake_state)(void *engine);
@@ -88,7 +94,7 @@ typedef struct {
      */
     int (*read)(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
 
-    int (*strerror)(void *engine, char *err_out, size_t out_len);
+    const char* (*strerror)(void *engine);
 
     /**
      * resets state of the engine so it can be used on the next connection.
@@ -103,6 +109,7 @@ typedef struct {
 } tls_engine;
 
 typedef struct tls_context_s tls_context;
+typedef void* tls_cert;
 
 typedef struct {
     /* creates new TLS engine for a host */
@@ -125,6 +132,19 @@ typedef struct {
      */
     int (*set_own_cert_pkcs11)(void *ctx, const char *cert_buf, size_t cert_len,
                                const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
+
+
+    void (*set_cert_verify)(tls_context *ctx, int (*verify_f)(tls_cert cert, void *v_ctx), void *v_ctx);
+
+    int (*verify_signature)(tls_cert cert, enum hash_algo algo, const char *data, size_t datalen, const char *sig, size_t siglen);
+
+    int (*parse_pkcs7_certs)(tls_cert *chain, const char* pkcs7, size_t pkcs7len);
+
+    int (*write_cert_to_pem)(tls_cert *cert, bool full_chain, char **pem, size_t *pemlen);
+
+    void* (*get_peer_cert)(tls_engine *engine);
+
+
 
 } tls_context_api;
 
