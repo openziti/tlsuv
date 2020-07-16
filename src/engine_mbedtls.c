@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 #include <stdlib.h>
+#include <string.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/debug.h>
 #include <mbedtls/ctr_drbg.h>
@@ -24,12 +25,19 @@ limitations under the License.
 #include "bio.h"
 #include "p11_mbedtls/mbed_p11.h"
 #include "um_debug.h"
+#include <mbedtls/base64.h>
+#include <mbedtls/asn1.h>
+#include <mbedtls/oid.h>
+#include <mbedtls/pem.h>
 
 #if _WIN32
 #include <wincrypt.h>
 #pragma comment (lib, "crypt32.lib")
 #else
+
 #include <unistd.h>
+
+
 #endif
 
 // inspired by https://golang.org/src/crypto/x509/root_linux.go
@@ -76,13 +84,23 @@ static int
 mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
 
 static int mbedtls_close(void *engine, char *out, size_t *out_bytes, size_t maxout);
+
 static int mbedtls_reset(void *engine);
-static const char* mbedtls_error(void *eng);
+
+static const char *mbedtls_error(void *eng);
 
 static void mbedtls_free(tls_engine *engine);
+
 static void mbedtls_free_ctx(tls_context *ctx);
+
 static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx);
-static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen);
+
+static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char *data, size_t datalen, const char *sig,
+                                    size_t siglen);
+
+static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len);
+
+static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
 
 static tls_context_api mbedtls_context_api = {
         .new_engine = new_mbedtls_engine,
@@ -92,6 +110,8 @@ static tls_context_api mbedtls_context_api = {
         .set_own_cert_pkcs11 = mbedtls_set_own_cert_p11,
         .set_cert_verify = mbedtls_set_cert_verify,
         .verify_signature =  mbedtls_verify_signature,
+        .parse_pkcs7_certs = parse_pkcs7_certs,
+        .write_cert_to_pem = write_cert_pem,
 };
 
 static tls_engine_api mbedtls_engine_api = {
@@ -530,4 +550,151 @@ static int mbed_ssl_send(void *ctx, const uint8_t *buf, size_t len) {
     BIO *out = eng->out;
     um_BIO_put(out, buf, len);
     return (int) len;
+}
+
+#define OID_PKCS7 MBEDTLS_OID_PKCS "\x07"
+#define OID_PKCS7_DATA OID_PKCS7 "\x02"
+#define OID_PKCS7_SIGNED_DATA OID_PKCS7 "\x01"
+
+static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len) {
+    size_t der_len;
+    unsigned char *p;
+    unsigned char *end;
+    mbedtls_x509_crt *cp;
+    unsigned char *cert_buf;
+
+    int rc = mbedtls_base64_decode(NULL, 0, &der_len, pkcs7, pkcs7len); // determine necessary buffer size
+    uint8_t *base64_decoded_pkcs7 = calloc(1, der_len + 1);
+    rc = mbedtls_base64_decode(base64_decoded_pkcs7, der_len, &der_len, pkcs7, pkcs7len);
+
+    unsigned char *der = (unsigned char *) base64_decoded_pkcs7;
+
+    p = der;
+    end = der + der_len;
+    size_t len;
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_OID)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    mbedtls_asn1_buf oid;
+    oid.p = p;
+    oid.len = len;
+    if (!MBEDTLS_OID_CMP(OID_PKCS7_SIGNED_DATA, &oid)) {
+        UM_LOG(ERR, "invalid pkcs7 signed data");
+        return -1;
+    }
+    p += len;
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    int ver;
+    if ((rc = mbedtls_asn1_get_int(&p, end, &ver)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_OID)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    oid.p = p;
+    oid.len = len;
+    if (!MBEDTLS_OID_CMP(OID_PKCS7_DATA, &oid)) {
+        UM_LOG(ERR, "invalid pkcs7 data");
+        return -1;
+    }
+    p += len;
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    cert_buf = p;
+    mbedtls_x509_crt *certs = NULL;
+    do {
+        size_t cert_len;
+        unsigned char *cbp = cert_buf;
+        rc = mbedtls_asn1_get_tag(&cbp, end, &cert_len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
+        if (rc != 0) {
+            break;
+        }
+
+        if (certs == NULL) {
+            certs = calloc(1, sizeof(mbedtls_x509_crt));
+        }
+        cert_len += (cbp - cert_buf);
+        rc = mbedtls_x509_crt_parse(certs, cert_buf, cert_len);
+        if (rc != 0) {
+            UM_LOG(ERR, "failed to parse cert: %d", rc);
+            mbedtls_x509_crt_free(certs);
+            free(certs);
+            *chain = NULL;
+            return rc;
+        }
+        cert_buf += cert_len;
+
+    } while (rc == 0);
+
+    *chain = certs;
+    return 0;
+}
+
+#define PEM_BEGIN_CRT           "-----BEGIN CERTIFICATE-----\n"
+#define PEM_END_CRT             "-----END CERTIFICATE-----\n"
+
+static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen) {
+    mbedtls_x509_crt *c = cert;
+
+    size_t total_len = 0;
+    while (c != NULL) {
+        size_t len;
+        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->raw.p, c->raw.len, NULL, 0, &len);
+        total_len += len;
+        if (!full_chain) { break; }
+        c = c->next;
+    }
+
+    uint8_t *pembuf = malloc(total_len + 1);
+    uint8_t *p = pembuf;
+    c = cert;
+    while (c != NULL) {
+        size_t len;
+        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->raw.p, c->raw.len, p, total_len - (p - pembuf), &len);
+        p += (len - 1);
+        if (!full_chain) {
+            break;
+        }
+        c = c->next;
+    }
+
+    *pem = (char *) pembuf;
+    *pemlen = total_len;
+    return 0;
 }

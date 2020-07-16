@@ -140,11 +140,9 @@ typedef struct {
 
     int (*parse_pkcs7_certs)(tls_cert *chain, const char* pkcs7, size_t pkcs7len);
 
-    int (*write_cert_to_pem)(tls_cert *cert, bool full_chain, char **pem, size_t *pemlen);
+    int (*write_cert_to_pem)(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
 
     void* (*get_peer_cert)(tls_engine *engine);
-
-
 
 } tls_context_api;
 
