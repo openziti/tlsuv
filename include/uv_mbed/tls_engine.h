@@ -109,7 +109,8 @@ typedef struct {
 } tls_engine;
 
 typedef struct tls_context_s tls_context;
-typedef void* tls_cert;
+typedef void *tls_cert;
+typedef void *tls_private_key;
 
 typedef struct {
     /* creates new TLS engine for a host */
@@ -118,6 +119,8 @@ typedef struct {
     void (*free_engine)(tls_engine *);
 
     void (*free_ctx)(tls_context *ctx);
+
+    void (*free_key)(tls_private_key *k);
 
     /**
      * (Optional): if you bring your own engine this is probably not needed.
@@ -136,13 +139,22 @@ typedef struct {
 
     void (*set_cert_verify)(tls_context *ctx, int (*verify_f)(tls_cert cert, void *v_ctx), void *v_ctx);
 
-    int (*verify_signature)(tls_cert cert, enum hash_algo algo, const char *data, size_t datalen, const char *sig, size_t siglen);
+    int (*verify_signature)(tls_cert cert, enum hash_algo algo, const char *data, size_t datalen, const char *sig,
+                            size_t siglen);
 
-    int (*parse_pkcs7_certs)(tls_cert *chain, const char* pkcs7, size_t pkcs7len);
+    int (*parse_pkcs7_certs)(tls_cert *chain, const char *pkcs7, size_t pkcs7len);
 
     int (*write_cert_to_pem)(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
 
-    void* (*get_peer_cert)(tls_engine *engine);
+    tls_cert (*get_peer_cert)(tls_engine *engine);
+
+    int (*generate_key)(tls_private_key *pk);
+
+    int (*write_key_to_pem)(tls_private_key pk, char **pem, size_t *pemlen);
+
+    int (*generate_csr_to_pem)(tls_private_key pk, char **pem, size_t *pemlen, ...);
+
+    const char *(*strerror)(int code);
 
 } tls_context_api;
 
