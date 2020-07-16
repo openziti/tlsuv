@@ -18,6 +18,7 @@ limitations under the License.
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <mbedtls/x509_csr.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/debug.h>
 #include <mbedtls/ctr_drbg.h>
