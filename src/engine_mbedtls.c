@@ -14,10 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include "bio.h"
-#include "p11_mbedtls/mbed_p11.h"
-#include "um_debug.h"
-#include <uv_mbed/uv_mbed.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +28,11 @@ limitations under the License.
 #include <mbedtls/oid.h>
 #include <mbedtls/pem.h>
 #include <mbedtls/error.h>
+
+#include "bio.h"
+#include "p11_mbedtls/mbed_p11.h"
+#include "um_debug.h"
+#include <uv_mbed/uv_mbed.h>
 
 #if _WIN32
 #include <wincrypt.h>
