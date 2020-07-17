@@ -59,6 +59,7 @@ struct uv_mbed_s {
     uv_connect_t *conn_req; //a place to stash a connection request
 };
 
+size_t um_base64url_decode(const char *in, char **out, size_t *out_len);
 #ifdef __cplusplus
 }
 #endif
