@@ -117,30 +117,12 @@ size_t http_req_write(um_http_req_t *req, char *buf, size_t maxlen) {
     return len;
 }
 
-void set_http_headern(um_header_list *hl, const char* name, const char *value, size_t vallen) {
+void add_http_header(um_header_list *hl, const char* name, const char *value, size_t vallen) {
     um_http_hdr *h;
-    LIST_FOREACH(h, hl, _next) {
-        if (strcmp(h->name, name) == 0) {
-            break;
-        }
-    }
 
-    if (value == NULL) {
-        if (h != NULL) {
-            LIST_REMOVE(h, _next);
-            free(h->value);
-            free(h->name);
-        }
-        return;
-    }
-
-    if (h == NULL) {
-        h = malloc(sizeof(um_http_hdr));
-        h->name = strdup(name);
-        LIST_INSERT_HEAD(hl, h, _next);
-    } else {
-        free(h->value);
-    }
+    h = malloc(sizeof(um_http_hdr));
+    h->name = strdup(name);
+    LIST_INSERT_HEAD(hl, h, _next);
 
     h->value = strndup(value, vallen);
 }
@@ -200,7 +182,7 @@ static int http_header_field_cb(http_parser *parser, const char *f, size_t len) 
 
 static int http_header_value_cb(http_parser *parser, const char *v, size_t len) {
     um_http_req_t *req = parser->data;
-    set_http_headern(&req->resp.headers, req->resp.curr_header, v, len);
+    add_http_header(&req->resp.headers, req->resp.curr_header, v, len);
     free(req->resp.curr_header);
     req->resp.curr_header = NULL;
     return 0;
