@@ -23,6 +23,7 @@ set(uv_mbed_sources
         src/websocket.c
         src/http_req.c
         src/tls_link.c
+        src/base64.c
         )
 
 set(p11_sources

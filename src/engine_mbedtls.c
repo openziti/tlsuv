@@ -14,22 +14,34 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+
 #include <stdlib.h>
+#include <string.h>
+#include <stdarg.h>
+#include <mbedtls/x509_csr.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/debug.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/error.h>
-#include <uv_mbed/uv_mbed.h>
+#include <mbedtls/base64.h>
+#include <mbedtls/asn1.h>
+#include <mbedtls/oid.h>
+#include <mbedtls/pem.h>
+#include <mbedtls/error.h>
+
 #include "bio.h"
 #include "p11_mbedtls/mbed_p11.h"
 #include "um_debug.h"
+#include <uv_mbed/uv_mbed.h>
 
 #if _WIN32
 #include <wincrypt.h>
 #pragma comment (lib, "crypt32.lib")
 #else
+
 #include <unistd.h>
+
 #endif
 
 // inspired by https://golang.org/src/crypto/x509/root_linux.go
@@ -48,6 +60,8 @@ struct mbedtls_context {
     mbedtls_ssl_config config;
     mbedtls_pk_context *own_key;
     mbedtls_x509_crt *own_cert;
+    int (*cert_verify_f)(void *cert, void *v_ctx);
+    void *verify_ctx;
 };
 
 struct mbedtls_engine {
@@ -55,6 +69,7 @@ struct mbedtls_engine {
     mbedtls_ssl_session *session;
     BIO *in;
     BIO *out;
+    int error;
 };
 
 static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
@@ -73,18 +88,49 @@ static int
 mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
 
 static int mbedtls_close(void *engine, char *out, size_t *out_bytes, size_t maxout);
+
 static int mbedtls_reset(void *engine);
+
+static const char *mbedtls_error(int code);
+
+static const char *mbedtls_eng_error(void *eng);
 
 static void mbedtls_free(tls_engine *engine);
 
 static void mbedtls_free_ctx(tls_context *ctx);
 
+static void mbedtls_free_key(tls_private_key *k);
+
+static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx);
+
+static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char *data, size_t datalen, const char *sig,
+                                    size_t siglen);
+
+static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len);
+
+static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
+
+static int write_key_pem(tls_private_key pk, char **pem, size_t *pemlen);
+
+static int gen_key(tls_private_key *key);
+
+static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...);
+
 static tls_context_api mbedtls_context_api = {
+        .strerror = mbedtls_error,
         .new_engine = new_mbedtls_engine,
         .free_engine = mbedtls_free,
         .free_ctx = mbedtls_free_ctx,
+        .free_key = mbedtls_free_key,
         .set_own_cert = mbedtls_set_own_cert,
         .set_own_cert_pkcs11 = mbedtls_set_own_cert_p11,
+        .set_cert_verify = mbedtls_set_cert_verify,
+        .verify_signature =  mbedtls_verify_signature,
+        .parse_pkcs7_certs = parse_pkcs7_certs,
+        .write_cert_to_pem = write_cert_pem,
+        .generate_key = gen_key,
+        .write_key_to_pem = write_key_pem,
+        .generate_csr_to_pem = generate_csr,
 };
 
 static tls_engine_api mbedtls_engine_api = {
@@ -94,6 +140,7 @@ static tls_engine_api mbedtls_engine_api = {
         .write = mbedtls_write,
         .read = mbedtls_read,
         .reset = mbedtls_reset,
+        .strerror = mbedtls_eng_error
 };
 
 
@@ -102,6 +149,18 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *ca, siz
 static int mbed_ssl_recv(void *ctx, uint8_t *buf, size_t len);
 
 static int mbed_ssl_send(void *ctx, const uint8_t *buf, size_t len);
+
+static const char *mbedtls_error(int code) {
+    static char errbuf[1024];
+    mbedtls_strerror(code, errbuf, sizeof(errbuf));
+    return errbuf;
+
+}
+
+static const char *mbedtls_eng_error(void *eng) {
+    struct mbedtls_engine *e = eng;
+    return mbedtls_error(e->error);
+}
 
 static tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len) {
     tls_context *ctx = calloc(1, sizeof(tls_context));
@@ -144,16 +203,13 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
     mbedtls_x509_crt_init(ca);
 
     if (cabuf != NULL) {
-        int rc = mbedtls_x509_crt_parse(ca, (const unsigned char *)cabuf, cabuf_len);
+        int rc = cabuf_len > 0 ? mbedtls_x509_crt_parse(ca, (const unsigned char *)cabuf, cabuf_len) : 0;
         if (rc < 0) {
-            char err[1024];
-            mbedtls_strerror(rc, err, sizeof(err));
-            fprintf(stderr, "mbedtls_engine: %s\n", err);
+            UM_LOG(WARN, "mbedtls_engine: %s\n", mbedtls_error(rc));
             mbedtls_x509_crt_init(ca);
 
             rc = mbedtls_x509_crt_parse_file(ca, cabuf);
-            mbedtls_strerror(rc, err, sizeof(err));
-            fprintf(stderr, "mbedtls_engine: %s\n", err);
+            UM_LOG(WARN, "mbedtls_engine: %s\n", mbedtls_error(rc));
         }
     }
     else { // try loading default CA stores
@@ -204,6 +260,66 @@ static tls_engine *new_mbedtls_engine(void *ctx, const char *host) {
 
     return engine;
 }
+
+static int cert_verify_cb(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
+    struct mbedtls_context *c = ctx;
+    if (depth > 0) {
+        *flags = (*flags) & ~MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+        return 0;
+    }
+
+    if (depth == 0 && c->cert_verify_f) {
+        int rc = c->cert_verify_f(crt, c->verify_ctx);
+        if (rc == 0) {
+            *flags = (*flags) & ~MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+        } else {
+            return MBEDTLS_ERR_X509_CERT_VERIFY_FAILED;
+        }
+    }
+    return 0;
+}
+
+static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx) {
+    struct mbedtls_context *c = ctx->ctx;
+    c->cert_verify_f = verify_f;
+    c->verify_ctx = v_ctx;
+    mbedtls_ssl_conf_verify(&c->config, cert_verify_cb, c);
+}
+
+static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
+
+    int type;
+    const mbedtls_md_info_t *md_info = NULL;
+    switch (md) {
+        case SHA256:
+            type = MBEDTLS_MD_SHA256;
+            md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+            break;
+        case SHA384:
+            type = MBEDTLS_MD_SHA384;
+            md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA384);
+            break;
+        case SHA512:
+            type = MBEDTLS_MD_SHA512;
+            md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA512);
+            break;
+        default:
+            return -1;
+    }
+
+    unsigned char hash[MBEDTLS_MD_MAX_SIZE];
+    if (mbedtls_md(md_info, (uint8_t *)data, datalen, hash) != 0) {
+        return -1;
+    }
+
+    mbedtls_x509_crt *crt = cert;
+    if (mbedtls_pk_verify(&crt->pk, type, hash, 0, (uint8_t *)sig, siglen) != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
 
 static void mbedtls_free_ctx(tls_context *ctx) {
     struct mbedtls_context *c = ctx->ctx;
@@ -258,10 +374,17 @@ static void mbedtls_free(tls_engine *engine) {
     free(engine);
 }
 
+static void mbedtls_free_key(tls_private_key *k) {
+    mbedtls_pk_context *key = *k;
+    mbedtls_pk_free(key);
+    free(key);
+    *k = NULL;
+}
+
 static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
     struct mbedtls_context *c = ctx;
     c->own_key = calloc(1, sizeof(mbedtls_pk_context));
-    int rc = mbedtls_pk_parse_key(c->own_key, (const unsigned char *)key_buf, key_len, NULL, 0);
+    int rc = mbedtls_pk_parse_key(c->own_key, (const unsigned char *) key_buf, key_len, NULL, 0);
     if (rc < 0) {
         rc = mbedtls_pk_parse_keyfile(c->own_key, key_buf, NULL);
         if (rc < 0) {
@@ -367,6 +490,7 @@ mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *
         return TLS_HS_CONTINUE;
     }
     else {
+        eng->error = state;
         return TLS_HS_ERROR;
     }
 }
@@ -377,6 +501,7 @@ static int mbedtls_write(void *engine, const char *data, size_t data_len, char *
     while (data_len > wrote) {
         int rc = mbedtls_ssl_write(eng->ssl, (const unsigned char *)(data + wrote), data_len - wrote);
         if (rc < 0) {
+            eng->error = rc;
             return TLS_ERR;
         }
         wrote += rc;
@@ -417,6 +542,7 @@ mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, siz
     }
 
     if (rc < 0) {
+        eng->error = rc;
         char err[1024];
         mbedtls_strerror(rc, err, 1024);
         UM_LOG(ERR, "mbedTLS: %0x(%s)", rc, err);
@@ -452,4 +578,279 @@ static int mbed_ssl_send(void *ctx, const uint8_t *buf, size_t len) {
     BIO *out = eng->out;
     um_BIO_put(out, buf, len);
     return (int) len;
+}
+
+#define OID_PKCS7 MBEDTLS_OID_PKCS "\x07"
+#define OID_PKCS7_DATA OID_PKCS7 "\x02"
+#define OID_PKCS7_SIGNED_DATA OID_PKCS7 "\x01"
+
+static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len) {
+    size_t der_len;
+    unsigned char *p;
+    unsigned char *end;
+    mbedtls_x509_crt *cp;
+    unsigned char *cert_buf;
+
+    int rc = mbedtls_base64_decode(NULL, 0, &der_len, pkcs7, pkcs7len); // determine necessary buffer size
+    uint8_t *base64_decoded_pkcs7 = calloc(1, der_len + 1);
+    rc = mbedtls_base64_decode(base64_decoded_pkcs7, der_len, &der_len, pkcs7, pkcs7len);
+
+    unsigned char *der = (unsigned char *) base64_decoded_pkcs7;
+
+    p = der;
+    end = der + der_len;
+    size_t len;
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_OID)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    mbedtls_asn1_buf oid;
+    oid.p = p;
+    oid.len = len;
+    if (!MBEDTLS_OID_CMP(OID_PKCS7_SIGNED_DATA, &oid)) {
+        UM_LOG(ERR, "invalid pkcs7 signed data");
+        return -1;
+    }
+    p += len;
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    int ver;
+    if ((rc = mbedtls_asn1_get_int(&p, end, &ver)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_OID)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    oid.p = p;
+    oid.len = len;
+    if (!MBEDTLS_OID_CMP(OID_PKCS7_DATA, &oid)) {
+        UM_LOG(ERR, "invalid pkcs7 data");
+        return -1;
+    }
+    p += len;
+
+    if ((rc = mbedtls_asn1_get_tag(&p, end, &len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC)) != 0) {
+        UM_LOG(ERR, "ASN.1 parsing error: %d", rc);
+        return rc;
+    }
+
+    cert_buf = p;
+    mbedtls_x509_crt *certs = NULL;
+    do {
+        size_t cert_len;
+        unsigned char *cbp = cert_buf;
+        rc = mbedtls_asn1_get_tag(&cbp, end, &cert_len, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
+        if (rc != 0) {
+            break;
+        }
+
+        if (certs == NULL) {
+            certs = calloc(1, sizeof(mbedtls_x509_crt));
+        }
+        cert_len += (cbp - cert_buf);
+        rc = mbedtls_x509_crt_parse(certs, cert_buf, cert_len);
+        if (rc != 0) {
+            UM_LOG(ERR, "failed to parse cert: %d", rc);
+            mbedtls_x509_crt_free(certs);
+            free(certs);
+            *chain = NULL;
+            return rc;
+        }
+        cert_buf += cert_len;
+
+    } while (rc == 0);
+
+    *chain = certs;
+    return 0;
+}
+
+#define PEM_BEGIN_CRT           "-----BEGIN CERTIFICATE-----\n"
+#define PEM_END_CRT             "-----END CERTIFICATE-----\n"
+static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen) {
+    mbedtls_x509_crt *c = cert;
+
+    size_t total_len = 0;
+    while (c != NULL) {
+        size_t len;
+        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->raw.p, c->raw.len, NULL, 0, &len);
+        total_len += len;
+        if (!full_chain) { break; }
+        c = c->next;
+    }
+
+    uint8_t *pembuf = malloc(total_len + 1);
+    uint8_t *p = pembuf;
+    c = cert;
+    while (c != NULL) {
+        size_t len;
+        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->raw.p, c->raw.len, p, total_len - (p - pembuf), &len);
+        p += (len - 1);
+        if (!full_chain) {
+            break;
+        }
+        c = c->next;
+    }
+
+    *pem = (char *) pembuf;
+    *pemlen = total_len;
+    return 0;
+}
+
+static int write_key_pem(tls_private_key pk, char **pem, size_t *pemlen) {
+    mbedtls_pk_context *key = pk;
+    uint8_t keybuf[4096];
+    int ret;
+    if ((ret = mbedtls_pk_write_key_pem(key, keybuf, sizeof(keybuf))) != 0) {
+        UM_LOG(ERR, "mbedtls_pk_write_key_pem returned -0x%04x: %s", -ret, mbedtls_error(ret));
+        return ret;
+    }
+
+    *pemlen = strlen(keybuf) + 1;
+    *pem = strdup(keybuf);
+    return 0;
+}
+
+static int gen_key(tls_private_key *key) {
+
+    int ret;
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    const char *pers = "gen_key";
+    mbedtls_ecp_group_id ec_curve = MBEDTLS_ECP_DP_SECP256R1;
+    mbedtls_pk_type_t pk_type = MBEDTLS_PK_ECKEY;
+
+    mbedtls_pk_context *pk = malloc(sizeof(mbedtls_pk_context));
+    mbedtls_pk_init(pk);
+    mbedtls_ctr_drbg_init(&ctr_drbg);
+
+    mbedtls_entropy_init(&entropy);
+
+    if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *) pers,
+                                     strlen(pers))) != 0) {
+        UM_LOG(ERR, "mbedtls_ctr_drbg_seed returned -0x%04x: %s", -ret, mbedtls_error(ret));
+        goto on_error;
+    }
+
+    // Generate the key
+    if ((ret = mbedtls_pk_setup(pk, mbedtls_pk_info_from_type(pk_type))) != 0) {
+        UM_LOG(ERR, "mbedtls_pk_setup returned -0x%04x: %s", -ret, mbedtls_error(ret));
+        goto on_error;
+    }
+
+    if ((ret = mbedtls_ecp_gen_key(ec_curve, mbedtls_pk_ec(*pk), mbedtls_ctr_drbg_random, &ctr_drbg)) != 0) {
+        UM_LOG(ERR, "mbedtls_ecp_gen_key returned -0x%04x: %s", -ret, mbedtls_error(ret));
+        goto on_error;
+    }
+
+    on_error:
+    if (ret != 0) {
+        mbedtls_pk_free(pk);
+        free(pk);
+    }
+    else {
+        *key = pk;
+    }
+
+    return ret;
+}
+
+static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...) {
+    int ret = 1;
+    mbedtls_pk_context *pk = key;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    char buf[1024];
+    mbedtls_entropy_context entropy;
+    const char *pers = "gen_csr";
+
+    mbedtls_x509write_csr csr;
+    // Set to sane values
+    mbedtls_x509write_csr_init(&csr);
+    mbedtls_ctr_drbg_init(&ctr_drbg);
+    memset(buf, 0, sizeof(buf));
+
+    char subject_name[MBEDTLS_X509_MAX_DN_NAME_SIZE];
+    char *s = subject_name;
+    va_list va;
+    va_start(va, pemlen);
+    bool first = true;
+    while (true) {
+        char *id = va_arg(va, char*);
+        if (id == NULL) { break; }
+
+        char *val = va_arg(va, char*);
+        if (val == NULL) { break; }
+
+        if (!first) {
+            *s++ = ',';
+        }
+        else {
+            first = false;
+        }
+        strcpy(s, id);
+        s += strlen(id);
+        *s++ = '=';
+        strcpy(s, val);
+        s += strlen(val);
+    }
+    *s = '\0';
+
+
+    mbedtls_x509write_csr_set_md_alg(&csr, MBEDTLS_MD_SHA256);
+    mbedtls_x509write_csr_set_key_usage(&csr, 0);
+    mbedtls_x509write_csr_set_ns_cert_type(&csr, MBEDTLS_X509_NS_CERT_TYPE_SSL_CLIENT);
+    mbedtls_entropy_init(&entropy);
+    if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *) pers,
+                                     strlen(pers))) != 0) {
+        UM_LOG(ERR, "mbedtls_ctr_drbg_seed returned %d: %s", ret, mbedtls_error(ret));
+        goto on_error;
+    }
+
+    if ((ret = mbedtls_x509write_csr_set_subject_name(&csr, subject_name)) != 0) {
+        UM_LOG(ERR, "mbedtls_x509write_csr_set_subject_name returned %d", ret);
+        goto on_error;
+    }
+
+    mbedtls_x509write_csr_set_key(&csr, pk);
+    uint8_t pembuf[4096];
+    if ((ret = mbedtls_x509write_csr_pem(&csr, pembuf, sizeof(pembuf), mbedtls_ctr_drbg_random, &ctr_drbg)) < 0) {
+        UM_LOG(ERR, "mbedtls_x509write_csr_pem returned %d", ret);
+        goto on_error;
+    }
+    on_error:
+    if (ret == 0) {
+        *pem = strdup(pembuf);
+        *pemlen = strlen(pembuf) + 1;
+    }
+    mbedtls_x509write_csr_free(&csr);
+    return ret;
 }

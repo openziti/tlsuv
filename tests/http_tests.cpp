@@ -633,3 +633,69 @@ TEST_CASE("TLS reconnect", "[http]") {
 
     tls->api->free_ctx(tls);
 }
+
+typedef struct verify_ctx_s {
+    tls_context *tls;
+    const char *data;
+    size_t datalen;
+    char *sig;
+    size_t siglen;
+} verify_ctx;
+
+int cert_verify(tls_cert crt, void *ctx) {
+    verify_ctx *vtx = (verify_ctx *)ctx;
+
+    int rc = vtx->tls->api->verify_signature(crt, SHA256, vtx->data, vtx->datalen, vtx->sig, vtx->siglen);
+    return rc;
+}
+
+TEST_CASE("TLS verify with JWT", "[http]") {
+    uv_loop_t *loop = uv_loop_new();
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+    const char *jwt = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9."
+                      "eyJlbSI6Im90dCIsImV4cCI6MTU5MTE4NzM1MSwiaXNzIjoiaHR0cHM6Ly9kZW1vNC56aXRpLm"
+                      "5ldGZvdW5kcnkuaW86NDQzIiwianRpIjoiNDU5ZTM4NDktNmUwMi00Mzc1LTg2MzAtOGZmYjJk"
+                      "NTFiYjU0Iiwic3ViIjoiZDMxYzAwNDQtMTI3OC00OTdhLWJmNTktMTdjOWI5ZGI0MGEwIn0."
+                      "tDzEmiggOdDti9srOIc41RaoBZqFTYeI2P3BnA9mmhFocYPSqdbG3F23x8pAPJZfEs1D9WLRPI"
+                      "YsOAdA1ZAd7_CV77pzgxTNampbe8zl3zzMy19k63vMRbZz2B1mw8javEgHM54R5R765obu4je3"
+                      "LTFBo6wmTXrjTulmcCpYv_XekDAEKBhr9RcgvPr9liBHU4k6navtkSF7NLOwSNLg6Kq1U0aTkc"
+                      "pqeqnWamg95-LnIKdgHQ9TIIzWrES3ASDEDZn_rCi1oiGUTXvD4ZbOxYj5bzUCxw0C3-dlAdlA"
+                      "Eo2uY9YP1HWCpcise0a3SdB9GXaCQ5AX9k_6TbYDb6r-gxo7dfAvY352QVK0Rg0lXw98XSftn3"
+                      "qwjM5hc7M07gDiD3YIY7W1OFbefcH1JnAs-8K9jIWynI8-jAG3x-tqJiI856arUCzNRwcqB8PN"
+                      "VM6nOp8acTrrO_gDunYz4X_GFv70exsT_ShjGAIgng8uZtksByHqKejTZDcXkvggYhnAGPal07"
+                      "Xl5K_P2VDE75DPalu5RlHSDCmRVpkXTe0YfyT09-DzRxDDghYRVhgs6qwmfzvHiJTYTtoGnAC6"
+                      "TLi_JR5k2zu4FDEu01W6MuYt4Oxn1BREtkm58rr1WtEPjuByUWV95FvCE9ux1p61TzOuG_vBD2"
+                      "zbclP5GIA-ry9cbnU";
+    const char *dot = strchr(jwt, '.');
+    dot = strchr(dot + 1, '.');
+
+    // no default CAs
+    tls_context *tls = default_tls_context("", 0);
+    verify_ctx vtx;
+    vtx.tls = tls;
+    vtx.data = jwt;
+    vtx.datalen = dot - jwt;
+    um_base64url_decode(dot + 1, &vtx.sig, &vtx.siglen);
+
+    tls->api->set_cert_verify(tls, cert_verify, &vtx);
+    um_http_init(loop, &clt, "https://demo4.ziti.netfoundry.io");
+    um_http_set_ssl(&clt, tls);
+
+    um_http_header(&clt, "Connection", "close");
+
+    um_http_req_t *req = um_http_req(&clt, "GET", "/version", resp_capture_cb, &resp);
+
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    CHECK(resp.code == 200);
+
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
+
+    free(vtx.sig);
+    tls->api->free_ctx(tls);
+}
