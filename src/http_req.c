@@ -134,13 +134,9 @@ void set_http_headern(um_header_list *hl, const char* name, const char *value, s
         return;
     }
 
-    if (h == NULL) {
-        h = malloc(sizeof(um_http_hdr));
-        h->name = strdup(name);
-        LIST_INSERT_HEAD(hl, h, _next);
-    } else {
-        free(h->value);
-    }
+    h = malloc(sizeof(um_http_hdr));
+    h->name = strdup(name);
+    LIST_INSERT_HEAD(hl, h, _next);
 
     h->value = strndup(value, vallen);
 }
