@@ -137,23 +137,85 @@ typedef struct {
                                const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
 
 
+    /**
+     * Sets custom server cert validation function.
+     *
+     * certificate handle passed into verification callback can be used to verify signature by calling verify_signature()
+     * callback function must return 0 for success, and any other value for failure
+     * @param ctx TLS implementation
+     * @param verify_f verification callback, receives opaque(implementation specific) certificate handle and custom data
+     * @param v_ctx custom data passed into verification callback
+     * \see tls_context_api::verify_signature()
+     */
     void (*set_cert_verify)(tls_context *ctx, int (*verify_f)(tls_cert cert, void *v_ctx), void *v_ctx);
 
+    /**
+     * verify signature using supplied TLS certificate handle
+     * @param cert
+     * @param algo
+     * @param data
+     * @param datalen
+     * @param sig
+     * @param siglen
+     */
     int (*verify_signature)(tls_cert cert, enum hash_algo algo, const char *data, size_t datalen, const char *sig,
                             size_t siglen);
 
+    /**
+     * Parses certificate chain in base64 encoded PKCS#7 format
+     * @param chain
+     * @param pkcs7
+     * @param pkcs7len
+     * @returns 0 on success, or error code
+     */
     int (*parse_pkcs7_certs)(tls_cert *chain, const char *pkcs7, size_t pkcs7len);
 
+    /**
+     * Generate PEM representation of the TLS certificate or chain.
+     *
+     * PEM buffer is allocated and returned. It is the caller responsibily to free memory associated with it.
+     * @param cert TLS certificate handle
+     * @param full_chain output whole chain
+     * @param pem (out) address where allocated buffer pointer will be get stored
+     * @param pemlen size of produced PEM
+     * @returns 0 on success, or error code
+     */
     int (*write_cert_to_pem)(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
 
     tls_cert (*get_peer_cert)(tls_engine *engine);
 
+    /**
+     * generate private key.
+     * caller should call tls_context_api::free_key() to clear memory associated with the key
+     * @param pk (out) address where tls_private_key handle will be stored.
+     * @returns 0 on success, or error code
+     */
     int (*generate_key)(tls_private_key *pk);
 
+    /**
+     * Generate PEM representation of the private key.
+     *
+     * @param pk private key handle
+     * @param pem (out) address where allocated buffer pointer will be get stored
+     * @param pemlen size of produced PEM
+     * @returns 0 on success, or error code
+     */
     int (*write_key_to_pem)(tls_private_key pk, char **pem, size_t *pemlen);
 
+    /**
+     * Create x509 signing request in PEM format
+     * @param pk private key used for request
+     * @param pem (out) address where allocated buffer pointer will be get stored
+     * @param pemlen size of produced PEM
+     * @param ... NULL terminated subject name pairs
+     * @returns 0 on success, or error code
+     */
     int (*generate_csr_to_pem)(tls_private_key pk, char **pem, size_t *pemlen, ...);
 
+    /**
+     * Get error message for given code
+     * @param code error code
+     */
     const char *(*strerror)(int code);
 
 } tls_context_api;
