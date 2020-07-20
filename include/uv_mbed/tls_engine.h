@@ -193,6 +193,16 @@ typedef struct {
     int (*generate_key)(tls_private_key *pk);
 
     /**
+     * loads private key from file, or PEM/DER buffer.
+     * caller should call tls_context_api::free_key() to clear memory associated with the key
+     * @param pk (out) address where tls_private_key handle will be stored.
+     * @param keydata key source. it can be PEM/DER buffer or path to private key file
+     * @param keydatalen length of keydata
+     * @returns 0 on success, or error code
+     */
+    int (*load_key)(tls_private_key *pk, const char* keydata, size_t keydatalen);
+
+    /**
      * Generate PEM representation of the private key.
      *
      * @param pk private key handle

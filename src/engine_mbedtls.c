@@ -113,6 +113,7 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
 static int write_key_pem(tls_private_key pk, char **pem, size_t *pemlen);
 
 static int gen_key(tls_private_key *key);
+static int load_key(tls_private_key *key, const char* keydata, size_t keydatalen);
 
 static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...);
 
@@ -129,6 +130,7 @@ static tls_context_api mbedtls_context_api = {
         .parse_pkcs7_certs = parse_pkcs7_certs,
         .write_cert_to_pem = write_cert_pem,
         .generate_key = gen_key,
+        .load_key = load_key,
         .write_key_to_pem = write_key_pem,
         .generate_csr_to_pem = generate_csr,
 };
@@ -383,18 +385,9 @@ static void mbedtls_free_key(tls_private_key *k) {
 
 static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
     struct mbedtls_context *c = ctx;
-    c->own_key = calloc(1, sizeof(mbedtls_pk_context));
-    int rc = mbedtls_pk_parse_key(c->own_key, (const unsigned char *) key_buf, key_len, NULL, 0);
-    if (rc < 0) {
-        rc = mbedtls_pk_parse_keyfile(c->own_key, key_buf, NULL);
-        if (rc < 0) {
-            fprintf(stderr, "failed to load private key");
-            mbedtls_pk_free(c->own_key);
-            free(c->own_key);
-            c->own_key = NULL;
-            return TLS_ERR;
-        }
-    }
+    int rc = load_key((tls_private_key *) &c->own_key, key_buf, key_len);
+    if (rc != 0) return rc;
+
 
     c->own_cert = calloc(1, sizeof(mbedtls_x509_crt));
     rc = mbedtls_x509_crt_parse(c->own_cert, (const unsigned char *)cert_buf, cert_len);
@@ -738,6 +731,24 @@ static int write_key_pem(tls_private_key pk, char **pem, size_t *pemlen) {
     *pemlen = strlen(keybuf) + 1;
     *pem = strdup(keybuf);
     return 0;
+}
+
+static int load_key(tls_private_key *key, const char* keydata, size_t keydatalen) {
+    mbedtls_pk_context *pk = calloc(1, sizeof(mbedtls_pk_context));
+    mbedtls_pk_init(pk);
+
+    int rc = mbedtls_pk_parse_key(pk, (const unsigned char *) keydata, keydatalen, NULL, 0);
+    if (rc < 0) {
+        rc = mbedtls_pk_parse_keyfile(pk, keydata, NULL);
+        if (rc < 0) {
+            mbedtls_pk_free(pk);
+            free(pk);
+            *key = NULL;
+            return rc;
+        }
+    }
+    *key = pk;
+    return rc;
 }
 
 static int gen_key(tls_private_key *key) {
