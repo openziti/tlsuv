@@ -249,6 +249,7 @@ static void src_connect_cb(um_http_src_t *sl, int status, void *connect_ctx) {
     um_websocket_t *ws = (um_websocket_t *) req->handle;
 
     if (status < 0) {
+        ws->closed = true;
         req->cb(req, status);
         return;
     }
