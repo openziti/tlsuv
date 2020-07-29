@@ -46,6 +46,8 @@ struct um_websocket_s {
     uv_link_t ws_link;
     tls_link_t tls_link;
     tls_context *tls;
+
+    bool closed;
 };
 
 /**
