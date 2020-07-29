@@ -56,6 +56,8 @@ struct um_websocket_s {
  */
 int um_websocket_init(uv_loop_t *loop, um_websocket_t *ws);
 
+int um_websocket_init_with_src (uv_loop_t *loop, um_websocket_t *ws, um_http_src_t *src);
+
 /**
  * @brief set #tls_context on the client.
  * @param ws websocket

@@ -66,6 +66,8 @@ static const uv_link_methods_t ws_methods = {
 
 
 int um_websocket_init_with_src (uv_loop_t *loop, um_websocket_t *ws, um_http_src_t *src) {
+    ws->loop = loop;
+    ws->type = UV_IDLE;
     ws->src = src;
     ws->req = calloc(1, sizeof(um_http_req_t));
 
@@ -99,8 +101,6 @@ int um_websocket_init_with_src (uv_loop_t *loop, um_websocket_t *ws, um_http_src
 
 int um_websocket_init(uv_loop_t *loop, um_websocket_t *ws) {
     memset(ws, 0, sizeof(um_websocket_t));
-    ws->loop = loop;
-    ws->type = UV_IDLE;
     tcp_src_init(loop, &ws->default_src);
     return um_websocket_init_with_src(loop, ws, (um_http_src_t *) &ws->default_src);
 }
