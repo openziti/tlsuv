@@ -231,7 +231,6 @@ int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_wr
     bufs.base = frame;
 
     ws_write_t *ws_wreq = calloc(1, sizeof(ws_write_t));
-    ws_wreq->ws = ws;
     ws_wreq->wr = req;
     ws_wreq->bufs = malloc(sizeof(uv_buf_t));
     ws_wreq->bufs[0] = bufs;
