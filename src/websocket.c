@@ -50,7 +50,7 @@ static void src_connect_cb(um_http_src_t *sl, int status, void *connect_ctx);
 static void ws_read_cb(uv_link_t* link,
                                 ssize_t nread,
                                 const uv_buf_t* buf);
-static void ws_write_cb();
+static void ws_write_cb(uv_link_t *l, int nwrote, void *data);
 static void send_pong(um_websocket_t *ws, const char* ping_data, int len);
 static void tls_hs_cb(tls_link_t *tls, int status);
 
@@ -66,6 +66,8 @@ static const uv_link_methods_t ws_methods = {
 
 
 int um_websocket_init_with_src (uv_loop_t *loop, um_websocket_t *ws, um_http_src_t *src) {
+    ws->loop = loop;
+    ws->type = UV_IDLE;
     ws->src = src;
     ws->req = calloc(1, sizeof(um_http_req_t));
 
@@ -99,8 +101,6 @@ int um_websocket_init_with_src (uv_loop_t *loop, um_websocket_t *ws, um_http_src
 
 int um_websocket_init(uv_loop_t *loop, um_websocket_t *ws) {
     memset(ws, 0, sizeof(um_websocket_t));
-    ws->loop = loop;
-    ws->type = UV_IDLE;
     tcp_src_init(loop, &ws->default_src);
     return um_websocket_init_with_src(loop, ws, (um_http_src_t *) &ws->default_src);
 }
@@ -188,6 +188,11 @@ int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url,
 }
 
 int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_write_cb cb) {
+    if (ws->closed) {
+        cb(req, UV_ECONNRESET);
+        return UV_ECONNRESET;
+    }
+
     uv_buf_t bufs;
     int headerlen = 6;
     if (buf->len > 125) {
@@ -244,6 +249,7 @@ static void src_connect_cb(um_http_src_t *sl, int status, void *connect_ctx) {
     um_websocket_t *ws = (um_websocket_t *) req->handle;
 
     if (status < 0) {
+        ws->closed = true;
         req->cb(req, status);
         return;
     }
@@ -266,6 +272,11 @@ static void src_connect_cb(um_http_src_t *sl, int status, void *connect_ctx) {
 static void ws_write_cb(uv_link_t *l, int nwrote, void *data) {
     ws_write_t *ws_wreq = data;
     UM_LOG(VERB, "write complete rc = %d", nwrote);
+
+    if (nwrote < 0) {
+        um_websocket_t *ws = l->data;
+        ws->closed = true;
+    }
 
     if (ws_wreq->wr) {
         uv_write_t *wr = ws_wreq->wr;
@@ -300,6 +311,7 @@ int ws_read_start(uv_link_t *l) {
 void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
     um_websocket_t *ws = l->data;
     if (nread < 0) {
+        ws->closed = true;
         // still connecting
         if (ws->conn_req != NULL) {
             ws->conn_req->cb(ws->conn_req, nread);

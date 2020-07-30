@@ -82,7 +82,7 @@ static tls_handshake_state mbedtls_hs_state(void *engine);
 static tls_handshake_state
 mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
 
-static int mbedtls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
+static ssize_t mbedtls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
 
 static int
 mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
@@ -402,12 +402,12 @@ static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len
             mbedtls_pk_free(c->own_key);
             free(c->own_key);
             c->own_key = NULL;
-            return TLS_ERR;
+            return rc;
         }
     }
 
-    mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, c->own_key);
-    return TLS_OK;
+    rc = mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, c->own_key);
+    return rc;
 }
 
 static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
@@ -488,19 +488,19 @@ mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *
     }
 }
 
-static int mbedtls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout) {
+static ssize_t mbedtls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout) {
     struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
     size_t wrote = 0;
     while (data_len > wrote) {
         int rc = mbedtls_ssl_write(eng->ssl, (const unsigned char *)(data + wrote), data_len - wrote);
         if (rc < 0) {
             eng->error = rc;
-            return TLS_ERR;
+            return rc;
         }
         wrote += rc;
     }
     *out_bytes = um_BIO_read(eng->out, (unsigned char *)out, maxout);
-    return (int)um_BIO_available(eng->out);
+    return um_BIO_available(eng->out);
 }
 
 static int

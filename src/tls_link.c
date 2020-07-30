@@ -40,10 +40,24 @@ static const uv_link_methods_t tls_methods = {
         .read_cb_override = tls_read_cb
 };
 
+typedef struct tls_link_write_s {
+    char *tls_buf;
+    uv_link_write_cb cb;
+    void *ctx;
+
+} tls_link_write_t;
+
 static void tls_write_cb(uv_link_t *source, int status, void *arg) {
-    if (arg != NULL) {
-        free(arg);
+    tls_link_write_t *wr = arg;
+    uv_link_t *tls_link = source->child;
+    if (wr->cb) {
+        wr->cb(tls_link, status, wr->ctx);
     }
+
+    if (wr->tls_buf) {
+        free(wr->tls_buf);
+    }
+    free(wr);
 }
 
 static int tls_read_start(uv_link_t *l) {
@@ -58,7 +72,9 @@ static int tls_read_start(uv_link_t *l) {
                                                              32 * 1024);
         UM_LOG(VERB, "starting TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
 
-        return uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, buf.base);
+        tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
+        wr->tls_buf = buf.base;
+        return uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, wr);
     } else {
         return 0;
     }
@@ -84,7 +100,9 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
 
         UM_LOG(VERB, "continuing TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
         if (buf.len > 0) {
-            uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, buf.base);
+            tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
+            wr->tls_buf = buf.base;
+            uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, wr);
         }
         else {
             free(buf.base);
@@ -141,10 +159,19 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
     tls_link_t *tls = (tls_link_t *) l;
     uv_buf_t buf;
     buf.base = malloc(32 * 1024);
-    tls->engine->api->write(tls->engine->engine, bufs[0].base, bufs[0].len, buf.base, &buf.len, 32 * 1024);
-    int rc = uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, buf.base);
+    ssize_t tls_rc = tls->engine->api->write(tls->engine->engine, bufs[0].base, bufs[0].len, buf.base, &buf.len, 32 * 1024);
+    if (tls_rc < 0) {
+        UM_LOG(ERR, "TLS engine failed to wrap: %d(%s)", tls_rc, tls->engine->api->strerror(tls->engine->engine));
+        cb(source, tls_rc, arg);
+        free(buf.base);
+        return tls_rc;
+    }
 
-    cb(source, 0, arg);
+    tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
+    wr->tls_buf = buf.base;
+    wr->cb = cb;
+    wr->ctx = arg;
+    int rc = uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, wr);
 
     return rc;
 }

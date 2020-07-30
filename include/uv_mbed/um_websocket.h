@@ -46,6 +46,8 @@ struct um_websocket_s {
     uv_link_t ws_link;
     tls_link_t tls_link;
     tls_context *tls;
+
+    bool closed;
 };
 
 /**
@@ -55,6 +57,8 @@ struct um_websocket_s {
  * @return error code
  */
 int um_websocket_init(uv_loop_t *loop, um_websocket_t *ws);
+
+int um_websocket_init_with_src (uv_loop_t *loop, um_websocket_t *ws, um_http_src_t *src);
 
 /**
  * @brief set #tls_context on the client.

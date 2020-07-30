@@ -81,7 +81,7 @@ typedef struct {
       * @param out_bytes
       * @param maxout
       */
-    int (*write)(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
+    ssize_t (*write)(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
 
     /**
      * process bytes received from TLS peer. Application data is placed in out buffer.
