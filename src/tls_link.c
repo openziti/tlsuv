@@ -49,8 +49,9 @@ typedef struct tls_link_write_s {
 
 static void tls_write_cb(uv_link_t *source, int status, void *arg) {
     tls_link_write_t *wr = arg;
+    uv_link_t *tls_link = source->child;
     if (wr->cb) {
-        wr->cb(source, status, wr->ctx);
+        wr->cb(tls_link, status, wr->ctx);
     }
 
     if (wr->tls_buf) {
