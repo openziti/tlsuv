@@ -213,7 +213,7 @@ static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_
 
 
 void msg_cb (int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
-    UM_LOG(ERR, "%s v[%d], ct[%d], len[%zd]", write_p ? ">" : "<", version, content_type, len);
+    UM_LOG(TRACE, "%s v[%d], ct[%d], len[%zd]", write_p ? ">" : "<", version, content_type, len);
 }
 
 tls_engine *new_openssl_engine(void *ctx, const char *host) {
@@ -343,12 +343,10 @@ static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, co
     STACK_OF(X509_OBJECT) *stack = X509_STORE_get0_objects(store);
 
     int code = SSL_CTX_use_PrivateKey(ssl, c->own_key);
-    UM_LOG(ERR, "code = %d", code);
 
     X509_OBJECT *o = sk_X509_OBJECT_value(stack, 0);
     X509 *crt = X509_OBJECT_get0_X509(o);
     code = SSL_CTX_use_certificate(ssl, crt);
-    UM_LOG(ERR, "code = %d", code);
     c->own_cert = crt;
     return rc;
 }
@@ -409,15 +407,11 @@ tls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_
         BIO_write(eng->in, (const unsigned char *)in, in_bytes);
     }
 
-    X509 *c = SSL_get_certificate(eng->ssl);
-    EVP_PKEY *pk = SSL_get_privatekey(eng->ssl);
-
     int state = SSL_do_handshake(eng->ssl);
     int err = SSL_get_error(eng->ssl, state);
     *out_bytes = BIO_read(eng->out, (unsigned char *)out, maxout);
 
     OSSL_HANDSHAKE_STATE hs_state = SSL_get_state(eng->ssl);
-    UM_LOG(ERR, "hs_state = %d", hs_state);
     if (hs_state == TLS_ST_OK) {
         return TLS_HS_COMPLETE;
     }
