@@ -17,6 +17,9 @@ jobs:
           - macOS-latest
           - windows-latest
         openssl: [off, on]
+        exclude:
+          - os: macOS-latest
+            openssl: on
 
     steps:
     - uses: actions/checkout@v2
