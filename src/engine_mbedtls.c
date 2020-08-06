@@ -82,7 +82,7 @@ static tls_handshake_state mbedtls_hs_state(void *engine);
 static tls_handshake_state
 mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
 
-static ssize_t mbedtls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
+static int mbedtls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
 
 static int
 mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
@@ -494,7 +494,7 @@ mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *
     }
 }
 
-static ssize_t mbedtls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout) {
+static int mbedtls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout) {
     struct openssl_engine *eng = (struct openssl_engine *) engine;
     size_t wrote = 0;
     while (data_len > wrote) {
@@ -506,7 +506,7 @@ static ssize_t mbedtls_write(void *engine, const char *data, size_t data_len, ch
         wrote += rc;
     }
     *out_bytes = um_BIO_read(eng->out, (unsigned char *)out, maxout);
-    return um_BIO_available(eng->out);
+    return (int)um_BIO_available(eng->out);
 }
 
 static int

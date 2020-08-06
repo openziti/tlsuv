@@ -79,7 +79,7 @@ static tls_handshake_state tls_hs_state(void *engine);
 static tls_handshake_state
 tls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
 
-static ssize_t tls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
+static int tls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
 
 static int
 tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
@@ -430,7 +430,7 @@ tls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_
     }
 }
 
-static ssize_t tls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout) {
+static int tls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout) {
     struct openssl_engine *eng = (struct openssl_engine *) engine;
     size_t wrote = 0;
     while (data_len > wrote) {
@@ -442,7 +442,7 @@ static ssize_t tls_write(void *engine, const char *data, size_t data_len, char *
         wrote += rc;
     }
     *out_bytes = BIO_read(eng->out, (unsigned char *)out, maxout);
-    return BIO_ctrl_pending(eng->out);
+    return (int)BIO_ctrl_pending(eng->out);
 }
 
 

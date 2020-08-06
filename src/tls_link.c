@@ -159,7 +159,7 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
     tls_link_t *tls = (tls_link_t *) l;
     uv_buf_t buf;
     buf.base = malloc(32 * 1024);
-    ssize_t tls_rc = tls->engine->api->write(tls->engine->engine, bufs[0].base, bufs[0].len, buf.base, &buf.len, 32 * 1024);
+    int tls_rc = tls->engine->api->write(tls->engine->engine, bufs[0].base, bufs[0].len, buf.base, &buf.len, 32 * 1024);
     if (tls_rc < 0) {
         UM_LOG(ERR, "TLS engine failed to wrap: %d(%s)", tls_rc, tls->engine->api->strerror(tls->engine->engine));
         cb(source, tls_rc, arg);
