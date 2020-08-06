@@ -66,8 +66,7 @@ build
 
 ### JetBrains
 .idea/
-cmake-build-debug/
-cmake-build-release/
+cmake-build-*/
 
 ### Visual Studio
 .vs

@@ -162,7 +162,7 @@ int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb c
     size_t out_size = 32 * 1024;
     char *out = malloc(out_size);
     size_t out_len;
-    ssize_t rc = mbed->tls_engine->api->write(mbed->tls_engine->engine, buf->base, buf->len, out, &out_len, out_size);
+    int rc = mbed->tls_engine->api->write(mbed->tls_engine->engine, buf->base, buf->len, out, &out_len, out_size);
     if (rc < 0) {
         cb(req, rc);
         free(out);

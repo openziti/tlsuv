@@ -1,6 +1,3 @@
-[submodule "mbedtls"]
-	path = deps/mbedtls
-	url = https://github.com/netfoundry/mbedtls.git
 [submodule "libuv"]
 	path = deps/libuv
 	url = https://github.com/libuv/libuv.git

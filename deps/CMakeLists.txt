@@ -1,9 +1,7 @@
 
-set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
-set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-add_subdirectory(mbedtls)
-set_target_properties(mbedtls PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_BINARY_DIR}/mbedtls/include)
+if(USE_MBEDTLS)
+include(mbedtls.cmake)
+endif()
 
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)

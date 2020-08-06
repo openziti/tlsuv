@@ -18,6 +18,7 @@ limitations under the License.
 #define UV_MBED_TLS_ENGINE_H
 
 #include <stdlib.h>
+#include <stdio.h>
 
 #if _WIN32
 #pragma comment (lib, "crypt32.lib")
@@ -39,12 +40,13 @@ enum TLS_RESULT {
     TLS_EOF = -2,
     TLS_READ_AGAIN = -3,
     TLS_MORE_AVAILABLE = -4,
+    TLS_HAS_WRITE = -5,
 };
 
 enum hash_algo {
-    SHA256,
-    SHA384,
-    SHA512
+    hash_SHA256,
+    hash_SHA384,
+    hash_SHA512
 };
 
 typedef struct {
@@ -81,7 +83,7 @@ typedef struct {
       * @param out_bytes
       * @param maxout
       */
-    ssize_t (*write)(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
+    int (*write)(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
 
     /**
      * process bytes received from TLS peer. Application data is placed in out buffer.
@@ -121,6 +123,8 @@ typedef struct {
     void (*free_ctx)(tls_context *ctx);
 
     void (*free_key)(tls_private_key *k);
+
+    void (*free_cert)(tls_cert *cert);
 
     /**
      * (Optional): if you bring your own engine this is probably not needed.
@@ -234,6 +238,10 @@ struct tls_context_s {
     void *ctx;
     tls_context_api *api;
 };
+
+typedef tls_context *(*tls_context_factory)(const char* ca, size_t ca_len);
+
+void set_default_tls_impl(tls_context_factory impl);
 
 tls_context *default_tls_context(const char *ca, size_t ca_len);
 

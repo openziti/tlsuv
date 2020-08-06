@@ -11,11 +11,16 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os:
           - ubuntu-latest
           - macOS-latest
           - windows-latest
+        openssl: [off]
+        include:
+          - os: ubuntu-latest
+            openssl: on
 
     steps:
     - uses: actions/checkout@v2
@@ -24,7 +29,7 @@ jobs:
     - name: make build dir
       run: cmake -E make_directory ${{runner.workspace}}/build
     - name: configure cmake
-      run: cmake -S ${{ github.workspace }} -B ${{runner.workspace}}/build
+      run: cmake -S ${{ github.workspace }} -B ${{runner.workspace}}/build -DUSE_OPENSSL=${{ matrix.openssl }}
     - name: build 
       run: cmake --build ${{runner.workspace}}/build 
     - name: test

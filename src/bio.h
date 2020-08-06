@@ -18,8 +18,9 @@ limitations under the License.
 #define UV_MBED_BIO_H
 
 #include "uv_mbed/queue.h"
+#include <stdint.h>
 
-typedef struct bio {
+typedef struct um_bio_s {
     size_t available;
     size_t headoffset;
     unsigned int qlen;

@@ -294,16 +294,16 @@ TEST_CASE("client_cert_test","[http]") {
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(loop, &clt, "https://client.badssl.com");
-    um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
     WHEN("client cert NOT set") {
+        um_http_init(loop, &clt, "https://server.cryptomix.com");
+        um_http_req_t *req = um_http_req(&clt, "GET", "/secure/", resp_capture_cb, &resp);
 
         uv_run(loop, UV_RUN_DEFAULT);
 
         THEN("request should be bad") {
-            REQUIRE(resp.code == HTTP_STATUS_BAD_REQUEST);
-            REQUIRE(resp.resp_body_end_called);
+            CHECK(resp.code == HTTP_STATUS_OK);
+            CHECK_THAT(resp.body, Contains("Error: No SSL client certificate presented"));
         }
         int body_len = resp.body.size();
         int content_len = atoi(resp.headers["Content-Length"].c_str());
@@ -315,6 +315,8 @@ TEST_CASE("client_cert_test","[http]") {
 
     WHEN("client cert set") {
         tls_context *tls = default_tls_context(nullptr, 0);
+        um_http_init(loop, &clt, "https://server.cryptomix.com/");
+        um_http_req_t *req = um_http_req(&clt, "GET", "/secure/", resp_capture_cb, &resp);
 
         // client cert downloaded from https://badssl.com/download/
         const char *cert = "-----BEGIN CERTIFICATE-----\n"
@@ -378,8 +380,9 @@ TEST_CASE("client_cert_test","[http]") {
         uv_run(loop, UV_RUN_DEFAULT);
 
         THEN("request should complete") {
-            REQUIRE(resp.code == HTTP_STATUS_OK);
-            REQUIRE(resp.resp_body_end_called);
+            CHECK(resp.code == HTTP_STATUS_OK);
+            CHECK(resp.resp_body_end_called);
+            CHECK_THAT(resp.body, Contains("[SSL_CLIENT_S_DN_CN] => BadSSL Client Certificate"));
         }
     }
 
@@ -435,7 +438,7 @@ TEST_CASE("client_idle_test","[http]") {
 // hidden test
 // can't rely on server closing connection in time
 TEST_CASE("server_idle_close","[.]") {
-    uv_loop_t *loop = uv_default_loop();
+    uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
 
     um_http_body_cb body_cb = [](um_http_req_t *req, const char *b, ssize_t len) {
@@ -474,28 +477,26 @@ TEST_CASE("server_idle_close","[.]") {
     free(loop);
 }
 
-extern "C" void uv_mbed_set_debug(int level, FILE *out);
 
 TEST_CASE("basic_test", "[http]") {
+    uv_mbed_set_debug(7, stderr);
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(loop, &clt, "http://httpbin.org");
+    um_http_init(loop, &clt, "https://httpbin.org");
     um_http_req_t *req = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
 
-    WHEN("client idle timeout is set to 5 seconds") {
-        uv_run(loop, UV_RUN_DEFAULT);
+    uv_run(loop, UV_RUN_DEFAULT);
 
-        THEN("request should be fast and then idle for 5 seconds") {
-            CHECK(resp.code == HTTP_STATUS_OK);
-            CHECK_THAT(resp.http_version, Equals("1.1"));
-            CHECK_THAT(resp.status, Equals("OK"));
+    THEN("request should be fast and then idle for 5 seconds") {
+        CHECK(resp.code == HTTP_STATUS_OK);
+        CHECK_THAT(resp.http_version, Equals("1.1"));
+        CHECK_THAT(resp.status, Equals("OK"));
 
-            CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
-        }
-
-        um_http_close(&clt);
+        CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
     }
+
+    um_http_close(&clt);
     uv_run(loop, UV_RUN_ONCE);
 
     uv_loop_close(loop);
@@ -607,6 +608,7 @@ TEST_CASE("multiple requests", "[http]") {
 // test proper client->engine cleanup between requests
 // run in valgrind to see any leaks
 TEST_CASE("TLS reconnect", "[http]") {
+    uv_mbed_set_debug(7, stderr);
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp(resp_body_cb);
@@ -645,7 +647,7 @@ typedef struct verify_ctx_s {
 int cert_verify(tls_cert crt, void *ctx) {
     verify_ctx *vtx = (verify_ctx *)ctx;
 
-    int rc = vtx->tls->api->verify_signature(crt, SHA256, vtx->data, vtx->datalen, vtx->sig, vtx->siglen);
+    int rc = vtx->tls->api->verify_signature(crt, hash_SHA256, vtx->data, vtx->datalen, vtx->sig, vtx->siglen);
     return rc;
 }
 

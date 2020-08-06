@@ -27,7 +27,6 @@ extern "C" {
 #endif
 
 typedef struct uv_mbed_s uv_mbed_t;
-typedef struct bio BIO;
 
 void uv_mbed_set_debug(int level, FILE *output);
 
