@@ -17,9 +17,9 @@ jobs:
           - ubuntu-latest
           - macOS-latest
           - windows-latest
-        openssl: [off, on]
-        exclude:
-          - os: macOS-latest
+        openssl: [off]
+        include:
+          - os: ubuntu-latest
             openssl: on
 
     steps:
