@@ -47,6 +47,11 @@ typedef struct tls_link_write_s {
 
 } tls_link_write_t;
 
+static void tls_write_free_cb(uv_link_t *source, int status, void *arg) {
+    if (arg)
+        free(arg);
+}
+
 static void tls_write_cb(uv_link_t *source, int status, void *arg) {
     tls_link_write_t *wr = arg;
     uv_link_t *tls_link = source->child;
@@ -142,6 +147,13 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
             inptr = NULL;
             inlen = 0;
         } while (rc == TLS_MORE_AVAILABLE && out_bytes > 0);
+
+        if (rc == TLS_HAS_WRITE) {
+            uv_buf_t buf;
+            buf.base = malloc(32 * 1024);
+            int tls_rc = tls->engine->api->write(tls->engine->engine, NULL, 0, buf.base, &buf.len, 32 * 1024);
+            uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_free_cb, buf.base);
+        }
 
         uv_link_propagate_read_cb(l, read_buf.len, &read_buf);
     }

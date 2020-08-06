@@ -448,30 +448,31 @@ tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t 
     }
 
     int rc;
+    int err = SSL_ERROR_NONE;
     uint8_t *writep = (uint8_t*)out;
     size_t total_out = 0;
 
-    do {
-        rc = SSL_read(eng->ssl, writep, maxout - total_out);
-
-        if (rc > 0) {
-            total_out += rc;
-            writep += rc;
-        }
-    } while(rc > 0 && (maxout - total_out) > 0);
-
-    *out_bytes = total_out;
-
-    // this indicates that more bytes are neded to complete SSL frame
-    if (rc == SSL_ERROR_WANT_READ) {
-        return TLS_OK;
-    }
-
-    if (rc == SSL_AD_CLOSE_NOTIFY) {
-        return TLS_EOF;
+    while((maxout - total_out > 0) && (rc = SSL_read(eng->ssl, writep, maxout - total_out)) > 0) {
+        total_out += rc;
+        writep += rc;
     }
 
     if (rc < 0) {
+        err = SSL_get_error(eng->ssl, rc);
+    }
+
+    *out_bytes = total_out;
+
+    // this indicates that more bytes are needed to complete SSL frame
+    if (err == SSL_ERROR_WANT_READ) {
+        return BIO_ctrl_pending(eng->out) > 0 ? TLS_HAS_WRITE : TLS_OK;
+    }
+
+    if (SSL_get_shutdown(eng->ssl)) {
+        return TLS_EOF;
+    }
+
+    if (err != SSL_ERROR_NONE) {
         eng->error = rc;
         UM_LOG(ERR, "mbedTLS: %0x(%s)", rc, tls_error(eng->error));
         return TLS_ERR;
@@ -481,7 +482,7 @@ tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t 
         return TLS_MORE_AVAILABLE;
     }
 
-    return TLS_OK;
+    return BIO_ctrl_pending(eng->out) > 0 ? TLS_HAS_WRITE : TLS_OK;
 }
 
 static int tls_close(void *engine, char *out, size_t *out_bytes, size_t maxout) {

@@ -40,6 +40,7 @@ enum TLS_RESULT {
     TLS_EOF = -2,
     TLS_READ_AGAIN = -3,
     TLS_MORE_AVAILABLE = -4,
+    TLS_HAS_WRITE = -5,
 };
 
 enum hash_algo {
