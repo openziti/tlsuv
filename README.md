@@ -8,13 +8,13 @@ This is done by combinining [libuv](https://github.com/libuv/libuv) with [mbedTL
 
 ## Features
 * async TLS over TCP
-* Flexible TLS engine support
+* flexible TLS engine support
 * [pkcs#11](https://en.wikipedia.org/wiki/PKCS_11) support with default(mbedTLS) engine
 
 ## API
 API is attempted to be consistent with [libuv API](http://docs.libuv.org/en/v1.x/api.html)
 
-## Suuported Platforms
+## Supported Platforms
 * Linux
 * Darwin/MacOS
 * Windows

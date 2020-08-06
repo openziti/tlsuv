@@ -73,4 +73,5 @@ static int tcp_src_connect(um_http_src_t *sl, const char* host, const char *serv
 
 static void tcp_src_release(um_http_src_t *sl) {
     free(sl->link);
+    sl->link = NULL;
 }

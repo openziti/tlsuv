@@ -42,9 +42,9 @@ enum TLS_RESULT {
 };
 
 enum hash_algo {
-    SHA256,
-    SHA384,
-    SHA512
+    hash_SHA256,
+    hash_SHA384,
+    hash_SHA512
 };
 
 typedef struct {
@@ -121,6 +121,8 @@ typedef struct {
     void (*free_ctx)(tls_context *ctx);
 
     void (*free_key)(tls_private_key *k);
+
+    void (*free_cert)(tls_cert *cert);
 
     /**
      * (Optional): if you bring your own engine this is probably not needed.
@@ -234,6 +236,10 @@ struct tls_context_s {
     void *ctx;
     tls_context_api *api;
 };
+
+typedef tls_context *(*tls_context_factory)(const char* ca, size_t ca_len);
+
+void set_default_tls_impl(tls_context_factory impl);
 
 tls_context *default_tls_context(const char *ca, size_t ca_len);
 
