@@ -409,7 +409,11 @@ tls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_
 
     int state = SSL_do_handshake(eng->ssl);
     int err = SSL_get_error(eng->ssl, state);
-    *out_bytes = BIO_read(eng->out, (unsigned char *)out, maxout);
+    if (BIO_ctrl_pending(eng->out) > 0) {
+        *out_bytes = BIO_read(eng->out, (unsigned char *) out, maxout);
+    } else {
+        *out_bytes = 0;
+    }
 
     OSSL_HANDSHAKE_STATE hs_state = SSL_get_state(eng->ssl);
     if (hs_state == TLS_ST_OK) {
@@ -435,7 +439,11 @@ static int tls_write(void *engine, const char *data, size_t data_len, char *out,
         }
         wrote += rc;
     }
-    *out_bytes = BIO_read(eng->out, (unsigned char *)out, maxout);
+    if (BIO_ctrl_pending(eng->out) > 0)
+        *out_bytes = BIO_read(eng->out, (unsigned char *)out, maxout);
+    else
+        *out_bytes = 0;
+
     return (int)BIO_ctrl_pending(eng->out);
 }
 
@@ -488,14 +496,12 @@ tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t 
 static int tls_close(void *engine, char *out, size_t *out_bytes, size_t maxout) {
     struct openssl_engine *eng = (struct openssl_engine *) engine;
     SSL_shutdown(eng->ssl);
-    *out_bytes = BIO_read(eng->out, (unsigned char *)out, maxout);
+    if (BIO_ctrl_pending(eng->out) > 0)
+        *out_bytes = BIO_read(eng->out, (unsigned char *)out, maxout);
+    else
+        *out_bytes = 0;
     return 0;
 }
-
-//
-//#define OID_PKCS7 MBEDTLS_OID_PKCS "\x07"
-//#define OID_PKCS7_DATA OID_PKCS7 "\x02"
-//#define OID_PKCS7_SIGNED_DATA OID_PKCS7 "\x01"
 
 static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7buf, size_t pkcs7len) {
 
