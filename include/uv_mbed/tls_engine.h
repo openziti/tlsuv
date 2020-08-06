@@ -18,7 +18,7 @@ limitations under the License.
 #define UV_MBED_TLS_ENGINE_H
 
 #include <stdlib.h>
-#include <stddef.h>
+#include <stdio.h>
 
 #if _WIN32
 #pragma comment (lib, "crypt32.lib")

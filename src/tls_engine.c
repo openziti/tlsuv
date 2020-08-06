@@ -1,6 +1,3 @@
-#include <uv_mbed/tls_engine.h>
-#include "um_debug.h"
-
 /*
 Copyright (c) 2020 NetFoundry, Inc.
 
@@ -16,6 +13,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
+#include <uv_mbed/tls_engine.h>
+#include "um_debug.h"
 
 #ifdef USE_MBEDTLS
 extern tls_context* new_mbedtls_ctx(const char* ca, size_t ca_len);
