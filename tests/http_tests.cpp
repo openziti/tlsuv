@@ -383,7 +383,9 @@ TEST_CASE("client_cert_test","[http]") {
         THEN("request should complete") {
             CHECK(resp.code == HTTP_STATUS_OK);
             CHECK(resp.resp_body_end_called);
-            cerr << resp.req_body << endl;
+            UNSCOPED_INFO(resp.req_body.c_str());
+            fprintf(stderr, "resp:\n%s\n", resp.req_body.c_str());
+            fflush(stderr);
         }
     }
 
@@ -702,100 +704,3 @@ TEST_CASE("TLS verify with JWT", "[http]") {
     free(vtx.sig);
     tls->api->free_ctx(tls);
 }
-
-
-
-TEST_CASE("ziti_client_cert_test","[http]") {
-
-    uv_loop_t *loop = uv_loop_new();
-    um_http_t clt;
-    resp_capture resp(resp_body_cb);
-
-    const char* ca = R"(----BEGIN CERTIFICATE-----
-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
-V7vUrF/IzSWCpw3g07+UMWwg4Q==
------END CERTIFICATE-----
-)";
-    tls_context *tls = default_tls_context(ca, strlen(ca) + 1);
-
-    um_http_init(loop, &clt, "https://demo4.ziti.netfoundry.io");
-    um_http_req_t *req = um_http_req(&clt, "POST", "/authenticate?method=cert", resp_capture_cb, &resp);
-
-    // client cert downloaded from https://badssl.com/download/
-    const char *cert = R"(-----BEGIN CERTIFICATE-----
-MIIDvTCCAaWgAwIBAgIDAStkMA0GCSqGSIb3DQEBCwUAMHMxCzAJBgNVBAYTAlVT
-MRIwEAYDVQQHEwlDaGFybG90dGUxEzARBgNVBAoTCk5ldGZvdW5kcnkxEDAOBgNV
-BAsTB0FEVi1ERVYxKTAnBgNVBAMTIE5ldGZvdW5kcnksIEluYy4gSW50ZXJtZWRp
-YXRlIENBMB4XDTIwMDUxMzIzMjgzN1oXDTIxMDUxMzIzMjkzN1owMzELMAkGA1UE
-BhMCVVMxEzARBgNVBAoTCk5ldGZvdW5kcnkxDzANBgNVBAMTBmhlcm1lczB2MBAG
-ByqGSM49AgEGBSuBBAAiA2IABJc/sfsVUMHs/ZtiF2vjNw5HPhlzZeZ8XSpf9u9l
-ftKVqqHeRSIqXVCZSbTQBPctoF8EbUsfBFILOT9HIeusnu7ezf14fHRgpGTVvmtf
-KRNnqt7xakxDRYRc+1hJKWxpHKNIMEYwDgYDVR0PAQH/BAQDAgSwMBMGA1UdJQQM
-MAoGCCsGAQUFBwMCMB8GA1UdIwQYMBaAFImYt3eUD+thFvpqBz6BLYA9f7rTMA0G
-CSqGSIb3DQEBCwUAA4ICAQBVPQAZT8kO44+WP5f8Cd6qlYOgjkVPKO3dErDJxI7t
-c9Mv73+jmbZtn5ycKaaNHJodSriytsZjkPgaY7MObhyu0Kq3gW4r4I53wyNh1Wyh
-c6p5pJT6l7fW55EwXRE5j+uqLzCzADmOE8q1GxxuqvvXzkSWUwr8Y28A/mH4mKXK
-82btQpD/xC+zSzaW/sx7/IWwjaAVftmDZ+6gLLd9YEBTnNTtE8TgEsldSc03Fe7T
-fYdwwVHmZTW6rKIF7XHJGwXQ7gc0GLcMZgLxHTITKIE/BRTIpGidEdL2KazcJEWp
-zcS8WgIaL020o8les0sahVPjH+DiZHzEeIFAp1UA2whLa/jnl94Ig1YWCJ1UKZ/j
-37ulFOj8cYB2EB1VGmlb9erniT0UOrQmLPu9azMZpLNzqDjiSi2GM3k/+2TIrfCr
-es94WYU4l/riojqnnEeomEWsYr3BcFQM81hvCe0n5aRr9WVmOtbzNL4xERGTpb4D
-iOBO2wIpFD1SGE0J1cplt5i7nC7/HLeVn8QghRH8nKNLpE6xqvCeSbcp8KT8hJxY
-f0Cn2wUbAzTXRHCG54ylh8wcbGx73sLtSr4BWeIXbzMFvcU3jy9rGwf2ufgF3RTH
-FR1dqMLBfvt4R0LJr2cNPtSkXocyXylUZwUQn5otKc/fkjluv1iu4RNKo11V209h
-5w==
------END CERTIFICATE-----
-)";
-    const char *key = R"(-----BEGIN EC PRIVATE KEY-----
-MIGkAgEBBDAuXkRAMYEb9jV2N6vIVDSpKZy3Q4XRDAOeG2hEPG6oo3FRbGKQ8gLp
-Ia3wUwnMYGugBwYFK4EEACKhZANiAASXP7H7FVDB7P2bYhdr4zcORz4Zc2XmfF0q
-X/bvZX7Slaqh3kUiKl1QmUm00AT3LaBfBG1LHwRSCzk/RyHrrJ7u3s39eHx0YKRk
-1b5rXykTZ6re8WpMQ0WEXPtYSSlsaRw=
------END EC PRIVATE KEY-----
-)";
-    tls->api->set_own_cert(tls->ctx, cert, strlen(cert) + 1, key, strlen(key) + 1);
-    um_http_set_ssl(&clt, tls);
-
-    uv_run(loop, UV_RUN_DEFAULT);
-
-    CHECK(resp.code == HTTP_STATUS_OK);
-    CHECK(resp.resp_body_end_called);
-    cerr << resp.req_body << endl;
-    cerr.flush();
-
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-    uv_loop_close(loop);
-    free(loop);
-}
-
