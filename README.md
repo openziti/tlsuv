@@ -29,6 +29,11 @@ of `tls_engine` for individual connections
 - `tls_engine` is an object for handling handshake and encryption for a single connection.
 Similar in purpose to `mbedtls_ssl_ctx` or `SSL` in OpenSSL
 
+### OpenSSL use
+*UPDATE* OpenSSL is now supported _out-of-the-box_. You can enable it by adding `-DUSE_OPENSSL=on` option 
+to your CMake generation step. It requires to have OpenSSL installed on your build system as well as available at
+runtime as a shared library.
+
 ## Build
 * Dependencies (libuv, and mbedTLS) are specified as [git submodules](https://git-scm.com/book/en/v2/Git-Tools-Submodules).
 Make sure to get them with `$ git submodule update --init --recursive`
