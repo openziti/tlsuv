@@ -35,9 +35,8 @@ jobs:
     - name: test
       working-directory: ${{runner.workspace}}/build
       run: ctest -VV --no-compress-output -T Test
-    - run: ls -R ${{runner.workspace}}/build/Testing
-    - name: Publish Test Report
-      uses: scacap/action-surefire-report@v1.0.3
+    - name: upload test report
+      uses: actions/upload-artifact@v2
       with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        report_paths: ${{runner.workspace}}/build/Testing/*/*.xml
+        name: ${{ matrix.os }}-TestReport
+        path: ${{runner.workspace}}/build/Testing/*/Test.xml
