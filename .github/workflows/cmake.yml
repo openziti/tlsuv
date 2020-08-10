@@ -34,7 +34,8 @@ jobs:
       run: cmake --build ${{runner.workspace}}/build 
     - name: test
       working-directory: ${{runner.workspace}}/build
-      run: ctest -VV --no-compress-output
+      run: ctest -VV --no-compress-output -T Test
+    - run: ls -R ${{runner.workspace}}/build/Testing
     - name: Publish Test Report
       uses: scacap/action-surefire-report@v1.0.3
       with:
