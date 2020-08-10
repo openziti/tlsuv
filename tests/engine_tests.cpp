@@ -14,9 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "catch.hpp"
+
 #include <uv_mbed/tls_engine.h>
 #include <cstring>
-#include "catch.hpp"
 
 TEST_CASE("key gen", "[engine]") {
     tls_context *ctx = default_tls_context(nullptr, 0);
