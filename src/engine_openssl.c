@@ -596,7 +596,7 @@ static int gen_key(tls_private_key *key) {
     EVP_PKEY *pk = EVP_PKEY_new();
     EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
     EVP_PKEY_keygen_init(pctx);
-    EVP_PKEY_CTX_set_ec_paramgen_curve_nid(pctx, NID_secp256k1);
+    EVP_PKEY_CTX_set_ec_paramgen_curve_nid(pctx, NID_X9_62_prime256v1);
 
     if (!EVP_PKEY_keygen(pctx, &pk)) {
         uint32_t err = ERR_get_error();
