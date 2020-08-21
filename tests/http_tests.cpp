@@ -701,3 +701,31 @@ TEST_CASE("TLS verify with JWT", "[http]") {
     free(vtx.sig);
     tls->api->free_ctx(tls);
 }
+
+TEST_CASE("TLS to IP address", "[http]") {
+    uv_mbed_set_debug(7, stderr);
+    uv_loop_t *loop = uv_loop_new();
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+
+    tls_context *tls = default_tls_context(nullptr, 0);
+    um_http_init(loop, &clt, "https://1.1.1.1");
+    um_http_set_ssl(&clt, tls);
+    um_http_header(&clt, "Connection", "close");
+
+    um_http_req_t *req = um_http_req(&clt, "GET", "/dns-query?name=google.com&type=AAAA", resp_capture_cb, &resp);
+    um_http_req_header(req, "Accept", "application/dns-json");
+
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    CHECK(resp.code == 200);
+    CHECK(resp.headers["Content-Type"] == "application/dns-json");
+    CHECK_THAT(resp.body, Contains("\"Answer\":[{\"name\":\"google.com\""));
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
+
+    tls->api->free_ctx(tls);
+}
