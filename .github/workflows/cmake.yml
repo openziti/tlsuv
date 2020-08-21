@@ -34,4 +34,9 @@ jobs:
       run: cmake --build ${{runner.workspace}}/build 
     - name: test
       working-directory: ${{runner.workspace}}/build
-      run: ctest -VV --no-compress-output 
+      run: ctest -VV --no-compress-output -T Test
+    - name: upload test report
+      uses: actions/upload-artifact@v2
+      with:
+        name: ${{ matrix.os }}-TestReport
+        path: ${{runner.workspace}}/build/Testing/*/Test.xml
