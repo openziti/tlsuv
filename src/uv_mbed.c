@@ -83,12 +83,10 @@ const char* uv_mbed_version() {
 }
 
 int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls) {
-#if _WIN32
-    uv_stream_init_dup(l, (uv_stream_t*)mbed, UV_STREAM);
-#else
-    uv__stream_init(l, (uv_stream_t*)mbed, UV_STREAM);
-#endif
-    
+    memset(&mbed->_stream, 0, sizeof(uv_stream_t));
+    mbed->_stream.loop = l;
+    mbed->_stream.type = UV_STREAM;
+
     uv_tcp_init(l, &mbed->socket);
 
     mbed->tls = tls != NULL ? tls : get_default_tls();
