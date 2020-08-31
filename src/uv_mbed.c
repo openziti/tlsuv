@@ -17,8 +17,17 @@ limitations under the License.
 #include <stdlib.h>
 #include <string.h>
 #include "uv_mbed/uv_mbed.h"
-#include "uv-common.h"
+#include <uv.h>
 #include "um_debug.h"
+
+#define to_str1(s) #s
+#define to_str(s) to_str1(s)
+
+#ifdef UV_MBED_VERSION
+#define UM_VERS to_str(UV_MBED_VERSION)
+#else
+#define UM_VERS "<unknown>"
+#endif
 
 #if _WIN32
 // this function is declared INLINE in a libuv .h file. As such we have had to 
@@ -67,6 +76,10 @@ tls_context *get_default_tls() {
         DEFAULT_TLS = default_tls_context(NULL, 0);
     }
     return DEFAULT_TLS;
+}
+
+const char* uv_mbed_version() {
+    return UM_VERS;
 }
 
 int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls) {
@@ -175,9 +188,16 @@ int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb c
         }
         size_t addt_bytes = 0;
         rc = mbed->tls_engine->api->write(mbed->tls_engine->engine, NULL, 0, out + out_len, &addt_bytes, rc);
-        assert(rc == 0);
-        out_len += addt_bytes;
+        if (rc < 0) {
+            UM_LOG(ERR, "TLS write error: %s", mbed->tls_engine->api->strerror(mbed->tls_engine));
+            cb(req, rc);
+            free(out);
+            return rc;
+        } else {
+            out_len += addt_bytes;
+        }
     }
+
 
     req->cb = cb;
     return mbed_tcp_write(mbed, out, out_len, req);

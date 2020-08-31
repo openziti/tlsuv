@@ -26,6 +26,8 @@ limitations under the License.
 extern "C" {
 #endif
 
+const char* uv_mbed_version();
+
 typedef struct uv_mbed_s uv_mbed_t;
 
 void uv_mbed_set_debug(int level, FILE *output);
