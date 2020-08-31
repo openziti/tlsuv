@@ -29,32 +29,6 @@ limitations under the License.
 #define UM_VERS "<unknown>"
 #endif
 
-#if _WIN32
-// this function is declared INLINE in a libuv .h file. As such we have had to 
-// duplicate the entire function as well as include the necessary headers to 
-// support the function
-void uv_stream_init_dup(uv_loop_t* loop,
-    uv_stream_t* handle,
-    uv_handle_type type) {
-    uv__handle_init(loop, (uv_handle_t*)handle, type);
-    handle->write_queue_size = 0;
-    handle->activecnt = 0;
-    handle->stream.conn.shutdown_req = NULL;
-    handle->stream.conn.write_reqs_pending = 0;
-
-    UV_REQ_INIT(&handle->read_req, UV_READ);
-    handle->read_req.event_handle = NULL;
-    handle->read_req.wait_handle = INVALID_HANDLE_VALUE;
-    handle->read_req.data = handle;
-}
-#else
-// copy declaration of uv__stream_init() from libuv/src/unix/internal.h to avoid
-// breaking when building for iOS-arm64, where the compiler defaults to
-// '-Werror=implicit-function-declaration'
-void uv__stream_init(uv_loop_t* loop, uv_stream_t* stream, uv_handle_type type);
-#endif
-
-
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
 static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res);
 
