@@ -22,3 +22,6 @@ target_include_directories(uv_link
         PUBLIC ${uv_link_SOURCE_DIR}/include
         PRIVATE ${uv_link_SOURCE_DIR}
 )
+if(NOT HAVE_LIBUV)
+    target_include_directories(uv_link PRIVATE ${libuv_SOURCE_DIR}/include)
+endif()
