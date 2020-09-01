@@ -17,34 +17,17 @@ limitations under the License.
 #include <stdlib.h>
 #include <string.h>
 #include "uv_mbed/uv_mbed.h"
-#include "uv-common.h"
+#include <uv.h>
 #include "um_debug.h"
 
-#if _WIN32
-// this function is declared INLINE in a libuv .h file. As such we have had to 
-// duplicate the entire function as well as include the necessary headers to 
-// support the function
-void uv_stream_init_dup(uv_loop_t* loop,
-    uv_stream_t* handle,
-    uv_handle_type type) {
-    uv__handle_init(loop, (uv_handle_t*)handle, type);
-    handle->write_queue_size = 0;
-    handle->activecnt = 0;
-    handle->stream.conn.shutdown_req = NULL;
-    handle->stream.conn.write_reqs_pending = 0;
+#define to_str1(s) #s
+#define to_str(s) to_str1(s)
 
-    UV_REQ_INIT(&handle->read_req, UV_READ);
-    handle->read_req.event_handle = NULL;
-    handle->read_req.wait_handle = INVALID_HANDLE_VALUE;
-    handle->read_req.data = handle;
-}
+#ifdef UV_MBED_VERSION
+#define UM_VERS to_str(UV_MBED_VERSION)
 #else
-// copy declaration of uv__stream_init() from libuv/src/unix/internal.h to avoid
-// breaking when building for iOS-arm64, where the compiler defaults to
-// '-Werror=implicit-function-declaration'
-void uv__stream_init(uv_loop_t* loop, uv_stream_t* stream, uv_handle_type type);
+#define UM_VERS "<unknown>"
 #endif
-
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
 static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* res);
@@ -69,13 +52,15 @@ tls_context *get_default_tls() {
     return DEFAULT_TLS;
 }
 
+const char* uv_mbed_version() {
+    return UM_VERS;
+}
+
 int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls) {
-#if _WIN32
-    uv_stream_init_dup(l, (uv_stream_t*)mbed, UV_STREAM);
-#else
-    uv__stream_init(l, (uv_stream_t*)mbed, UV_STREAM);
-#endif
-    
+    memset(&mbed->_stream, 0, sizeof(uv_stream_t));
+    mbed->_stream.loop = l;
+    mbed->_stream.type = UV_STREAM;
+
     uv_tcp_init(l, &mbed->socket);
 
     mbed->tls = tls != NULL ? tls : get_default_tls();
@@ -175,9 +160,16 @@ int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb c
         }
         size_t addt_bytes = 0;
         rc = mbed->tls_engine->api->write(mbed->tls_engine->engine, NULL, 0, out + out_len, &addt_bytes, rc);
-        assert(rc == 0);
-        out_len += addt_bytes;
+        if (rc < 0) {
+            UM_LOG(ERR, "TLS write error: %s", mbed->tls_engine->api->strerror(mbed->tls_engine));
+            cb(req, rc);
+            free(out);
+            return rc;
+        } else {
+            out_len += addt_bytes;
+        }
     }
+
 
     req->cb = cb;
     return mbed_tcp_write(mbed, out, out_len, req);

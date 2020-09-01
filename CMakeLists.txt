@@ -1,15 +1,33 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.10)
 
+execute_process(
+        COMMAND git describe HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_INFO
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if(${GIT_INFO} MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)$")
+    set(ver ${GIT_INFO})
+elseif(${GIT_INFO} MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)-([0-9]+)-[^-]*")
+    string(JOIN "." ver ${CMAKE_MATCH_1} ${CMAKE_MATCH_2})
+endif()
+
 PROJECT("uv-mbed"
         LANGUAGES C
-        VERSION 0.5.0
+        VERSION ${ver}
         )
+
+message("Project: ${CMAKE_PROJECT_NAME}@v${CMAKE_PROJECT_VERSION}")
+
+include(GNUInstallDirs)
 
 #sample is off by default
 option(ENABLE_UM_SAMPLES "Build samples." OFF)
 option(ENABLE_UM_TESTS "Build tests." ON)
 
 option(USE_OPENSSL "use OpenSSL engine" OFF)
+
+option(HAVE_LIBUV "use installed system-wide libuv" OFF)
 
 if(NOT USE_OPENSSL)
     message("using mbedTLS libraries")
@@ -66,11 +84,18 @@ target_include_directories(uv_mbed
         ${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv/src
         )
 
+if(HAVE_LIBUV)
+    set(LIBUV_NAME uv)
+else()
+    set(LIBUV_NAME uv_a)
+endif()
+
 target_link_libraries(uv_mbed
         PUBLIC http-parser
-        PUBLIC uv_a
+        PUBLIC ${LIBUV_NAME}
         PUBLIC uv_link
         )
+TARGET_COMPILE_DEFINITIONS(uv_mbed PRIVATE UV_MBED_VERSION=v${CMAKE_PROJECT_VERSION})
 
 if (USE_MBEDTLS)
     target_compile_definitions(uv_mbed PRIVATE USE_MBEDTLS)
