@@ -27,10 +27,10 @@ limitations under the License.
 #define TRACE 6
 
 extern int um_log_level;
-extern void um_log(const char* fmt, ...);
+extern void um_log(const char *lvl, const char* file, unsigned int line, const char* fmt, ...);
 
 #define UM_LOG(lvl, fmt, ...) do {\
-if ((lvl) <= um_log_level) um_log(__FILE__ ":%d " #lvl " " fmt "\n", __LINE__, ##__VA_ARGS__ ); \
+if ((lvl) <= um_log_level) um_log(#lvl, __FILE__, __LINE__, fmt, ##__VA_ARGS__ ); \
 }while(0)
 
 #endif //UV_MBED_UM_DEBUG_H

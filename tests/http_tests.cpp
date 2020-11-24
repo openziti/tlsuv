@@ -23,6 +23,7 @@ limitations under the License.
 #include <cstring>
 #include <uv_mbed/uv_mbed.h>
 
+extern um_log_func test_log;
 using namespace std;
 using namespace Catch::Matchers;
 
@@ -115,7 +116,7 @@ void send_part2(uv_timer_t *t) {
 }
 
 TEST_CASE("conn failures", "[http]") {
-    uv_mbed_set_debug(7, stderr);
+    uv_mbed_set_debug(7, test_log);
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
     uv_loop_t *loop = uv_default_loop();
@@ -479,7 +480,7 @@ TEST_CASE("server_idle_close","[.]") {
 
 
 TEST_CASE("basic_test", "[http]") {
-    uv_mbed_set_debug(7, stderr);
+    uv_mbed_set_debug(7, test_log);
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp(resp_body_cb);
@@ -608,7 +609,7 @@ TEST_CASE("multiple requests", "[http]") {
 // test proper client->engine cleanup between requests
 // run in valgrind to see any leaks
 TEST_CASE("TLS reconnect", "[http]") {
-    uv_mbed_set_debug(7, stderr);
+    uv_mbed_set_debug(7, test_log);
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp(resp_body_cb);
@@ -652,6 +653,9 @@ int cert_verify(tls_cert crt, void *ctx) {
 }
 
 TEST_CASE("TLS verify with JWT", "[http]") {
+    INFO("skipping JWT test");
+    return;
+
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp(resp_body_cb);
@@ -703,7 +707,7 @@ TEST_CASE("TLS verify with JWT", "[http]") {
 }
 
 TEST_CASE("TLS to IP address", "[http]") {
-    uv_mbed_set_debug(7, stderr);
+    uv_mbed_set_debug(7, test_log);
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp(resp_body_cb);
