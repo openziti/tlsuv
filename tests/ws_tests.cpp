@@ -74,7 +74,7 @@ static void on_ws_data(uv_stream_t *s, ssize_t nread, const uv_buf_t* buf) {
 
 TEST_CASE("websocket tests", "[websocket]") {
 
-    uv_loop_t *loop = uv_default_loop();
+    uv_loop_t *loop = uv_loop_new();
     auto *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
     uv_timer_init(loop, timer);
     uv_unref((uv_handle_t *) timer);
@@ -121,5 +121,6 @@ TEST_CASE("websocket tests", "[websocket]") {
         REQUIRE(test.resp.size() == 1);
         CHECK_THAT(test.resp[0],Catch::Matches("this is a test"));
     }
-
+    uv_loop_close(loop);
+    free(loop);
 }
