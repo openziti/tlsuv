@@ -19,13 +19,20 @@ limitations under the License.
 #include <uv_mbed/uv_mbed.h>
 #include "catch.hpp"
 
+
+static void test_log_f(const char* lvl, const char *file, unsigned int line, const char* msg){
+    printf("[%7s] %s:%d\t%s\n", lvl, file, line, msg);
+}
+
+um_log_func test_log = test_log_f;
+
 int main( int argc, char* argv[] ) {
 
     const char* debug = getenv("UM_TEST_DEBUG");
     if (debug) {
         // enable logging during tests
         long level = strtol(debug, NULL, 10);
-        uv_mbed_set_debug((int)level, stdout);
+        uv_mbed_set_debug((int)level, test_log);
 
     }
     int result = Catch::Session().run( argc, argv );

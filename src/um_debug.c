@@ -16,20 +16,24 @@ limitations under the License.
 
 
 #include "um_debug.h"
+#include "uv_mbed/uv_mbed.h"
 #include <stdio.h>
 #include <stdarg.h>
 
 int um_log_level = ERR;
-static FILE *um_log_out = NULL;
+static um_log_func log_func = NULL;
 
-void um_log(const char* fmt,  ...) {
-    va_list argp;
-    va_start(argp, fmt);
-    FILE* out = um_log_out != NULL ? um_log_out : stdout;
-    vfprintf(out, fmt, argp);
+void um_log(const char *lvl, const char* file, unsigned int line, const char *fmt,  ...) {
+    static char logbuf[1024];
+    if (log_func) {
+        va_list argp;
+        va_start(argp, fmt);
+        vsnprintf(logbuf, sizeof(logbuf), fmt, argp);
+        log_func(lvl, file, line, logbuf);
+    }
 }
 
-void uv_mbed_set_debug(int level, FILE *out) {
+void uv_mbed_set_debug(int level, um_log_func log_f) {
     um_log_level = level;
-    um_log_out = out;
+    log_func = log_f;
 }

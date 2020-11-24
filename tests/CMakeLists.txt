@@ -1,3 +1,4 @@
+ENABLE_LANGUAGE(CXX)
 
 set(test_srcs
         http_tests.cpp
@@ -5,7 +6,6 @@ set(test_srcs
         engine_tests.cpp
         )
 
-ENABLE_LANGUAGE(CXX)
 
 add_executable(all_tests
         all_tests.cpp ${test_srcs})
