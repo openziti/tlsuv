@@ -17,11 +17,19 @@ limitations under the License.
 #define CATCH_CONFIG_RUNNER
 
 #include <uv_mbed/uv_mbed.h>
+#include "um_debug.h"
 #include "catch.hpp"
 
 
-static void test_log_f(const char* lvl, const char *file, unsigned int line, const char* msg){
-    printf("[%7s] %s:%d\t%s\n", lvl, file, line, msg);
+
+static const char *err_labels[] = {
+#define ERR_LABEL(e) #e,
+
+        LOG_LEVELS(ERR_LABEL)
+};
+
+static void test_log_f(int lvl, const char *file, unsigned int line, const char* msg){
+    printf("[%5s] %s:%d %s\n", err_labels[lvl], file, line, msg);
 }
 
 um_log_func test_log = test_log_f;
@@ -31,7 +39,7 @@ int main( int argc, char* argv[] ) {
     const char* debug = getenv("UM_TEST_DEBUG");
     if (debug) {
         // enable logging during tests
-        long level = strtol(debug, NULL, 10);
+        long level = strtol(debug, nullptr, 10);
         uv_mbed_set_debug((int)level, test_log);
 
     }

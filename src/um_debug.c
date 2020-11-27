@@ -23,7 +23,7 @@ limitations under the License.
 int um_log_level = ERR;
 static um_log_func log_func = NULL;
 
-void um_log(const char *lvl, const char* file, unsigned int line, const char *fmt,  ...) {
+void um_log(int lvl, const char* file, unsigned int line, const char *fmt,  ...) {
     static char logbuf[1024];
     if (log_func) {
         va_list argp;

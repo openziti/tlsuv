@@ -30,7 +30,7 @@ const char* uv_mbed_version();
 
 typedef struct uv_mbed_s uv_mbed_t;
 
-typedef void(*um_log_func)(const char *level, const char *file, unsigned int line, const char *msg);
+typedef void(*um_log_func)(int level, const char *file, unsigned int line, const char *msg);
 void uv_mbed_set_debug(int level, um_log_func output_f);
 
 int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls);
