@@ -143,8 +143,9 @@ typedef struct um_http_s {
     uv_link_t http_link;
     tls_link_t tls_link;
 
+    long connect_timeout;
     long idle_time;
-    uv_timer_t idle_timer;
+    uv_timer_t conn_timer;
 
     uv_async_t proc;
     um_http_req_t *active;
@@ -186,6 +187,18 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http
  * @return 0 or error code
  */
 int um_http_idle_keepalive(um_http_t *clt, long millis);
+
+/**
+ * \brief Set connect timeout.
+ *
+ * Sets the length of time client wait for connection to be established.
+ * Timeout of 0 will rely on system level timeout.
+ * Note: if timeout is larger than system default it has no practical effect.
+ * @param clt
+ * @param millis timeout in milliseconds, use 0 to use system level TCP timeout, default is 0
+ * @return 0 or error code
+ */
+int um_http_connect_timeout(um_http_t *clt, long millis);
 
 /**
  * @brief Set #tls_context on the client.

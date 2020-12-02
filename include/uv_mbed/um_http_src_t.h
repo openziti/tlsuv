@@ -38,6 +38,7 @@ typedef struct um_http_s um_http_t;
 typedef struct um_http_src_s um_http_src_t;
 
 typedef void (*um_http_src_connect_cb)(um_http_src_t *sl, int status, void *connect_ctx);
+typedef void (*um_http_src_cancel_t)(um_http_src_t *sl);
 typedef  int (*um_http_src_connect_t)(um_http_src_t *sl, const char *host, const char *port, um_http_src_connect_cb cb, void *connect_ctx);
 typedef void (*um_http_src_release_t)(um_http_src_t *sl);
 
@@ -47,6 +48,7 @@ typedef void (*um_http_src_release_t)(um_http_src_t *sl);
     void *connect_ctx;                      \
     um_http_src_connect_t connect;          \
     um_http_src_connect_cb connect_cb;      \
+    um_http_src_cancel_t cancel;            \
     um_http_src_release_t release;          \
 
 
