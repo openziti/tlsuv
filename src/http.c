@@ -130,7 +130,22 @@ static void fail_active_request(um_http_t *c, int code, const char *msg) {
         free(c->active);
         c->active = NULL;
     }
+
+    um_http_req_t *r;
+    while (!STAILQ_EMPTY(&c->requests)) {
+        r = STAILQ_FIRST(&c->requests);
+        STAILQ_REMOVE_HEAD(&c->requests, _next);
+        if (r->resp_cb != NULL) {
+            r->resp.code = code;
+            r->resp.status = strdup(msg);
+            r->resp_cb(&r->resp, r->data);
+            uv_unref((uv_handle_t *) &c->proc);
+        }
+        http_req_free(r);
+        free(r);
+    }
 }
+
 static void on_tls_handshake(tls_link_t *tls, int status) {
     um_http_t *clt = tls->data;
     if (status == TLS_HS_COMPLETE) {
@@ -169,11 +184,24 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
     }
 }
 
+static void link_close_cb(uv_link_t *l) {
+    um_http_t *clt = l->data;
+    if (clt) {
+        uv_async_send(&clt->proc);
+    }
+}
+
 static void src_connect_cb(um_http_src_t *src, int status, void *ctx) {
     UM_LOG(VERB, "src connected status = %d", status);
     um_http_t *clt = ctx;
     if (status == 0) {
-        make_links(clt, (uv_link_t *) src->link);
+        if (clt->connected == Connecting) {
+            uv_timer_stop(&clt->conn_timer);
+            make_links(clt, (uv_link_t *) src->link);
+        } else if (clt->connected == Disconnected) {
+            UM_LOG(WARN, "src connected after timeout: state = %d", clt->connected);
+            clt->src->cancel(clt->src);
+        }
     } 
     else {
         UM_LOG(DEBG, "failed to connect: %d(%s)", status, uv_strerror(status));
@@ -183,13 +211,12 @@ static void src_connect_cb(um_http_src_t *src, int status, void *ctx) {
     }
 }
 
-static void link_close_cb(uv_link_t *l) {
-    um_http_t *clt = l->data;
-    if (clt) {
-        uv_async_send(&clt->proc);
-    }
-}
+static void src_connect_timeout(uv_timer_t *t) {
+    um_http_t *clt = t->data;
 
+    src_connect_cb(clt->src, UV_ETIMEDOUT, clt);
+    clt->src->cancel(clt->src);
+}
 
 static void req_write_cb(uv_link_t *source, int status, void *arg) {
     UM_LOG(VERB, "request write completed: %d", status);
@@ -261,7 +288,7 @@ static void send_body(um_http_req_t *req) {
 }
 
 static void close_connection(um_http_t *c) {
-    uv_timer_stop(&c->idle_timer);
+    uv_timer_stop(&c->conn_timer);
     switch (c->connected) {
         case Connected:
             UM_LOG(VERB, "closing connection");
@@ -289,7 +316,7 @@ static void process_requests(uv_async_t *ar) {
     if (c->active == NULL) {
         if (c->connected == Connected && c->idle_time >= 0) {
             UM_LOG(VERB, "no more requests, scheduling idle(%ld) close", c->idle_time);
-            uv_timer_start(&c->idle_timer, idle_timeout, c->idle_time, 0);
+            uv_timer_start(&c->conn_timer, idle_timeout, c->idle_time, 0);
         }
         uv_unref((uv_handle_t *) &c->proc);
         return;
@@ -298,6 +325,9 @@ static void process_requests(uv_async_t *ar) {
     if (c->connected == Disconnected) {
         c->connected = Connecting;
         UM_LOG(VERB, "client not connected, starting connect sequence");
+        if (c->connect_timeout > 0) {
+            uv_timer_start(&c->conn_timer, src_connect_timeout, c->connect_timeout, 0);
+        }
         c->src->connect(c->src, c->host, c->port, src_connect_cb, c);
     }
     else if (c->connected == Connected) {
@@ -322,7 +352,7 @@ static void process_requests(uv_async_t *ar) {
 
 int um_http_close(um_http_t *clt) {
     close_connection(clt);
-    uv_close((uv_handle_t *) &clt->idle_timer, NULL);
+    uv_close((uv_handle_t *) &clt->conn_timer, NULL);
     uv_close((uv_handle_t *) &clt->proc, NULL);
 
     if (clt->src != NULL) { 
@@ -344,10 +374,11 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http
     clt->connected = Disconnected;
     clt->src = src;
 
+    clt->connect_timeout = 0;
     clt->idle_time = DEFAULT_IDLE_TIMEOUT;
-    uv_timer_init(l, &clt->idle_timer);
-    uv_unref((uv_handle_t *) &clt->idle_timer);
-    clt->idle_timer.data = clt;
+    uv_timer_init(l, &clt->conn_timer);
+    uv_unref((uv_handle_t *) &clt->conn_timer);
+    clt->conn_timer.data = clt;
 
     um_http_header(clt, "Connection", "keep-alive");
 
@@ -404,6 +435,10 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     tcp_src_init(l, &clt->default_src);
     return um_http_init_with_src(l, clt, url, (um_http_src_t *)&clt->default_src);    
 }
+int um_http_connect_timeout(um_http_t *clt, long millis) {
+    clt->connect_timeout = millis;
+    return 0;
+}
 
 int um_http_idle_keepalive(um_http_t *clt, long millis) {
     clt->idle_time = millis;
@@ -429,7 +464,7 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, u
     }
 
     STAILQ_INSERT_TAIL(&c->requests, r, _next);
-    uv_timer_stop(&c->idle_timer);
+    uv_timer_stop(&c->conn_timer);
     uv_ref((uv_handle_t *) &c->proc);
     uv_async_send(&c->proc);
 

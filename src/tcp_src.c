@@ -21,6 +21,7 @@ limitations under the License.
 // connect and release method for um_http custom source link
 static int tcp_src_connect(um_http_src_t *sl, const char *host, const char *service, um_http_src_connect_cb cb, void *ctx);
 static void tcp_src_release(um_http_src_t *sl);
+static void tcp_src_cancel(um_http_src_t *sl);
 
 int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     tl->loop = l;
@@ -28,6 +29,7 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     tl->connect = tcp_src_connect;
     tl->connect_cb = NULL;
     tl->release = tcp_src_release;
+    tl->cancel = tcp_src_cancel;
 
     return 0;
 }
@@ -69,6 +71,11 @@ static int tcp_src_connect(um_http_src_t *sl, const char* host, const char *serv
     uv_getaddrinfo(sl->loop, resolv_req, resolve_cb, host, service, NULL);
 
     return 0;
+}
+
+static void tcp_src_cancel(um_http_src_t *sl) {
+    tcp_src_t *tl = (tcp_src_t*)sl;
+    uv_close((uv_handle_t *) &tl->conn, NULL);
 }
 
 static void tcp_src_release(um_http_src_t *sl) {

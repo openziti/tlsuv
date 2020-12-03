@@ -64,6 +64,7 @@ public:
     bool resp_body_end_called{};
     bool req_body_cb_called{};
 
+    uv_timeval64_t resp_start{};
     uv_timeval64_t resp_endtime{};
 };
 
@@ -725,6 +726,40 @@ TEST_CASE("TLS to IP address", "[http]") {
     CHECK(resp.code == 200);
     CHECK(resp.headers["Content-Type"] == "application/dns-json");
     CHECK_THAT(resp.body, Contains("\"Answer\":[{\"name\":\"google.com\""));
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
+
+    tls->api->free_ctx(tls);
+}
+
+TEST_CASE("connect timeout", "[http]") {
+    uv_mbed_set_debug(7, test_log);
+    uv_loop_t *loop = uv_loop_new();
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+    resp_capture resp2(resp_body_cb);
+
+
+    uv_gettimeofday(&resp.resp_start);
+
+    tls_context *tls = default_tls_context(nullptr, 0);
+    um_http_init(loop, &clt, "https://10.1.1.1"); // not reachable
+    um_http_connect_timeout(&clt, 10); // should be short enough
+    um_http_header(&clt, "Connection", "close");
+
+    um_http_req_t *req = um_http_req(&clt, "GET", "/dns-query?name=google.com&type=AAAA", resp_capture_cb, &resp);
+    um_http_req_t *req2 = um_http_req(&clt, "GET", "/dns-query?name=yahoo.com&type=AAAA", resp_capture_cb, &resp2);
+
+    um_http_req_header(req, "Accept", "application/dns-json");
+    um_http_req_header(req2, "Accept", "application/dns-json");
+
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    CHECK(resp.code == UV_ETIMEDOUT);
+    CHECK(resp2.code == UV_ETIMEDOUT);
     um_http_close(&clt);
     uv_run(loop, UV_RUN_ONCE);
 
