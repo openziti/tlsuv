@@ -60,6 +60,7 @@ struct mbedtls_context {
     mbedtls_ssl_config config;
     mbedtls_pk_context *own_key;
     mbedtls_x509_crt *own_cert;
+    const char **alpn_protocols;
     int (*cert_verify_f)(void *cert, void *v_ctx);
     void *verify_ctx;
 };
@@ -72,6 +73,7 @@ struct mbedtls_engine {
     int error;
 };
 
+static void mbedtls_set_alpn_protocols(void *ctx, const char** protos, int len);
 static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
 static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
             const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
@@ -81,6 +83,8 @@ tls_engine *new_mbedtls_engine(void *ctx, const char *host);
 static tls_handshake_state mbedtls_hs_state(void *engine);
 static tls_handshake_state
 mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
+
+static const char* mbedtls_get_alpn(void *engine);
 
 static int mbedtls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
 
@@ -125,6 +129,7 @@ static tls_context_api mbedtls_context_api = {
         .free_ctx = mbedtls_free_ctx,
         .free_key = mbedtls_free_key,
         .free_cert = mbedtls_free_cert,
+        .set_alpn_protocols = mbedtls_set_alpn_protocols,
         .set_own_cert = mbedtls_set_own_cert,
         .set_own_cert_pkcs11 = mbedtls_set_own_cert_p11,
         .set_cert_verify = mbedtls_set_cert_verify,
@@ -140,6 +145,7 @@ static tls_context_api mbedtls_context_api = {
 static tls_engine_api mbedtls_engine_api = {
         .handshake_state = mbedtls_hs_state,
         .handshake = mbedtls_continue_hs,
+        .get_alpn = mbedtls_get_alpn,
         .close = mbedtls_close,
         .write = mbedtls_write,
         .read = mbedtls_read,
@@ -333,6 +339,15 @@ static void mbedtls_free_ctx(tls_context *ctx) {
     mbedtls_ctr_drbg_free(drbg);
     free(drbg);
 
+    if (c->alpn_protocols) {
+        const char **p = c->alpn_protocols;
+        while(*p) {
+            free((void*)*p);
+            p++;
+        }
+        free(c->alpn_protocols);
+    }
+
     if (c->own_key) {
         mbedtls_pk_free(c->own_key);
         free(c->own_key);
@@ -388,6 +403,23 @@ static void mbedtls_free_cert(tls_cert *cert) {
     mbedtls_x509_crt_free(c);
     free(c);
     *cert = NULL;
+}
+
+static void mbedtls_set_alpn_protocols(void *ctx, const char** protos, int len) {
+    struct mbedtls_context *c = ctx;
+    if (c->alpn_protocols) {
+        const char **p = c->alpn_protocols;
+        while(*p) {
+            free((char*)*p);
+            p++;
+        }
+        free(c->alpn_protocols);
+    }
+    c->alpn_protocols = calloc(len + 1, sizeof(char*));
+    for (int i = 0; i < len; i++) {
+        c->alpn_protocols[i] = strdup(protos[i]);
+    }
+    mbedtls_ssl_conf_alpn_protocols(&c->config, c->alpn_protocols);
 }
 
 static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
@@ -466,6 +498,11 @@ static tls_handshake_state mbedtls_hs_state(void *engine) {
     else {
         return TLS_HS_CONTINUE;
     }
+}
+
+static const char* mbedtls_get_alpn(void *engine) {
+    struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
+    return mbedtls_ssl_get_alpn_protocol(eng->ssl);
 }
 
 static tls_handshake_state

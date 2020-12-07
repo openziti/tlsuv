@@ -18,6 +18,13 @@ limitations under the License.
 
 #include <uv_mbed/tls_engine.h>
 #include <cstring>
+#include <uv.h>
+
+#if !defined(_WIN32)
+#define SOCKET int
+#include <netdb.h>
+#include <unistd.h>
+#endif
 
 TEST_CASE("key gen", "[engine]") {
     tls_context *ctx = default_tls_context(nullptr, 0);
@@ -141,4 +148,75 @@ fcwJ0v2IisYTCMavk0DJSj9Hd+coMSyTa7ghp8ja/0PSoQAxAA==
     free(pem);
     ctx->api->free_cert(&chain);
     ctx->api->free_ctx(ctx);
+}
+
+TEST_CASE("ALPN negotiation", "[engine]") {
+
+    const char *host = "google.com";
+    struct addrinfo *addr;
+    int rc;
+    if ((rc = getaddrinfo(host, "443", nullptr, &addr)) != 0) {
+        printf("getaddrinfo: %d(%s)\n", rc, strerror(rc));
+        return;
+    }
+
+    tls_context *tls = default_tls_context(nullptr, 0);
+    const char *protos[] = {
+            "h2",
+            "http1.1"
+    };
+    tls->api->set_alpn_protocols(tls->ctx, protos, 2);
+    tls_engine *engine = tls->api->new_engine(tls->ctx, host);
+
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+
+    struct sockaddr_in *address = reinterpret_cast<sockaddr_in *>(addr->ai_addr);
+    int addrlen = addr->ai_addrlen;
+
+    printf("sin_family = %d, %s:%d \n", address->sin_family, inet_ntoa(address->sin_addr), htons(address->sin_port));
+
+    if (connect(sock, (const struct sockaddr *) address, addrlen) != 0) {
+        perror("failed to conenct");
+    }
+
+    // do handshake
+    char ssl_in[32 * 1024];
+    char ssl_out[32 * 1024];
+    size_t in_bytes = 0;
+    size_t out_bytes = 0;
+
+    do {
+        tls_handshake_state state = engine->api->handshake(engine->engine, ssl_in, in_bytes, ssl_out, &out_bytes,
+                                                           sizeof(ssl_out));
+
+        REQUIRE(state != TLS_HS_ERROR);
+
+        if (state == TLS_HS_COMPLETE) {
+            INFO("handshake complete");
+            break;
+        }
+
+        if (out_bytes > 0) {
+            send(sock, ssl_out, out_bytes, 0);
+        }
+
+        in_bytes = recv(sock, ssl_in, sizeof(ssl_in), 0);
+    } while (true);
+
+    const char *alpn = engine->api->get_alpn(engine->engine);
+    CHECK_THAT(alpn, Catch::Matches("h2"));
+
+    rc = engine->api->close(engine->engine, ssl_out, &out_bytes, sizeof(ssl_out));
+    if (rc == 0 && out_bytes > 0)
+        send(sock, ssl_out, out_bytes, 0);
+
+#if _WIN32
+    closesocket(sock);
+#else
+    close(sock);
+#endif
+
+    freeaddrinfo(addr);
+    tls->api->free_engine(engine);
+    tls->api->free_ctx(tls);
 }
