@@ -66,6 +66,11 @@ typedef struct {
     (*handshake)(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
 
     /**
+     * Returns negotiated ALPN
+     * @param engine
+     */
+    const char* (*get_alpn)(void *engine);
+    /**
      * Genereate TSL close notify.
      * @param engine
      * @param out outbound buffer
@@ -126,6 +131,7 @@ typedef struct {
 
     void (*free_cert)(tls_cert *cert);
 
+    void (*set_alpn_protocols)(void *ctx, const char **protocols, int len);
     /**
      * (Optional): if you bring your own engine this is probably not needed.
      * This method is provided to set client/server side cert on the default TLS context.
