@@ -19,9 +19,9 @@ limitations under the License.
 #include "um_debug.h"
 
 // connect and release method for um_http custom source link
-static int tcp_src_connect(um_http_src_t *sl, const char *host, const char *service, um_http_src_connect_cb cb, void *ctx);
-static void tcp_src_release(um_http_src_t *sl);
-static void tcp_src_cancel(um_http_src_t *sl);
+static int tcp_src_connect(um_src_t *sl, const char *host, const char *service, um_src_connect_cb cb, void *ctx);
+static void tcp_src_release(um_src_t *sl);
+static void tcp_src_cancel(um_src_t *sl);
 
 int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     tl->loop = l;
@@ -42,7 +42,7 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
         uv_link_source_init((uv_link_source_t *)sl->link, (uv_stream_t *) &sl->conn);
     }
     
-    sl->connect_cb((um_http_src_t *)sl, status, sl->connect_ctx);
+    sl->connect_cb((um_src_t *)sl, status, sl->connect_ctx);
     free(req);
 }
 
@@ -57,12 +57,12 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
         uv_tcp_connect(conn_req, &sl->conn, addr->ai_addr, tcp_connect_cb);
         uv_freeaddrinfo(addr);
     } else {
-        sl->connect_cb((um_http_src_t *)sl, status, sl->connect_ctx);
+        sl->connect_cb((um_src_t *)sl, status, sl->connect_ctx);
     }
     free(req);
 }
 
-static int tcp_src_connect(um_http_src_t *sl, const char* host, const char *service, um_http_src_connect_cb cb, void *ctx) {
+static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, um_src_connect_cb cb, void *ctx) {
     uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
 
     sl->connect_cb = cb;
@@ -73,12 +73,12 @@ static int tcp_src_connect(um_http_src_t *sl, const char* host, const char *serv
     return 0;
 }
 
-static void tcp_src_cancel(um_http_src_t *sl) {
+static void tcp_src_cancel(um_src_t *sl) {
     tcp_src_t *tl = (tcp_src_t*)sl;
     uv_close((uv_handle_t *) &tl->conn, NULL);
 }
 
-static void tcp_src_release(um_http_src_t *sl) {
+static void tcp_src_release(um_src_t *sl) {
     free(sl->link);
     sl->link = NULL;
 }

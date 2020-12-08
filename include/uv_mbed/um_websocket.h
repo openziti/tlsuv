@@ -40,7 +40,7 @@ struct um_websocket_s {
 
     uv_connect_t *conn_req;
 
-    um_http_src_t *src;
+    um_src_t *src;
     tcp_src_t default_src;
 
     uv_link_t ws_link;
@@ -58,7 +58,7 @@ struct um_websocket_s {
  */
 int um_websocket_init(uv_loop_t *loop, um_websocket_t *ws);
 
-int um_websocket_init_with_src (uv_loop_t *loop, um_websocket_t *ws, um_http_src_t *src);
+int um_websocket_init_with_src (uv_loop_t *loop, um_websocket_t *ws, um_src_t *src);
 
 /**
  * @brief set #tls_context on the client.

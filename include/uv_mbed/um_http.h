@@ -137,7 +137,7 @@ typedef struct um_http_s {
     um_header_list headers;
 
     int connected;
-    um_http_src_t *src;
+    um_src_t *src;
     tcp_src_t default_src;
 
     uv_link_t http_link;
@@ -173,7 +173,7 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url);
  * 
  * @return 0 or error code
  */
-int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http_src_t *src);
+int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_t *src);
 
 /**
  * \brief Set idle timeout.

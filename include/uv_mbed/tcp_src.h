@@ -33,7 +33,7 @@ extern "C" {
  * Inherits from um_http_source_t and is used to register source link for `um_http`.
  */
 typedef struct tcp_src_s {
-    UM_HTTP_SRC_FIELDS
+    UM_SRC_FIELDS
     uv_tcp_t conn;
 } tcp_src_t;
 

@@ -191,7 +191,7 @@ static void link_close_cb(uv_link_t *l) {
     }
 }
 
-static void src_connect_cb(um_http_src_t *src, int status, void *ctx) {
+static void src_connect_cb(um_src_t *src, int status, void *ctx) {
     UM_LOG(VERB, "src connected status = %d", status);
     um_http_t *clt = ctx;
     if (status == 0) {
@@ -363,7 +363,7 @@ int um_http_close(um_http_t *clt) {
     return 0;
 }
 
-int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http_src_t *src) {
+int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_t *src) {
     STAILQ_INIT(&clt->requests);
     LIST_INIT(&clt->headers);
 
@@ -433,7 +433,7 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_http
 
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     tcp_src_init(l, &clt->default_src);
-    return um_http_init_with_src(l, clt, url, (um_http_src_t *)&clt->default_src);    
+    return um_http_init_with_src(l, clt, url, (um_src_t *)&clt->default_src);
 }
 int um_http_connect_timeout(um_http_t *clt, long millis) {
     clt->connect_timeout = millis;
