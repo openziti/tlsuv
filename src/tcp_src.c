@@ -30,7 +30,6 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     tl->connect_cb = NULL;
     tl->release = tcp_src_release;
     tl->cancel = tcp_src_cancel;
-    uv_tcp_init(tl->loop, &tl->conn);
 
     return 0;
 }
@@ -68,6 +67,7 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     sl->connect_cb = cb;
     sl->connect_ctx = ctx;
     resolv_req->data = sl;
+    uv_tcp_init(sl->loop, &((tcp_src_t *)sl)->conn);
     uv_getaddrinfo(sl->loop, resolv_req, resolve_cb, host, service, NULL);
 
     return 0;
