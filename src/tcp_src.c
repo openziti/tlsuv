@@ -53,7 +53,6 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
     if (status == 0) {
         uv_connect_t *conn_req = calloc(1, sizeof(uv_connect_t));
         conn_req->data = sl;
-        uv_tcp_init(sl->loop, &sl->conn);
         uv_tcp_connect(conn_req, &sl->conn, addr->ai_addr, tcp_connect_cb);
         uv_freeaddrinfo(addr);
     } else {
@@ -68,6 +67,7 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     sl->connect_cb = cb;
     sl->connect_ctx = ctx;
     resolv_req->data = sl;
+    uv_tcp_init(sl->loop, &((tcp_src_t *)sl)->conn);
     uv_getaddrinfo(sl->loop, resolv_req, resolve_cb, host, service, NULL);
 
     return 0;
@@ -75,7 +75,9 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
 
 static void tcp_src_cancel(um_src_t *sl) {
     tcp_src_t *tl = (tcp_src_t*)sl;
-    uv_close((uv_handle_t *) &tl->conn, NULL);
+    if (!uv_is_closing((const uv_handle_t *) &tl->conn)) {
+        uv_close((uv_handle_t *) &tl->conn, NULL);
+    }
 }
 
 static void tcp_src_release(um_src_t *sl) {
