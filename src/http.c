@@ -194,9 +194,9 @@ static void link_close_cb(uv_link_t *l) {
 static void src_connect_cb(um_src_t *src, int status, void *ctx) {
     UM_LOG(VERB, "src connected status = %d", status);
     um_http_t *clt = ctx;
+    uv_timer_stop(&clt->conn_timer);
     if (status == 0) {
         if (clt->connected == Connecting) {
-            uv_timer_stop(&clt->conn_timer);
             make_links(clt, (uv_link_t *) src->link);
         } else if (clt->connected == Disconnected) {
             UM_LOG(WARN, "src connected after timeout: state = %d", clt->connected);
