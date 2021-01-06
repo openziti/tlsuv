@@ -117,7 +117,7 @@ int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay) {
 
 int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int port, uv_connect_cb cb) {
     uv_loop_t *loop = mbed->_stream.loop;
-    uv_getaddrinfo_t *resolve_req = malloc(sizeof(uv_getaddrinfo_t));
+    uv_getaddrinfo_t *resolve_req = calloc(1, sizeof(uv_getaddrinfo_t));
     req->handle = (uv_stream_t *) mbed;
     req->cb = cb;
     mbed->conn_req = req;
@@ -128,7 +128,16 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
 
     mbed->tls_engine = mbed->tls->api->new_engine(mbed->tls->ctx, host);
 
-    return uv_getaddrinfo(loop, resolve_req, dns_resolve_cb, host, portstr, NULL);
+    UM_LOG(VERB, "resolving host = %s:%s", host, portstr);
+    int resolve_rc =  uv_getaddrinfo(loop, resolve_req, NULL, host, portstr, NULL);
+    if (resolve_rc != 0) {
+        UM_LOG(ERR, "failed to resolve host[%s]: %s", host, uv_strerror(resolve_rc));
+        cb(req, resolve_rc);
+        return resolve_rc;
+    }
+
+    dns_resolve_cb(resolve_req, 0, resolve_req->addrinfo);
+    return 0;
 }
 
 int uv_mbed_set_blocking(uv_mbed_t *um, int blocking) {
@@ -203,11 +212,17 @@ static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* r
     uv_mbed_t *mbed = req->data;
 
     uv_connect_t *cr = mbed->conn_req;
+    UM_LOG(VERB, "resolved status = %d", status);
     if (status < 0) {
+        UM_LOG(ERR, "failed to resolve host[%s]: ", req->hostname, uv_strerror(status));
         cr->cb(cr, status);
-    }
-    else {
-        uv_mbed_connect_addr(cr, mbed, res, cr->cb);
+    } else {
+        int rc = uv_mbed_connect_addr(cr, mbed, res, cr->cb);
+        if (rc != 0) {
+            char *ip = inet_ntoa(((struct sockaddr_in *)res->ai_addr)->sin_addr);
+            UM_LOG(ERR, "failed to connect to [%s]: %s", ip, uv_strerror(rc));
+            cr->cb(cr, rc);
+        }
     }
     uv_freeaddrinfo(res);
     free(req);
