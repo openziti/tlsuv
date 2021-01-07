@@ -48,16 +48,23 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
 
 static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr) {
     tcp_src_t *sl = req->data;
+    uv_connect_t *conn_req = NULL;
 
     UM_LOG(VERB, "resolved status = %d", status);
     if (status == 0) {
-        uv_connect_t *conn_req = calloc(1, sizeof(uv_connect_t));
+        conn_req = calloc(1, sizeof(uv_connect_t));
         conn_req->data = sl;
-        uv_tcp_connect(conn_req, &sl->conn, addr->ai_addr, tcp_connect_cb);
-        uv_freeaddrinfo(addr);
-    } else {
-        sl->connect_cb((um_src_t *)sl, status, sl->connect_ctx);
+        status = uv_tcp_connect(conn_req, &sl->conn, addr->ai_addr, tcp_connect_cb);
     }
+
+    if (status != 0) {
+        UM_LOG(ERR, "connect failed: %s", uv_strerror(status));
+        sl->connect_cb((um_src_t *)sl, status, sl->connect_ctx);
+        if (conn_req)
+            free(conn_req);
+    }
+
+    uv_freeaddrinfo(addr);
     free(req);
 }
 
@@ -67,10 +74,17 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     sl->connect_cb = cb;
     sl->connect_ctx = ctx;
     resolv_req->data = sl;
-    uv_tcp_init(sl->loop, &((tcp_src_t *)sl)->conn);
-    uv_getaddrinfo(sl->loop, resolv_req, resolve_cb, host, service, NULL);
+    int rc = uv_tcp_init(sl->loop, &((tcp_src_t *)sl)->conn);
+    if (rc != 0) {
+        cb(sl, rc, ctx);
+        return rc;
+    }
+    rc = uv_getaddrinfo(sl->loop, resolv_req, resolve_cb, host, service, NULL);
+    if (rc != 0) {
+        resolve_cb(resolv_req, rc, NULL);
+    }
 
-    return 0;
+    return rc;
 }
 
 static void tcp_src_cancel(um_src_t *sl) {

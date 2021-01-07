@@ -214,7 +214,7 @@ static void dns_resolve_cb(uv_getaddrinfo_t* req, int status, struct addrinfo* r
     uv_connect_t *cr = mbed->conn_req;
     UM_LOG(VERB, "resolved status = %d", status);
     if (status < 0) {
-        UM_LOG(ERR, "failed to resolve host[%s]: ", req->hostname, uv_strerror(status));
+        UM_LOG(ERR, "failed to resolve host: %s", uv_strerror(status));
         cr->cb(cr, status);
     } else {
         int rc = uv_mbed_connect_addr(cr, mbed, res, cr->cb);
