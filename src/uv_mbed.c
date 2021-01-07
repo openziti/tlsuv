@@ -132,7 +132,6 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
     int resolve_rc =  uv_getaddrinfo(loop, resolve_req, NULL, host, portstr, NULL);
     if (resolve_rc != 0) {
         UM_LOG(ERR, "failed to resolve host[%s]: %s", host, uv_strerror(resolve_rc));
-        cb(req, resolve_rc);
         return resolve_rc;
     }
 
@@ -158,7 +157,6 @@ int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb c
     size_t out_len;
     int rc = mbed->tls_engine->api->write(mbed->tls_engine->engine, buf->base, buf->len, out, &out_len, out_size);
     if (rc < 0) {
-        cb(req, rc);
         free(out);
         return rc;
     }
@@ -171,7 +169,6 @@ int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb c
         rc = mbed->tls_engine->api->write(mbed->tls_engine->engine, NULL, 0, out + out_len, &addt_bytes, rc);
         if (rc < 0) {
             UM_LOG(ERR, "TLS write error: %s", mbed->tls_engine->api->strerror(mbed->tls_engine));
-            cb(req, rc);
             free(out);
             return rc;
         } else {
