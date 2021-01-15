@@ -56,6 +56,7 @@ const char* uv_mbed_version() {
 
 int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls) {
     tcp_src_init(l, &mbed->socket);
+    uv_link_init((uv_link_t *) mbed, &mbed_methods);
     mbed->tls = tls != NULL ? tls : get_default_tls();
     mbed->tls_engine = NULL;
 
@@ -85,17 +86,21 @@ int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay) {
 
 static void on_tls_hs(tls_link_t *tls_link, int status) {
     uv_mbed_t *mbed = tls_link->data;
-    mbed->conn_req->cb(mbed->conn_req, status);
+    if (status == TLS_HS_COMPLETE) {
+        mbed->conn_req->cb(mbed->conn_req, 0);
+    } else if (status == TLS_HS_ERROR) {
+        mbed->conn_req->cb(mbed->conn_req, UV_ECONNABORTED);
+    }
+    mbed->conn_req = NULL;
 }
 static void on_src_connect(um_src_t *src, int status, void *ctx) {
     uv_mbed_t *mbed = ctx;
 
     if (status == 0) {
         if (mbed->tls_engine == NULL) {
-            mbed->tls_engine = mbed->tls->api->new_engine(mbed->tls->ctx, mbed->conn_req->data);
+            mbed->tls_engine = mbed->tls->api->new_engine(mbed->tls->ctx, mbed->host);
         }
         um_tls_init(&mbed->tls_link, mbed->tls_engine, on_tls_hs);
-        uv_link_init((uv_link_t *) mbed, &mbed_methods);
 
         mbed->tls_link.data = mbed;
         uv_link_chain(src->link, (uv_link_t *)&mbed->tls_link);
