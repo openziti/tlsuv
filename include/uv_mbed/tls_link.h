@@ -26,7 +26,6 @@ struct tls_link_s {
 
     tls_engine *engine;
     tls_handshake_cb hs_cb;
-    int state;
 };
 
 

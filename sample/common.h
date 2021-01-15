@@ -22,5 +22,5 @@ limitations under the License.
 
 void resp_cb(um_http_resp_t *resp, void *data);
 void body_cb(um_http_req_t *req, const char *body, ssize_t len);
-
+void logger(int level, const char *file, unsigned int line, const char *msg);
 #endif //UV_MBED_COMMON_H

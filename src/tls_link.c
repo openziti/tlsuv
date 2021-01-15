@@ -68,21 +68,26 @@ static void tls_write_cb(uv_link_t *source, int status, void *arg) {
 static int tls_read_start(uv_link_t *l) {
     tls_link_t *tls = (tls_link_t *) l;
 
-    if (tls->state == initial) {
-        uv_link_default_read_start(l);
-
-        uv_buf_t buf;
-        buf.base = malloc(32 * 1024);
-        tls_handshake_state st = tls->engine->api->handshake(tls->engine->engine, NULL, 0, buf.base, &buf.len,
-                                                             32 * 1024);
-        UM_LOG(VERB, "starting TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
-
-        tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
-        wr->tls_buf = buf.base;
-        return uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, wr);
-    } else {
-        return 0;
+    tls_handshake_state st = tls->engine->api->handshake_state(tls->engine->engine);
+    UM_LOG(VERB, "starting TLS handshake(st = %d)", st);
+    if (st == TLS_HS_CONTINUE) {
+        UM_LOG(DEBG, "tls_link is in the middle of handshake, resetting");
+        if (tls->engine->api->reset) {
+            tls->engine->api->reset(tls->engine->engine);
+        }
     }
+
+    uv_link_default_read_start(l);
+
+    uv_buf_t buf;
+    buf.base = malloc(32 * 1024);
+    st = tls->engine->api->handshake(tls->engine->engine, NULL, 0, buf.base, &buf.len,
+                                                         32 * 1024);
+    UM_LOG(VERB, "starting TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
+
+    tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
+    wr->tls_buf = buf.base;
+    return uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, wr);
 }
 
 static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
@@ -201,6 +206,5 @@ int um_tls_init(tls_link_t *tls, tls_engine *engine, tls_handshake_cb cb) {
     uv_link_init((uv_link_t *) tls, &tls_methods);
     tls->engine = engine;
     tls->hs_cb = cb;
-    tls->state = initial;
     return 0;
 }

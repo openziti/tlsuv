@@ -492,11 +492,10 @@ static void tls_debug_f(void *ctx, int level, const char *file, int line, const 
 
 static tls_handshake_state mbedtls_hs_state(void *engine) {
     struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
-    if (eng->ssl->state == MBEDTLS_SSL_HANDSHAKE_OVER) {
-        return TLS_HS_COMPLETE;
-    }
-    else {
-        return TLS_HS_CONTINUE;
+    switch (eng->ssl->state) {
+        case MBEDTLS_SSL_HANDSHAKE_OVER: return TLS_HS_COMPLETE;
+        case MBEDTLS_SSL_HELLO_REQUEST: return TLS_HS_BEFORE;
+        default: return TLS_HS_CONTINUE;
     }
 }
 

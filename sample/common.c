@@ -17,10 +17,19 @@ limitations under the License.
 
 #include "common.h"
 
+void logger(int level, const char *file, unsigned int line, const char *msg) {
+
+    struct timespec spec;
+    clock_gettime(CLOCK_REALTIME, &spec);
+
+    fprintf(stderr, "[%9ld.%03ld] %s:%d %s\n", spec.tv_sec, spec.tv_nsec/1000000, file, line, msg);
+}
+
 void resp_cb(um_http_resp_t *resp, void *data) {
     if (resp->code < 0) {
         fprintf(stderr, "ERROR: %d(%s)", resp->code, uv_strerror(resp->code));
-        exit(-1);
+        //exit(-1);
+        return;
     }
     um_http_hdr *h;
     printf("Response (%d) >>>\nHeaders >>>\n", resp->code);
@@ -36,7 +45,7 @@ void body_cb(um_http_req_t *req, const char *body, ssize_t len) {
     }
     else if (len < 0) {
         fprintf(stderr, "error(%zd) %s", len, uv_strerror(len));
-        exit(-1);
+        //exit(-1);
     }
     else {
         printf("%*.*s", (int) len, (int) len, body);
