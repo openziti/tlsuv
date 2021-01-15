@@ -17,6 +17,7 @@ limitations under the License.
 #include <uv.h>
 #include <stdlib.h>
 #include <uv_mbed/uv_mbed.h>
+#include "common.h"
 
 #define HOST "www.wttr.in"
 
@@ -42,7 +43,6 @@ void on_data(uv_stream_t *h, ssize_t nread, const uv_buf_t* buf) {
         fprintf(stderr, "read error %ld: %s\n", nread, uv_strerror((int) nread));
         uv_mbed_close((uv_mbed_t *) h, on_close);
     }
-
     free(buf->base);
 }
 
@@ -67,17 +67,18 @@ void on_connect(uv_connect_t *cr, int status) {
 
     uv_write_t *wr = malloc(sizeof(uv_write_t));
     char req[] = "GET / HTTP/1.1\r\n"
-                       "Accept: */*\r\n"
-                       "Connection: close\r\n"
+                 "Accept: */*\r\n"
+                 "Connection: close\r\n"
                  "Host: " HOST "\r\n"
                  "User-Agent: curl/0.5.0\r\n"
-                       "\r\n";
+                 "\r\n";
 
     uv_buf_t buf = uv_buf_init(req, sizeof(req));
     uv_mbed_write(wr, mbed, &buf, write_cb);
 }
 
 int main() {
+    uv_mbed_set_debug(5, logger);
 #if _WIN32
     //changes the output to UTF-8 so that the windows output looks correct and not all jumbly
     SetConsoleOutputCP(65001);

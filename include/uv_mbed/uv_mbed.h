@@ -19,8 +19,11 @@ limitations under the License.
 
 #include <uv.h>
 #include <stdbool.h>
+#include <uv_link_t.h>
 
+#include "tcp_src.h"
 #include "tls_engine.h"
+#include "tls_link.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,8 +44,6 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
 
 int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t *mbed, const struct addrinfo *addr, uv_connect_cb cb);
 
-int uv_mbed_set_blocking(uv_mbed_t *mbed, int blocking);
-
 int uv_mbed_read(uv_mbed_t *client, uv_alloc_cb, uv_read_cb);
 
 int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb cb);
@@ -52,13 +53,17 @@ int uv_mbed_close(uv_mbed_t *session, uv_close_cb close_cb);
 int uv_mbed_free(uv_mbed_t *session);
 
 struct uv_mbed_s {
-    uv_stream_t _stream;
-    uv_tcp_t socket;
+    UV_LINK_FIELDS
+
+    tcp_src_t socket;
+    tls_link_t tls_link;
 
     tls_context *tls;
     tls_engine *tls_engine;
 
+    char *host;
     uv_connect_t *conn_req; //a place to stash a connection request
+    uv_close_cb close_cb;
 };
 
 size_t um_base64url_decode(const char *in, char **out, size_t *out_len);

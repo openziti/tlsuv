@@ -27,6 +27,7 @@ enum tls_state {
 };
 
 static int tls_read_start(uv_link_t *l);
+static void tls_alloc(uv_link_t *l, size_t suggested, uv_buf_t *buf);
 static void tls_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
 static int tls_write(uv_link_t *link, uv_link_t *source, const uv_buf_t bufs[],
                      unsigned int nbufs, uv_stream_t *send_handle, uv_link_write_cb cb, void *arg);
@@ -36,7 +37,7 @@ static const uv_link_methods_t tls_methods = {
         .close = tls_close,
         .read_start = tls_read_start,
         .write = tls_write,
-        .alloc_cb_override = uv_link_default_alloc_cb_override,
+        .alloc_cb_override = tls_alloc,
         .read_cb_override = tls_read_cb
 };
 
@@ -46,6 +47,16 @@ typedef struct tls_link_write_s {
     void *ctx;
 
 } tls_link_write_t;
+
+void tls_alloc(uv_link_t *l, size_t suggested, uv_buf_t *buf) {
+    tls_link_t *tls_link = (tls_link_t *) l;
+    if (tls_link->engine->api->handshake_state(tls_link->engine->engine) == TLS_HS_CONTINUE) {
+        buf->base = malloc(suggested);
+        buf->len = suggested;
+    } else {
+        uv_link_propagate_alloc_cb(l, suggested, buf);
+    }
+}
 
 static void tls_write_free_cb(uv_link_t *source, int status, void *arg) {
     if (arg)
@@ -94,9 +105,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     tls_link_t *tls = (tls_link_t *) l;
 
     if (nread < 0) {
-        if (b && b->base)
-            free(b->base);
-        uv_link_propagate_read_cb(l, nread, NULL);
+        uv_link_propagate_read_cb(l, nread, b);
         return;
     }
 
@@ -131,13 +140,12 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
             tls->hs_cb(tls, st);
             uv_link_propagate_read_cb(l, UV_ECONNABORTED, NULL);
         }
+        if (b->base) free(b->base);
     }
     else if (hs_state == TLS_HS_COMPLETE) {
-        uv_buf_t read_buf;
-        uv_link_propagate_alloc_cb(l, 32 * 1024, &read_buf);
 
-        size_t readbuflen = read_buf.len;
-        read_buf.len = 0;
+        size_t read = 0;
+        size_t buf_size = b->len;
 
         size_t out_bytes;
         char *inptr = b->base;
@@ -145,10 +153,10 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         int rc;
         do {
             rc = tls->engine->api->read(tls->engine->engine, inptr, inlen,
-                    read_buf.base + read_buf.len, &out_bytes, readbuflen - read_buf.len);
+                    b->base + read, &out_bytes, buf_size - read);
 
             UM_LOG(VERB, "produced %zd application byte (rc=%d)", out_bytes, rc);
-            read_buf.len += out_bytes;
+            read += out_bytes;
             inptr = NULL;
             inlen = 0;
         } while (rc == TLS_MORE_AVAILABLE && out_bytes > 0);
@@ -160,14 +168,10 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
             uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_free_cb, buf.base);
         }
 
-        uv_link_propagate_read_cb(l, read_buf.len, &read_buf);
+        uv_link_propagate_read_cb(l, read, b);
     }
     else {
         UM_LOG(VERB, "hs_state = %d", hs_state);
-    }
-
-    if (b != NULL && b->base != NULL) {
-        free(b->base);
     }
 }
 
