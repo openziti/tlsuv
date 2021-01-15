@@ -433,11 +433,10 @@ static int tls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len
 
 static tls_handshake_state tls_hs_state(void *engine) {
     struct openssl_engine *eng = (struct openssl_engine *) engine;
-    if (SSL_get_state(eng->ssl) == TLS_ST_OK) {
-        return TLS_HS_COMPLETE;
-    }
-    else {
-        return TLS_HS_CONTINUE;
+    switch (SSL_get_state(eng->ssl)) {
+        case TLS_ST_OK: return TLS_HS_COMPLETE;
+        case TLS_ST_BEFORE: return TLS_HS_BEFORE;
+        default: return TLS_HS_CONTINUE;
     }
 }
 

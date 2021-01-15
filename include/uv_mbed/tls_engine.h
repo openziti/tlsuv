@@ -29,6 +29,7 @@ extern "C" {
 #endif
 
 typedef enum tls_handshake_st {
+    TLS_HS_BEFORE,
     TLS_HS_CONTINUE,
     TLS_HS_COMPLETE,
     TLS_HS_ERROR
