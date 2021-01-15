@@ -20,7 +20,7 @@ limitations under the License.
 #include "common.h"
 
 int main(int argc, char **argv) {
-    uv_mbed_set_debug(5, stdout);
+    uv_mbed_set_debug(5, logger);
     uv_loop_t *loop = uv_default_loop();
 
     um_http_t clt;

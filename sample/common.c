@@ -17,6 +17,10 @@ limitations under the License.
 
 #include "common.h"
 
+void logger(int level, const char *file, unsigned int line, const char *msg) {
+    fprintf(stderr, "%s:%d %s\n", file, line, msg);
+}
+
 void resp_cb(um_http_resp_t *resp, void *data) {
     if (resp->code < 0) {
         fprintf(stderr, "ERROR: %d(%s)", resp->code, uv_strerror(resp->code));
