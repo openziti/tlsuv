@@ -35,7 +35,7 @@ extern "C" {
 typedef struct tcp_src_s {
     UM_SRC_FIELDS
     uv_tcp_t conn;
-    int keepalive;
+    unsigned int keepalive;
     int nodelay:1;
 } tcp_src_t;
 
@@ -49,7 +49,7 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl);
 
 int tcp_src_nodelay(tcp_src_t *ts, int val);
 
-int tcp_src_keepalive(tcp_src_t *ts, int val);
+int tcp_src_keepalive(tcp_src_t *ts, int on, unsigned int val);
 
 #ifdef __cplusplus
 }

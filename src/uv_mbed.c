@@ -77,11 +77,11 @@ int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
 }
 
 int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, unsigned int delay) {
-    return uv_tcp_keepalive(&mbed->socket.conn, keepalive, delay);
+    return tcp_src_keepalive(&mbed->socket, keepalive, delay);
 }
 
 int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay) {
-    return uv_tcp_nodelay(&mbed->socket.conn, nodelay);
+    return tcp_src_nodelay(&mbed->socket, nodelay);
 }
 
 static void on_tls_hs(tls_link_t *tls_link, int status) {

@@ -38,9 +38,9 @@ int tcp_src_nodelay(tcp_src_t *ts, int val) {
     return uv_tcp_nodelay(&ts->conn, val);
 }
 
-int tcp_src_keepalive(tcp_src_t *ts, int val) {
-    ts->keepalive = val;
-    return uv_tcp_keepalive(&ts->conn, val > 0, val);
+int tcp_src_keepalive(tcp_src_t *ts, int on, unsigned int val) {
+    ts->keepalive = on ? val : 0;
+    return uv_tcp_keepalive(&ts->conn, on, val);
 }
 
 static void tcp_connect_cb(uv_connect_t *req, int status) {
