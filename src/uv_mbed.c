@@ -108,6 +108,7 @@ static void on_src_connect(um_src_t *src, int status, void *ctx) {
         uv_link_read_start((uv_link_t *) mbed);
     } else {
         UM_LOG(WARN, "failed to connect");
+        mbed->conn_req->cb(mbed->conn_req, status);
     }
 }
 int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int port, uv_connect_cb cb) {
@@ -126,7 +127,7 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
 int uv_mbed_read(uv_mbed_t *mbed, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
     mbed->alloc_cb = (uv_link_alloc_cb) alloc_cb;
     mbed->read_cb = (uv_link_read_cb) read_cb;
-    uv_link_read_start((uv_link_t *) mbed);
+    // uv_link_read_start((uv_link_t *) mbed);
     return 0;
 }
 
