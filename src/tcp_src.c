@@ -69,10 +69,14 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
 
 static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, um_src_connect_cb cb, void *ctx) {
     uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
+    tcp_src_t *tcp = (tcp_src_t *) sl;
 
     sl->connect_cb = cb;
     sl->connect_ctx = ctx;
     resolv_req->data = sl;
+    if (uv_is_closing((const uv_handle_t *) &tcp->conn)) {
+        uv_tcp_init(sl->loop, &tcp->conn);
+    }
     int rc = uv_getaddrinfo(sl->loop, resolv_req, resolve_cb, host, service, NULL);
     if (rc != 0) {
         resolve_cb(resolv_req, rc, NULL);
