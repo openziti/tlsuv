@@ -33,6 +33,16 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     return uv_tcp_init(l, &tl->conn);
 }
 
+int tcp_src_nodelay(tcp_src_t *ts, int val) {
+    ts->nodelay = val;
+    return uv_tcp_nodelay(&ts->conn, val);
+}
+
+int tcp_src_keepalive(tcp_src_t *ts, int val) {
+    ts->keepalive = val;
+    return uv_tcp_keepalive(&ts->conn, val > 0, val);
+}
+
 static void tcp_connect_cb(uv_connect_t *req, int status) {
     tcp_src_t *sl = req->data;
 
@@ -80,6 +90,8 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
             cb(sl, rc, ctx);
             return rc;
         }
+        uv_tcp_nodelay(&tcp->conn, tcp->nodelay);
+        uv_tcp_keepalive(&tcp->conn, tcp->keepalive > 0, tcp->keepalive);
     }
 
     uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
