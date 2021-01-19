@@ -105,12 +105,20 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     tls_link_t *tls = (tls_link_t *) l;
 
     int tls_rc = 0;
+    tls_handshake_state hs_state = tls->engine->api->handshake_state(tls->engine->engine);
+
     if (nread < 0) {
-        uv_link_propagate_read_cb(l, nread, b);
+        UM_LOG(ERR, "TLS read %d(%s)", nread, uv_strerror(nread));
+        if (hs_state == TLS_HS_CONTINUE) {
+            tls->engine->api->reset(tls->engine->engine);
+            tls->hs_cb(tls, TLS_HS_ERROR);
+            free(b->base);
+        } else {
+            uv_link_propagate_read_cb(l, nread, b);
+        }
         return;
     }
 
-    tls_handshake_state hs_state = tls->engine->api->handshake_state(tls->engine->engine);
     if (hs_state == TLS_HS_CONTINUE) {
         UM_LOG(VERB, "continuing TLS handshake(%zd bytes received)", nread);
         uv_buf_t buf;
