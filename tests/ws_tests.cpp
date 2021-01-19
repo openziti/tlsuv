@@ -33,7 +33,7 @@ public:
     {}
 
     um_websocket_t *ws;
-    int conn_status = 0;
+    int conn_status = -1;
     vector<string> resp;
 };
 
@@ -55,7 +55,7 @@ static void on_connect(uv_connect_t *req, int status) {
         req.data = t;
         const char* msg = "this is a test";
         uv_buf_t b = uv_buf_init((char*)msg, strlen(msg));
-        um_websocket_write(&req, ws, &b, on_ws_write);
+        CHECK(um_websocket_write(&req, ws, &b, on_ws_write) == 0);
     } else {
         um_websocket_close(ws, on_close_cb);
     }
@@ -83,6 +83,19 @@ TEST_CASE("websocket tests", "[websocket]") {
     um_websocket_t clt;
     websocket_test test;
 
+    WHEN("invalid URL") {
+        um_websocket_init(loop, &clt);
+        test.ws = &clt;
+        clt.data = &test;
+
+        uv_connect_t r;
+        r.data = &test;
+        int rc = um_websocket_connect(&r, &clt, "not a real URL", on_connect, on_ws_data);
+        uv_run(loop, UV_RUN_DEFAULT);
+        CHECK(test.conn_status == 0);
+        CHECK(rc == UV_EINVAL);
+    }
+
     WHEN("resolve failure ") {
         um_websocket_init(loop, &clt);
         test.ws = &clt;
@@ -90,9 +103,9 @@ TEST_CASE("websocket tests", "[websocket]") {
 
         uv_connect_t r;
         r.data = &test;
-        um_websocket_connect(&r, &clt, "ws://not.a.real.host", on_connect, on_ws_data);
+        int rc = um_websocket_connect(&r, &clt, "ws://not.a.real.host", on_connect, on_ws_data);
         uv_run(loop, UV_RUN_DEFAULT);
-        REQUIRE(test.conn_status == UV_EAI_NONAME);
+        CHECK((rc == UV_EAI_NONAME || test.conn_status == UV_EAI_NONAME));
     }
 
     WHEN("ws echo test") {
@@ -102,9 +115,10 @@ TEST_CASE("websocket tests", "[websocket]") {
 
         uv_connect_t r;
         r.data = &test;
-        um_websocket_connect(&r, &clt, "ws://echo.websocket.org", on_connect, on_ws_data);
+        int rc = um_websocket_connect(&r, &clt, "ws://echo.websocket.org", on_connect, on_ws_data);
         uv_run(loop, UV_RUN_DEFAULT);
-        REQUIRE(test.conn_status == 0);
+        CHECK(rc == 0);
+        CHECK(test.conn_status == 0);
         REQUIRE(test.resp.size() == 1);
         CHECK_THAT(test.resp[0],Catch::Matches("this is a test"));
     }
@@ -116,9 +130,10 @@ TEST_CASE("websocket tests", "[websocket]") {
 
         uv_connect_t r;
         r.data = &test;
-        um_websocket_connect(&r, &clt, "wss://echo.websocket.org", on_connect, on_ws_data);
+        int rc = um_websocket_connect(&r, &clt, "wss://echo.websocket.org", on_connect, on_ws_data);
         uv_run(loop, UV_RUN_DEFAULT);
-        REQUIRE(test.conn_status == 0);
+        CHECK(rc == 0);
+        CHECK(test.conn_status == 0);
         REQUIRE(test.resp.size() == 1);
         CHECK_THAT(test.resp[0],Catch::Matches("this is a test"));
     }
