@@ -236,9 +236,7 @@ int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_wr
     ws_wreq->nbufs = 1;
     ws_wreq->cb = cb;
 
-    uv_link_write(&ws->ws_link, &bufs, 1, NULL, ws_write_cb, ws_wreq);
-
-    return 0;
+    return uv_link_write(&ws->ws_link, &bufs, 1, NULL, ws_write_cb, ws_wreq);
 }
 
 
