@@ -50,11 +50,19 @@ typedef struct tls_link_write_s {
 
 void tls_alloc(uv_link_t *l, size_t suggested, uv_buf_t *buf) {
     tls_link_t *tls_link = (tls_link_t *) l;
-    if (tls_link->engine->api->handshake_state(tls_link->engine->engine) == TLS_HS_CONTINUE) {
-        buf->base = malloc(suggested);
-        buf->len = suggested;
-    } else {
-        uv_link_propagate_alloc_cb(l, suggested, buf);
+    tls_handshake_state st = tls_link->engine->api->handshake_state(tls_link->engine->engine);
+    switch (st) {
+        case TLS_HS_BEFORE:
+        case TLS_HS_CONTINUE:
+            buf->base = malloc(suggested);
+            buf->len = suggested;
+            break;
+        case TLS_HS_COMPLETE:
+            uv_link_propagate_alloc_cb(l, suggested, buf);
+            break;
+        default:
+            UM_LOG(ERR, "TLS(%p) in bad state", tls_link);
+            break;
     }
 }
 
@@ -104,8 +112,8 @@ static int tls_read_start(uv_link_t *l) {
 static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     tls_link_t *tls = (tls_link_t *) l;
 
-    int tls_rc = 0;
     tls_handshake_state hs_state = tls->engine->api->handshake_state(tls->engine->engine);
+    UM_LOG(TRACE, "TLS(%p)[%d]: %zd", tls, hs_state, nread);
 
     if (nread < 0) {
         UM_LOG(ERR, "TLS read %d(%s)", nread, uv_strerror(nread));
@@ -120,7 +128,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     }
 
     if (hs_state == TLS_HS_CONTINUE) {
-        UM_LOG(VERB, "continuing TLS handshake(%zd bytes received)", nread);
+        UM_LOG(VERB, "TLS(%p) continuing handshake(%zd bytes received)", tls, nread);
         uv_buf_t buf;
         buf.base = malloc(32 * 1024);
         tls_handshake_state st =
@@ -141,7 +149,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         }
 
         if (st == TLS_HS_COMPLETE) {
-            UM_LOG(VERB, "handshake completed");
+            UM_LOG(VERB, "TLS(%p) handshake completed", tls);
             tls->hs_cb(tls, TLS_HS_COMPLETE);
         }
         else if (st == TLS_HS_ERROR) {
@@ -149,13 +157,13 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
             if (tls->engine->api->strerror) {
                 err = tls->engine->api->strerror(tls->engine->engine);
             }
-            UM_LOG(ERR, "TLS handshake error %s", err);
+            UM_LOG(ERR, "TLS(%p) handshake error %s", tls, err);
             tls->hs_cb(tls, st);
             uv_link_propagate_read_cb(l, UV_ECONNABORTED, NULL);
         }
         if (b->base) free(b->base);
-    }
-    else if (hs_state == TLS_HS_COMPLETE) {
+    } else if (hs_state == TLS_HS_COMPLETE) {
+        UM_LOG(VERB, "TLS(%p) processing %zd bytes", nread);
 
         size_t read = 0;
         size_t buf_size = b->len;
