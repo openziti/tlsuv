@@ -134,13 +134,13 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         tls_handshake_state st =
                 tls->engine->api->handshake(tls->engine->engine, b->base, nread, buf.base, &buf.len, 32 * 1024);
 
-        UM_LOG(VERB, "continuing TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
+        UM_LOG(VERB, "TLS(%p) continuing handshake(sending %zd bytes, st = %d)", tls, buf.len, st);
         if (buf.len > 0) {
             tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
             wr->tls_buf = buf.base;
             int rc = uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, wr);
             if (rc != 0) {
-                UM_LOG(WARN, "failed to write during handshake %d(%s)", rc, uv_strerror(rc));
+                UM_LOG(WARN, "TLS(%p) failed to write during handshake %d(%s)", tls, rc, uv_strerror(rc));
                 tls_write_cb(l->parent, rc, wr);
             }
         }
@@ -176,7 +176,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
             rc = tls->engine->api->read(tls->engine->engine, inptr, inlen,
                     b->base + read, &out_bytes, buf_size - read);
 
-            UM_LOG(VERB, "produced %zd application byte (rc=%d)", out_bytes, rc);
+            UM_LOG(VERB, "TLS(%p) produced %zd application byte (rc=%d)", tls, out_bytes, rc);
             read += out_bytes;
             inptr = NULL;
             inlen = 0;
@@ -203,7 +203,7 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
     buf.base = malloc(32 * 1024);
     int tls_rc = tls->engine->api->write(tls->engine->engine, bufs[0].base, bufs[0].len, buf.base, &buf.len, 32 * 1024);
     if (tls_rc < 0) {
-        UM_LOG(ERR, "TLS engine failed to wrap: %d(%s)", tls_rc, tls->engine->api->strerror(tls->engine->engine));
+        UM_LOG(ERR, "TLS(%p) engine failed to wrap: %d(%s)", tls, tls_rc, tls->engine->api->strerror(tls->engine->engine));
         free(buf.base);
         return tls_rc;
     }
