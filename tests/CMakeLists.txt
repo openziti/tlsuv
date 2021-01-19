@@ -4,7 +4,7 @@ set(test_srcs
         http_tests.cpp
         ws_tests.cpp
         engine_tests.cpp
-        )
+        uv_mbed_tests.cpp)
 
 
 add_executable(all_tests

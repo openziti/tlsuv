@@ -87,22 +87,16 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
         rc = uv_tcp_init(sl->loop, &tcp->conn);
         if (rc != 0) {
             UM_LOG(ERR, "failed to reinit tcp_src: %d(%s)", rc, uv_strerror(rc));
-            cb(sl, rc, ctx);
             return rc;
         }
         uv_tcp_nodelay(&tcp->conn, tcp->nodelay);
         uv_tcp_keepalive(&tcp->conn, tcp->keepalive > 0, tcp->keepalive);
     }
 
-    uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
+    uv_getaddrinfo_t *resolv_req = calloc(1, sizeof(uv_getaddrinfo_t));
     resolv_req->data = sl;
 
-    rc = uv_getaddrinfo(sl->loop, resolv_req, resolve_cb, host, service, NULL);
-    if (rc != 0) {
-        resolve_cb(resolv_req, rc, NULL);
-    }
-
-    return rc;
+    return uv_getaddrinfo(sl->loop, resolv_req, resolve_cb, host, service, NULL);
 }
 
 static void tcp_src_cancel(um_src_t *sl) {

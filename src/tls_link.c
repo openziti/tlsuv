@@ -104,6 +104,7 @@ static int tls_read_start(uv_link_t *l) {
 static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     tls_link_t *tls = (tls_link_t *) l;
 
+    int tls_rc = 0;
     if (nread < 0) {
         uv_link_propagate_read_cb(l, nread, b);
         return;
@@ -121,7 +122,11 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         if (buf.len > 0) {
             tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
             wr->tls_buf = buf.base;
-            uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, wr);
+            int rc = uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, wr);
+            if (rc != 0) {
+                UM_LOG(WARN, "failed to write during handshake %d(%s)", rc, uv_strerror(rc));
+                tls_write_cb(l->parent, rc, wr);
+            }
         }
         else {
             free(buf.base);
@@ -183,7 +188,6 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
     int tls_rc = tls->engine->api->write(tls->engine->engine, bufs[0].base, bufs[0].len, buf.base, &buf.len, 32 * 1024);
     if (tls_rc < 0) {
         UM_LOG(ERR, "TLS engine failed to wrap: %d(%s)", tls_rc, tls->engine->api->strerror(tls->engine->engine));
-        cb(source, tls_rc, arg);
         free(buf.base);
         return tls_rc;
     }
@@ -192,9 +196,7 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
     wr->tls_buf = buf.base;
     wr->cb = cb;
     wr->ctx = arg;
-    int rc = uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, wr);
-
-    return rc;
+    return uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, wr);
 }
 
 static void tls_close(uv_link_t *l, uv_link_t *source, uv_link_close_cb close_cb) {

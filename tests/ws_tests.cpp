@@ -18,6 +18,7 @@ limitations under the License.
 #include <uv_mbed/um_http.h>
 #include <uv_mbed/um_websocket.h>
 #include <cstring>
+#include <uv_mbed/uv_mbed.h>
 #include "catch.hpp"
 
 static void test_timeout(uv_timer_t *t) {

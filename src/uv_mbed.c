@@ -109,6 +109,7 @@ static void on_src_connect(um_src_t *src, int status, void *ctx) {
     } else {
         UM_LOG(WARN, "failed to connect");
         mbed->conn_req->cb(mbed->conn_req, status);
+        mbed->conn_req = NULL;
     }
 }
 int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int port, uv_connect_cb cb) {
