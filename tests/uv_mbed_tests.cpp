@@ -29,28 +29,31 @@ TEST_CASE("uv-mbed connect fail", "[uv-mbed]") {
     int conn_cb_called = 0;
     cr.data = &conn_cb_called;
 
-    uv_connect_cb cb = [](uv_connect_t *r, int status) -> void {
+    auto cb = [](uv_connect_t *r, int status) {
         int *countp = (int*)r->data;
         *countp = *countp + 1;
         printf("conn cb called status = %d(%s)\n", status, status != 0 ? uv_strerror(status) : "");
     };
     int rc = 0;
+
+    auto cleanup = [=, &mbed]() {
+        uv_mbed_free(&mbed);
+        uv_loop_close(l);
+        uv_run(l, UV_RUN_DEFAULT);
+        free(l);
+        tls->api->free_ctx(tls);
+    };
+
     WHEN("connect fail") {
         rc = uv_mbed_connect(&cr, &mbed, "127.0.0.1", 62443, cb);
+        uv_run(l, UV_RUN_DEFAULT);
+        CHECK(((rc == 0 && conn_cb_called == 1) || (rc != 0 && conn_cb_called == 0)));
+        cleanup();
     }
     WHEN("resolve fail") {
         rc = uv_mbed_connect(&cr, &mbed, "foo.bar.baz", 443, cb);
+        uv_run(l, UV_RUN_DEFAULT);
+        CHECK(((rc == 0 && conn_cb_called == 1) || (rc != 0 && conn_cb_called == 0)));
+        cleanup();
     }
-
-    printf ("conn rc = %d(%s)\n", rc, rc ? uv_strerror(rc) : "");
-    uv_run(l, UV_RUN_DEFAULT);
-
-    CHECK( ((rc == 0 && conn_cb_called == 1) || (rc != 0 && conn_cb_called == 0)) );
-    uv_mbed_free(&mbed);
-    uv_loop_close(l);
-    uv_run(l, UV_RUN_DEFAULT);
-
-    free(l);
-
-    tls->api->free_ctx(tls);
 }
