@@ -88,9 +88,9 @@ static int tls_read_start(uv_link_t *l) {
     tls_link_t *tls = (tls_link_t *) l;
 
     tls_handshake_state st = tls->engine->api->handshake_state(tls->engine->engine);
-    UM_LOG(VERB, "starting TLS handshake(st = %d)", st);
+    UM_LOG(VERB, "TLS(%p) starting handshake(st = %d)", tls, st);
     if (st == TLS_HS_CONTINUE) {
-        UM_LOG(DEBG, "tls_link is in the middle of handshake, resetting");
+        UM_LOG(DEBG, "TLS(%p) is in the middle of handshake, resetting", tls);
         if (tls->engine->api->reset) {
             tls->engine->api->reset(tls->engine->engine);
         }
@@ -102,7 +102,7 @@ static int tls_read_start(uv_link_t *l) {
     buf.base = malloc(32 * 1024);
     st = tls->engine->api->handshake(tls->engine->engine, NULL, 0, buf.base, &buf.len,
                                                          32 * 1024);
-    UM_LOG(VERB, "starting TLS handshake(sending %zd bytes, st = %d)", buf.len, st);
+    UM_LOG(VERB, "TLS(%p) starting handshake(sending %zd bytes, st = %d)", tls, buf.len, st);
 
     tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
     wr->tls_buf = buf.base;
@@ -163,7 +163,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         }
         if (b->base) free(b->base);
     } else if (hs_state == TLS_HS_COMPLETE) {
-        UM_LOG(VERB, "TLS(%p) processing %zd bytes", nread);
+        UM_LOG(VERB, "TLS(%p) processing %zd bytes", tls, nread);
 
         size_t read = 0;
         size_t buf_size = b->len;
