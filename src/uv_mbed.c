@@ -65,8 +65,6 @@ int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls) {
 
 static void on_mbed_close(uv_link_t *l) {
     uv_mbed_t *mbed = (uv_mbed_t *) l;
-    mbed->tls->api->free_engine(mbed->tls_engine);
-    mbed->tls_engine = NULL;
     if(mbed->close_cb) mbed->close_cb((uv_handle_t *) mbed);
 }
 
