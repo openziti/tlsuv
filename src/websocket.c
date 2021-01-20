@@ -113,7 +113,8 @@ int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url,
 
     struct http_parser_url _url;
     if (http_parser_parse_url(url, strlen(url), false, &_url) !=0) {
-        return UV_EADDRNOTAVAIL;
+        UM_LOG(ERR, "invalid websocket URL: %s", url);
+        return UV_EINVAL;
     }
 
     bool ssl = false;
@@ -182,9 +183,7 @@ int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url,
 
     ws->host = host;
     ws->read_cb = read_cb;
-    ws->src->connect(ws->src, host, portstr, src_connect_cb, req);
-
-    return 0;
+    return ws->src->connect(ws->src, host, portstr, src_connect_cb, req);
 }
 
 int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_write_cb cb) {
@@ -237,9 +236,7 @@ int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_wr
     ws_wreq->nbufs = 1;
     ws_wreq->cb = cb;
 
-    uv_link_write(&ws->ws_link, &bufs, 1, NULL, ws_write_cb, ws_wreq);
-
-    return 0;
+    return uv_link_write(&ws->ws_link, &bufs, 1, NULL, ws_write_cb, ws_wreq);
 }
 
 

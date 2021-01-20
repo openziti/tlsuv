@@ -30,8 +30,17 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     tl->connect_cb = NULL;
     tl->release = tcp_src_release;
     tl->cancel = tcp_src_cancel;
+    return uv_tcp_init(l, &tl->conn);
+}
 
-    return 0;
+int tcp_src_nodelay(tcp_src_t *ts, int val) {
+    ts->nodelay = val;
+    return uv_tcp_nodelay(&ts->conn, val);
+}
+
+int tcp_src_keepalive(tcp_src_t *ts, int on, unsigned int val) {
+    ts->keepalive = on ? val : 0;
+    return uv_tcp_keepalive(&ts->conn, on, val);
 }
 
 static void tcp_connect_cb(uv_connect_t *req, int status) {
@@ -69,22 +78,25 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
 }
 
 static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, um_src_connect_cb cb, void *ctx) {
-    uv_getaddrinfo_t *resolv_req = malloc(sizeof(uv_getaddrinfo_t));
+    tcp_src_t *tcp = (tcp_src_t *) sl;
 
     sl->connect_cb = cb;
     sl->connect_ctx = ctx;
-    resolv_req->data = sl;
-    int rc = uv_tcp_init(sl->loop, &((tcp_src_t *)sl)->conn);
-    if (rc != 0) {
-        cb(sl, rc, ctx);
-        return rc;
-    }
-    rc = uv_getaddrinfo(sl->loop, resolv_req, resolve_cb, host, service, NULL);
-    if (rc != 0) {
-        resolve_cb(resolv_req, rc, NULL);
+    int rc;
+    if (uv_is_closing((const uv_handle_t *) &tcp->conn)) {
+        rc = uv_tcp_init(sl->loop, &tcp->conn);
+        if (rc != 0) {
+            UM_LOG(ERR, "failed to reinit tcp_src: %d(%s)", rc, uv_strerror(rc));
+            return rc;
+        }
+        uv_tcp_nodelay(&tcp->conn, tcp->nodelay);
+        uv_tcp_keepalive(&tcp->conn, tcp->keepalive > 0, tcp->keepalive);
     }
 
-    return rc;
+    uv_getaddrinfo_t *resolv_req = calloc(1, sizeof(uv_getaddrinfo_t));
+    resolv_req->data = sl;
+
+    return uv_getaddrinfo(sl->loop, resolv_req, resolve_cb, host, service, NULL);
 }
 
 static void tcp_src_cancel(um_src_t *sl) {

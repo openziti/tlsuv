@@ -328,7 +328,10 @@ static void process_requests(uv_async_t *ar) {
         if (c->connect_timeout > 0) {
             uv_timer_start(&c->conn_timer, src_connect_timeout, c->connect_timeout, 0);
         }
-        c->src->connect(c->src, c->host, c->port, src_connect_cb, c);
+        int rc = c->src->connect(c->src, c->host, c->port, src_connect_cb, c);
+        if (rc != 0) {
+            src_connect_cb(c->src, rc, c);
+        }
     }
     else if (c->connected == Connected) {
         UM_LOG(VERB, "client connected, processing request[%s] state[%d]", c->active->path, c->active->state);
