@@ -48,7 +48,9 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
 
     UM_LOG(VERB, "connected status = %d", status);
     if (status == 0) {
-        uv_link_source_init((uv_link_source_t *)sl->link, (uv_stream_t *) &sl->conn);
+        uv_link_source_init((uv_link_source_t *) sl->link, (uv_stream_t *) &sl->conn);
+        uv_tcp_nodelay(&sl->conn, sl->nodelay);
+        uv_tcp_keepalive(&sl->conn, sl->keepalive > 0, sl->keepalive);
     }
     
     sl->connect_cb((um_src_t *)sl, status, sl->connect_ctx);
@@ -89,8 +91,6 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
             UM_LOG(ERR, "failed to reinit tcp_src: %d(%s)", rc, uv_strerror(rc));
             return rc;
         }
-        uv_tcp_nodelay(&tcp->conn, tcp->nodelay);
-        uv_tcp_keepalive(&tcp->conn, tcp->keepalive > 0, tcp->keepalive);
     }
 
     uv_getaddrinfo_t *resolv_req = calloc(1, sizeof(uv_getaddrinfo_t));

@@ -70,7 +70,7 @@ static void on_mbed_close(uv_link_t *l) {
 
 int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
     mbed->close_cb = close_cb;
-    uv_link_close((uv_link_t *) mbed, on_mbed_close);
+    uv_link_propagate_close((uv_link_t *) mbed, (uv_link_t *) mbed, on_mbed_close);
     return 0;
 }
 
@@ -106,6 +106,7 @@ static void on_src_connect(um_src_t *src, int status, void *ctx) {
         uv_link_read_start((uv_link_t *) mbed);
     } else {
         UM_LOG(WARN, "failed to connect");
+        src->cancel(src);
         mbed->conn_req->cb(mbed->conn_req, status);
         mbed->conn_req = NULL;
     }
