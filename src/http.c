@@ -354,6 +354,7 @@ static void process_requests(uv_async_t *ar) {
 }
 
 int um_http_close(um_http_t *clt) {
+    fail_active_request(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
     close_connection(clt);
     uv_close((uv_handle_t *) &clt->conn_timer, NULL);
     uv_close((uv_handle_t *) &clt->proc, NULL);
