@@ -120,7 +120,6 @@ static void on_src_connect(um_src_t *src, int status, void *ctx) {
         uv_link_read_start((uv_link_t *) mbed);
     } else {
         UM_LOG(WARN, "failed to connect");
-        //src->cancel(src);
         mbed->conn_req->cb(mbed->conn_req, status);
         mbed->conn_req = NULL;
     }
