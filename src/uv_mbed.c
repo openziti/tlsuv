@@ -59,6 +59,9 @@ int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls) {
     uv_link_init((uv_link_t *) mbed, &mbed_methods);
     mbed->tls = tls != NULL ? tls : get_default_tls();
     mbed->tls_engine = NULL;
+    mbed->host = NULL;
+    mbed->conn_req = NULL;
+    mbed->close_cb = NULL;
 
     return 0;
 }
@@ -74,9 +77,13 @@ static void on_mbed_close(uv_link_t *l) {
 }
 
 int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
-    UM_LOG(ERR, "closing %p", mbed);
     mbed->close_cb = close_cb;
-    uv_link_propagate_close((uv_link_t *) mbed, (uv_link_t *) mbed, on_mbed_close);
+    if (mbed->parent)
+        uv_link_propagate_close((uv_link_t *) mbed, (uv_link_t *) mbed, on_mbed_close);
+    else {
+        mbed->socket.cancel((um_src_t *) &mbed->socket);
+        on_mbed_close((uv_link_t *) mbed);
+    }
     return 0;
 }
 
