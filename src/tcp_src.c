@@ -57,7 +57,6 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
         return;
     }
 
-    UM_LOG(ERR, "connected status = %d(%p)", status, req->handle);
     if (status == 0) {
         uv_link_source_init((uv_link_source_t *) sl->link, (uv_stream_t *) sl->conn);
         uv_tcp_nodelay(sl->conn, sl->nodelay);
@@ -97,6 +96,10 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
     free(req);
 }
 
+static void free_handle(uv_handle_t *h) {
+    free(h);
+}
+
 static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, um_src_connect_cb cb, void *ctx) {
     tcp_src_t *tcp = (tcp_src_t *) sl;
 
@@ -104,9 +107,7 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     sl->connect_ctx = ctx;
 
     if (tcp->conn) {
-        UM_LOG(WARN, "old handle present");
-        uv_tcp_close_reset(tcp->conn, (uv_close_cb) free);
-        tcp->conn = NULL;
+        tcp->cancel((um_src_t *) tcp);
     }
 
     uv_getaddrinfo_t *resolv_req = calloc(1, sizeof(uv_getaddrinfo_t));
@@ -119,10 +120,13 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     return rc;
 }
 
+
 static void tcp_src_cancel(um_src_t *sl) {
     tcp_src_t *tl = (tcp_src_t*)sl;
     if (tl->conn) {
-        uv_tcp_close_reset(tl->conn, (uv_close_cb) free);
+        if (uv_tcp_close_reset(tl->conn, free_handle) == UV_EBADF) {
+            free_handle((uv_handle_t *) tl->conn);
+        }
         tl->conn = NULL;
     }
 }
