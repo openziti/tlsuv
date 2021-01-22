@@ -67,10 +67,10 @@ TEST_CASE("cancel connect", "[uv-mbed]") {
     struct test_ctx {
         int connect_result;
         bool close_called;
-    } test_ctx = {
-            .connect_result = 0,
-            .close_called = false,
-    };
+    } test_ctx;
+
+    test_ctx.connect_result = 0;
+    test_ctx.close_called = false;
 
     mbed.data = &test_ctx;
 
@@ -121,10 +121,10 @@ TEST_CASE("read/write","[uv-mbed]") {
     struct test_ctx {
         int connect_result;
         bool close_called;
-    } test_ctx = {
-            .connect_result = 0,
-            .close_called = false,
-    };
+    } test_ctx;
+
+    test_ctx.connect_result = 0;
+    test_ctx.close_called = false;
 
     mbed.data = &test_ctx;
 
