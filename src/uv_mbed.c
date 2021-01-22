@@ -59,18 +59,31 @@ int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls) {
     uv_link_init((uv_link_t *) mbed, &mbed_methods);
     mbed->tls = tls != NULL ? tls : get_default_tls();
     mbed->tls_engine = NULL;
+    mbed->host = NULL;
+    mbed->conn_req = NULL;
+    mbed->close_cb = NULL;
 
     return 0;
 }
 
 static void on_mbed_close(uv_link_t *l) {
     uv_mbed_t *mbed = (uv_mbed_t *) l;
+    if (mbed->conn_req) {
+        uv_connect_t *cr = mbed->conn_req;
+        mbed->conn_req = NULL;
+        cr->cb(cr, UV_ECANCELED);
+    }
     if(mbed->close_cb) mbed->close_cb((uv_handle_t *) mbed);
 }
 
 int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
     mbed->close_cb = close_cb;
-    uv_link_propagate_close((uv_link_t *) mbed, (uv_link_t *) mbed, on_mbed_close);
+    if (mbed->parent)
+        uv_link_propagate_close((uv_link_t *) mbed, (uv_link_t *) mbed, on_mbed_close);
+    else {
+        mbed->socket.cancel((um_src_t *) &mbed->socket);
+        on_mbed_close((uv_link_t *) mbed);
+    }
     return 0;
 }
 
@@ -91,6 +104,7 @@ static void on_tls_hs(tls_link_t *tls_link, int status) {
     }
     mbed->conn_req = NULL;
 }
+
 static void on_src_connect(um_src_t *src, int status, void *ctx) {
     uv_mbed_t *mbed = ctx;
 
@@ -106,18 +120,21 @@ static void on_src_connect(um_src_t *src, int status, void *ctx) {
         uv_link_read_start((uv_link_t *) mbed);
     } else {
         UM_LOG(WARN, "failed to connect");
-        src->cancel(src);
         mbed->conn_req->cb(mbed->conn_req, status);
         mbed->conn_req = NULL;
     }
 }
 int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int port, uv_connect_cb cb) {
+    if (!req) {
+        return UV_EINVAL;
+    }
 
     char portstr[6];
     sprintf(portstr, "%d", port);
 
     req->handle = (uv_stream_t *) mbed;
     req->cb = cb;
+    if (mbed->host) free (mbed->host);
     mbed->host = strdup(host);
     mbed->conn_req = req;
 

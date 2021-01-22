@@ -20,12 +20,6 @@ limitations under the License.
 #include "uv_mbed/tls_link.h"
 #include "um_debug.h"
 
-enum tls_state {
-    initial = 0,
-    handshaking = 1,
-    connected = 2,
-};
-
 static int tls_read_start(uv_link_t *l);
 static void tls_alloc(uv_link_t *l, size_t suggested, uv_buf_t *buf);
 static void tls_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
@@ -88,9 +82,9 @@ static int tls_read_start(uv_link_t *l) {
     tls_link_t *tls = (tls_link_t *) l;
 
     tls_handshake_state st = tls->engine->api->handshake_state(tls->engine->engine);
-    UM_LOG(VERB, "TLS(%p) starting handshake(st = %d)", tls, st);
+    UM_LOG(TRACE, "TLS(%p) starting handshake(st = %d)", tls, st);
     if (st == TLS_HS_CONTINUE) {
-        UM_LOG(DEBG, "TLS(%p) is in the middle of handshake, resetting", tls);
+        UM_LOG(TRACE, "TLS(%p) is in the middle of handshake, resetting", tls);
         if (tls->engine->api->reset) {
             tls->engine->api->reset(tls->engine->engine);
         }
@@ -102,7 +96,7 @@ static int tls_read_start(uv_link_t *l) {
     buf.base = malloc(32 * 1024);
     st = tls->engine->api->handshake(tls->engine->engine, NULL, 0, buf.base, &buf.len,
                                                          32 * 1024);
-    UM_LOG(VERB, "TLS(%p) starting handshake(sending %zd bytes, st = %d)", tls, buf.len, st);
+    UM_LOG(TRACE, "TLS(%p) starting handshake(sending %zd bytes, st = %d)", tls, buf.len, st);
 
     tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
     wr->tls_buf = buf.base;
@@ -128,13 +122,18 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     }
 
     if (hs_state == TLS_HS_CONTINUE) {
-        UM_LOG(VERB, "TLS(%p) continuing handshake(%zd bytes received)", tls, nread);
+        if (nread == 0) {
+            UM_LOG(ERR, "should not be here");
+            return;
+        }
+
+        UM_LOG(TRACE, "TLS(%p) continuing handshake(%zd bytes received)", tls, nread);
         uv_buf_t buf;
         buf.base = malloc(32 * 1024);
         tls_handshake_state st =
                 tls->engine->api->handshake(tls->engine->engine, b->base, nread, buf.base, &buf.len, 32 * 1024);
 
-        UM_LOG(VERB, "TLS(%p) continuing handshake(sending %zd bytes, st = %d)", tls, buf.len, st);
+        UM_LOG(TRACE, "TLS(%p) continuing handshake(sending %zd bytes, st = %d)", tls, buf.len, st);
         if (buf.len > 0) {
             tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
             wr->tls_buf = buf.base;
@@ -149,7 +148,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         }
 
         if (st == TLS_HS_COMPLETE) {
-            UM_LOG(VERB, "TLS(%p) handshake completed", tls);
+            UM_LOG(TRACE, "TLS(%p) handshake completed", tls);
             tls->hs_cb(tls, TLS_HS_COMPLETE);
         }
         else if (st == TLS_HS_ERROR) {
@@ -163,7 +162,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         }
         if (b->base) free(b->base);
     } else if (hs_state == TLS_HS_COMPLETE) {
-        UM_LOG(VERB, "TLS(%p) processing %zd bytes", tls, nread);
+        UM_LOG(TRACE, "TLS(%p) processing %zd bytes", tls, nread);
 
         size_t read = 0;
         size_t buf_size = b->len;
@@ -176,7 +175,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
             rc = tls->engine->api->read(tls->engine->engine, inptr, inlen,
                     b->base + read, &out_bytes, buf_size - read);
 
-            UM_LOG(VERB, "TLS(%p) produced %zd application byte (rc=%d)", tls, out_bytes, rc);
+            UM_LOG(TRACE, "TLS(%p) produced %zd application byte (rc=%d)", tls, out_bytes, rc);
             read += out_bytes;
             inptr = NULL;
             inlen = 0;
@@ -216,7 +215,7 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
 }
 
 static void tls_close(uv_link_t *l, uv_link_t *source, uv_link_close_cb close_cb) {
-    UM_LOG(VERB, "closing TLS link");
+    UM_LOG(TRACE, "closing TLS link");
     tls_link_t *tls = (tls_link_t *) l;
     if (tls->engine->api->reset) {
         tls->engine->api->reset(tls->engine->engine);

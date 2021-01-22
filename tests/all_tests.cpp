@@ -29,7 +29,7 @@ static const char *err_labels[] = {
 };
 
 static void test_log_f(int lvl, const char *file, unsigned int line, const char* msg){
-    printf("[%5s] %s:%d %s\n", err_labels[lvl], file, line, msg);
+    fprintf(stderr, "[%5s] %s:%d %s\n", err_labels[lvl], file, line, msg);
 }
 
 um_log_func test_log = test_log_f;
