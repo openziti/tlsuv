@@ -297,15 +297,17 @@ TEST_CASE("client_cert_test","[http]") {
     um_http_t clt;
     resp_capture resp(resp_body_cb);
 
+    const char *test_site = "https://client.badssl.com";
+
     WHEN("client cert NOT set") {
-        um_http_init(loop, &clt, "https://server.cryptomix.com");
+        um_http_init(loop, &clt, test_site);
         um_http_req_t *req = um_http_req(&clt, "GET", "/secure/", resp_capture_cb, &resp);
 
         uv_run(loop, UV_RUN_DEFAULT);
 
         THEN("request should be bad") {
-            CHECK(resp.code == HTTP_STATUS_OK);
-            CHECK_THAT(resp.body, Contains("Error: No SSL client certificate presented"));
+            CHECK(resp.code == HTTP_STATUS_BAD_REQUEST);
+            CHECK_THAT(resp.body, Contains("No required SSL certificate was sent"));
         }
         int body_len = resp.body.size();
         int content_len = atoi(resp.headers["Content-Length"].c_str());
@@ -317,8 +319,8 @@ TEST_CASE("client_cert_test","[http]") {
 
     WHEN("client cert set") {
         tls_context *tls = default_tls_context(nullptr, 0);
-        um_http_init(loop, &clt, "https://server.cryptomix.com/");
-        um_http_req_t *req = um_http_req(&clt, "GET", "/secure/", resp_capture_cb, &resp);
+        um_http_init(loop, &clt, test_site);
+        um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
         // client cert downloaded from https://badssl.com/download/
         const char *cert = "-----BEGIN CERTIFICATE-----\n"
@@ -384,7 +386,6 @@ TEST_CASE("client_cert_test","[http]") {
         THEN("request should complete") {
             CHECK(resp.code == HTTP_STATUS_OK);
             CHECK(resp.resp_body_end_called);
-            CHECK_THAT(resp.body, Contains("[SSL_CLIENT_S_DN_CN] => BadSSL Client Certificate"));
         }
     }
 
