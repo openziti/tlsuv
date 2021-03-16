@@ -35,8 +35,16 @@ XX(DEBG)           \
 XX(VERB)           \
 XX(TRACE)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern int um_log_level;
 extern void um_log(int lvl, const char* file, unsigned int line, const char* fmt, ...);
+
+#ifdef __cplusplus
+}
+#endif
 
 #define UM_LOG(lvl, fmt, ...) do {\
 if ((lvl) <= um_log_level) um_log(lvl, __FILE__, __LINE__, fmt, ##__VA_ARGS__ ); \
