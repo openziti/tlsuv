@@ -35,6 +35,8 @@ jobs:
     - name: test
       working-directory: ${{runner.workspace}}/build
       run: ctest -VV --no-compress-output -T Test
+      env:
+        UM_TEST_DEBUG: 7
     - name: upload test report
       uses: actions/upload-artifact@v2
       with:

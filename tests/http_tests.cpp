@@ -482,7 +482,6 @@ TEST_CASE("server_idle_close","[.]") {
 
 
 TEST_CASE("basic_test", "[http]") {
-    uv_mbed_set_debug(7, test_log);
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp(resp_body_cb);
