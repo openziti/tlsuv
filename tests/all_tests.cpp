@@ -21,7 +21,7 @@ limitations under the License.
 #include "catch.hpp"
 
 
-
+static uv_timeval64_t start;
 static const char *err_labels[] = {
 #define ERR_LABEL(e) #e,
 
@@ -29,13 +29,18 @@ static const char *err_labels[] = {
 };
 
 static void test_log_f(int lvl, const char *file, unsigned int line, const char* msg){
-    fprintf(stderr, "[%5s] %s:%d %s\n", err_labels[lvl], file, line, msg);
+    uv_timeval64_t now;
+    uv_gettimeofday(&now);
+    long elapsed = (now.tv_sec - start.tv_sec) * 1000 + (now.tv_usec - start.tv_usec) / 1000;
+
+    fprintf(stderr, "[%6ld.%03ld]%5s %s:%d %s\n", elapsed/1000, elapsed % 1000,
+            err_labels[lvl], file, line, msg);
 }
 
 um_log_func test_log = test_log_f;
 
 int main( int argc, char* argv[] ) {
-
+    uv_gettimeofday(&start);
     const char* debug = getenv("UM_TEST_DEBUG");
     if (debug) {
         // enable logging during tests

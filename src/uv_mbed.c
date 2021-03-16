@@ -101,6 +101,9 @@ static void on_tls_hs(tls_link_t *tls_link, int status) {
         mbed->conn_req->cb(mbed->conn_req, 0);
     } else if (status == TLS_HS_ERROR) {
         mbed->conn_req->cb(mbed->conn_req, UV_ECONNABORTED);
+    } else {
+        UM_LOG(WARN, "unexpected handshake status[%d]", status);
+        mbed->conn_req->cb(mbed->conn_req, UV_EINVAL);
     }
     mbed->conn_req = NULL;
 }

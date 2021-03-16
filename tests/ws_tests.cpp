@@ -74,12 +74,11 @@ static void on_ws_data(uv_stream_t *s, ssize_t nread, const uv_buf_t* buf) {
 
 
 TEST_CASE("websocket tests", "[websocket]") {
-
     uv_loop_t *loop = uv_loop_new();
     auto *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
     uv_timer_init(loop, timer);
     uv_unref((uv_handle_t *) timer);
-    uv_timer_start(timer, test_timeout, 5000, 0);
+    uv_timer_start(timer, test_timeout, 15000, 0);
     um_websocket_t clt;
     websocket_test test;
 

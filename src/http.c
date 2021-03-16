@@ -54,6 +54,7 @@ static void free_http(um_http_t *clt);
 enum status {
     Disconnected,
     Connecting,
+    Handshaking,
     Connected
 };
 
@@ -148,9 +149,21 @@ static void fail_active_request(um_http_t *c, int code, const char *msg) {
 
 static void on_tls_handshake(tls_link_t *tls, int status) {
     um_http_t *clt = tls->data;
-    if (status == TLS_HS_COMPLETE) {
-        clt->connected = Connected;
-        uv_async_send(&clt->proc);
+
+    switch (status) {
+        case TLS_HS_COMPLETE:
+            clt->connected = Connected;
+            uv_async_send(&clt->proc);
+            break;
+
+        case TLS_HS_ERROR:
+            UM_LOG(ERR, "handshake failed status[%d]", status);
+            close_connection(clt);
+            break;
+
+        default:
+            UM_LOG(ERR, "unexpected handshake status[%d]", status);
+            close_connection(clt);
     }
 }
 
@@ -171,6 +184,7 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
 
         uv_link_chain(conn_src, (uv_link_t *) &clt->tls_link);
         uv_link_chain((uv_link_t *) &clt->tls_link, &clt->http_link);
+        clt->connected = Handshaking;
     }
     else {
         uv_link_chain(conn_src, &clt->http_link);
@@ -196,11 +210,18 @@ static void src_connect_cb(um_src_t *src, int status, void *ctx) {
     um_http_t *clt = ctx;
     uv_timer_stop(&clt->conn_timer);
     if (status == 0) {
-        if (clt->connected == Connecting) {
-            make_links(clt, (uv_link_t *) src->link);
-        } else if (clt->connected == Disconnected) {
-            UM_LOG(WARN, "src connected after timeout: state = %d", clt->connected);
-            clt->src->cancel(clt->src);
+        switch (clt->connected) {
+            case Connecting:
+                make_links(clt, (uv_link_t *) src->link);
+                break;
+
+            case Disconnected:
+                UM_LOG(WARN, "src connected after timeout: state = %d", clt->connected);
+                clt->src->cancel(clt->src);
+                break;
+
+            default:
+                UM_LOG(ERR, "src connected for client in state[%d]", clt->connected);
         }
     } 
     else {
@@ -290,6 +311,7 @@ static void send_body(um_http_req_t *req) {
 static void close_connection(um_http_t *c) {
     uv_timer_stop(&c->conn_timer);
     switch (c->connected) {
+        case Handshaking:
         case Connected:
             UM_LOG(VERB, "closing connection");
             uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
