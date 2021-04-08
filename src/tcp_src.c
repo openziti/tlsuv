@@ -120,15 +120,16 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     return rc;
 }
 
-
 static void tcp_src_cancel(um_src_t *sl) {
     tcp_src_t *tl = (tcp_src_t*)sl;
     if (tl->conn) {
-        if (uv_tcp_close_reset(tl->conn, free_handle) == UV_EBADF) {
-            free_handle((uv_handle_t *) tl->conn);
+        if (uv_tcp_close_reset(tl->conn, free_handle) != 0) {
+            if (!uv_is_closing((const uv_handle_t *) tl->conn)) {
+                uv_close((uv_handle_t *) tl->conn, free_handle);
+            }
         }
-        tl->conn = NULL;
     }
+    tl->conn = NULL;
 }
 
 static void tcp_src_release(um_src_t *sl) {
