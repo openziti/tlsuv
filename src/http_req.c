@@ -87,7 +87,10 @@ void free_hdr_list(um_header_list *l) {
 }
 
 size_t http_req_write(um_http_req_t *req, char *buf, size_t maxlen) {
-    const char *pfx = req->client->prefix ? req->client->prefix : "";
+    const char *pfx = "";
+    if (req->client && req->client->prefix) {
+        pfx = req->client->prefix;
+    }
     size_t len = snprintf(buf, maxlen,
                           "%s %s%s HTTP/1.1\r\n",
                           req->method, pfx, req->path);
