@@ -406,6 +406,7 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
     uv_unref((uv_handle_t *) &clt->conn_timer);
     clt->conn_timer.data = clt;
 
+    clt->prefix = NULL;
     um_http_header(clt, "Connection", "keep-alive");
 
     struct http_parser_url url_parse = {0};
@@ -419,6 +420,9 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
     else {
         UM_LOG(ERR, "invalid URL: no host");
         return UV_EINVAL;
+    }
+    if (url_parse.field_set & (U1<< UF_PATH)) {
+        clt->prefix = strndup(url + url_parse.field_data[UF_PATH].off, url_parse.field_data[UF_PATH].len);
     }
     um_http_header(clt, "Host", clt->host);
 
@@ -455,6 +459,17 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
     clt->proc.data = clt;
 
     return 0;
+}
+
+void um_http_set_path_prefix(um_http_t *clt, const char *prefix) {
+    if (clt->prefix) {
+        free(clt->prefix);
+        clt->prefix = NULL;
+    }
+
+    if (prefix) {
+        clt->prefix = strdup(prefix);
+    }
 }
 
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
@@ -587,6 +602,7 @@ int um_http_req_data(um_http_req_t *req, const char *body, ssize_t body_len, um_
 static void free_http(um_http_t *clt) {
     free_hdr_list(&clt->headers);
     free(clt->host);
+    if (clt->prefix) free(clt->prefix);
     if (clt->engine != NULL) {
         clt->tls->api->free_engine(clt->engine);
         clt->engine = NULL;
