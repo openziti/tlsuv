@@ -505,6 +505,42 @@ TEST_CASE("basic_test", "[http]") {
     free(loop);
 }
 
+TEST_CASE("http_prefix", "[http]") {
+    uv_loop_t *loop = uv_loop_new();
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+    um_http_init(loop, &clt, "http://httpbin.org/bytes");
+    um_http_req_t *req = um_http_req(&clt, "GET", "/256", resp_capture_cb, &resp);
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    REQUIRE(resp.code == HTTP_STATUS_OK);
+    CHECK_THAT(resp.headers["Content-Length"], Equals("256"));
+
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
+}
+
+TEST_CASE("http_prefix_after", "[http]") {
+    uv_loop_t *loop = uv_loop_new();
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+    um_http_init(loop, &clt, "http://httpbin.org");
+    um_http_req_t *req = um_http_req(&clt, "GET", "/256", resp_capture_cb, &resp);
+    um_http_set_path_prefix(&clt, "/bytes");
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    REQUIRE(resp.code == HTTP_STATUS_OK);
+    CHECK_THAT(resp.headers["Content-Length"], Equals("256"));
+
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
+}
 
 TEST_CASE("conten_length_test", "[http]") {
     uv_loop_t *loop = uv_loop_new();

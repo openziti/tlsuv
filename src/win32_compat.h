@@ -25,7 +25,7 @@ limitations under the License.
 
 #if !defined (strndup_DEFINED)
 #define strndup_DEFINED
-static char* strndup(char* p, size_t len) {
+static char* strndup(const char* p, size_t len) {
     char *s = malloc(len + 1);
     strncpy(s, p, len);
     s[len] = '\0';

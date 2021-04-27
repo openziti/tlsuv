@@ -129,6 +129,7 @@ typedef struct um_http_req_s {
 typedef struct um_http_s {
     char *host;
     char port[6];
+    char *prefix;
 
     bool ssl;
     tls_context *tls;
@@ -156,7 +157,7 @@ typedef struct um_http_s {
  * Initialize HTTP client
  * @param l libuv loop to execute
  * @param clt client struct
- * @param url url to initialize client with. Only scheme, host, port(optional) are used.
+ * @param url url to initialize client with. Only scheme, host, port(optional), path(@see um_http_set_path_prefix) are used.
  * @return 0 or error code
  */
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url);
@@ -168,12 +169,21 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url);
  * 
  * @param l libuv loop to execute
  * @param clt client struct
- * @param url url to initialize client with. Only scheme, host, port(optional) are used.
+ * @param url url to initialize client with. Only scheme, host, port(optional), path(@see um_http_set_path_prefix) are used.
  * @param src source link to be used in place of TCP
  * 
  * @return 0 or error code
  */
 int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_t *src);
+
+/**
+ * @brief Set path prefix on the client.
+ *
+ * Any request going out after this will be re-written to prepend prefix to request path.
+ * @param clt
+ * @param prefix path prefix, NULL to clear it
+ */
+void um_http_set_path_prefix(um_http_t *clt, const char *prefix);
 
 /**
  * \brief Set idle timeout.
