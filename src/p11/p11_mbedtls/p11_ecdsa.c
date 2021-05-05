@@ -17,7 +17,7 @@ limitations under the License.
 #include <stdlib.h>
 #include <string.h>
 #include <mbedtls/pk.h>
-#include <mbedtls/pk_internal.h>
+#include <mbedtls/error.h>
 #include "mbed_p11.h"
 #include <mbedtls/asn1write.h>
 #include <mbedtls/oid.h>
@@ -40,6 +40,7 @@ static void p11_ecdsa_free(void *ctx);
 static int ecdsa_signature_to_asn1(const mbedtls_mpi *r, const mbedtls_mpi *s,
                                    unsigned char *sig, size_t *slen);
 
+#if 0
 const mbedtls_pk_info_t p11_ecdsa_info = {
         MBEDTLS_PK_ECDSA,
         "ECDSA",
@@ -62,9 +63,10 @@ ecdsa_rs_free,
 #endif
         NULL, //eckey_debug,        /* Compatible key structures */
 };
+#endif
 
 int p11_load_ecdsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_context *p11) {
-    pk->pk_info = &p11_ecdsa_info;
+    pk->pk_info = mbedtls_pk_info_from_type( MBEDTLS_PK_ECDSA);
     pk->pk_ctx = p11key;
     p11key->ctx = p11;
 
@@ -159,11 +161,11 @@ static int p11_ecdsa_sign(void *ctx, mbedtls_md_type_t md_alg,
 
     rc = p11->funcs->C_SignInit(p11->session, &mech, p11key->priv_handle);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
     rc = p11->funcs->C_Sign(p11->session, hash, hash_len, rawsig, &rawsig_len);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
     mbedtls_mpi r, s;

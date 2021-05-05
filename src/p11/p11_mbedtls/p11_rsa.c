@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 #include <mbedtls/pk.h>
-#include <mbedtls/pk_internal.h>
+#include <mbedtls/error.h>
 #include "mbed_p11.h"
 #include <mbedtls/asn1write.h>
 #include <mbedtls/oid.h>
@@ -41,6 +41,7 @@ static void p11_rsa_free(void *ctx);
 
 static int get_md_prefix(mbedtls_md_type_t md, const char **prefix, size_t *len);
 
+#if 0
 const mbedtls_pk_info_t p11_rsa_info = {
         MBEDTLS_PK_RSA,
         "RSA",
@@ -63,6 +64,7 @@ rsa_rs_free,
 #endif
         NULL, //eckey_debug,        /* Compatible key structures */
 };
+#endif
 
 int p11_load_rsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_context *p11) {
     int rc;
@@ -73,7 +75,7 @@ int p11_load_rsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_con
             {CKA_MODULUS,         NULL, 0},
     };
 
-    pk->pk_info = &p11_rsa_info;
+    pk->pk_info = mbedtls_pk_info_from_type( MBEDTLS_PK_RSA);
     pk->pk_ctx = p11key;
     p11key->ctx = p11;
 
@@ -148,7 +150,7 @@ static int p11_rsa_sign(void *ctx, mbedtls_md_type_t md_alg,
     size_t oid_len = 0;
     rc = get_md_prefix(md_alg, &oid, &oid_len);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
     CK_BYTE *msg = malloc(hash_len + oid_len);
@@ -157,12 +159,12 @@ static int p11_rsa_sign(void *ctx, mbedtls_md_type_t md_alg,
 
     rc = p11->funcs->C_SignInit(p11->session, &mech, p11key->priv_handle);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
     rc = p11->funcs->C_Sign(p11->session, msg, hash_len + oid_len, rawsig, &rawsig_len);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
     memcpy(sig, rawsig, rawsig_len);
