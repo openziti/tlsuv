@@ -40,33 +40,8 @@ static void p11_ecdsa_free(void *ctx);
 static int ecdsa_signature_to_asn1(const mbedtls_mpi *r, const mbedtls_mpi *s,
                                    unsigned char *sig, size_t *slen);
 
-#if 0
-const mbedtls_pk_info_t p11_ecdsa_info = {
-        MBEDTLS_PK_ECDSA,
-        "ECDSA",
-        p11_ecdsa_bitlen,
-        p11_ecdsa_can_do,
-        p11_ecdsa_verify,
-        p11_ecdsa_sign,
-#if defined(MBEDTLS_ECP_RESTARTABLE)
-ecdsa_verify_rs_wrap,
-ecdsa_sign_rs_wrap,
-#endif
-        NULL,
-        NULL,
-        NULL, //eckey_check_pair,   /* Compatible key structures */
-        NULL, //ecdsa_alloc_wrap,
-        p11_ecdsa_free,
-#if defined(MBEDTLS_ECP_RESTARTABLE)
-ecdsa_rs_alloc,
-ecdsa_rs_free,
-#endif
-        NULL, //eckey_debug,        /* Compatible key structures */
-};
-#endif
-
 int p11_load_ecdsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_context *p11) {
-    pk->pk_info = mbedtls_pk_info_from_type( MBEDTLS_PK_ECDSA);
+    pk->pk_info = mbedtls_pk_info_from_type(MBEDTLS_PK_ECDSA);
     pk->pk_ctx = p11key;
     p11key->ctx = p11;
 
