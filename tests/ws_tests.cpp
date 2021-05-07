@@ -46,7 +46,7 @@ static void on_close_cb(uv_handle_t *h) {
 }
 
 static void on_connect(uv_connect_t *req, int status) {
-    websocket_test *t = static_cast<websocket_test *>(req->data);
+    auto *t = static_cast<websocket_test *>(req->data);
     um_websocket_t *ws = t->ws;
     t->conn_status = status;
 
@@ -57,15 +57,17 @@ static void on_connect(uv_connect_t *req, int status) {
         uv_buf_t b = uv_buf_init((char*)msg, strlen(msg));
         CHECK(um_websocket_write(&req, ws, &b, on_ws_write) == 0);
     } else {
+        printf("connect failed: status %s\n", uv_err_name(status));
         um_websocket_close(ws, on_close_cb);
     }
 }
 
 static void on_ws_data(uv_stream_t *s, ssize_t nread, const uv_buf_t* buf) {
-    um_websocket_t *ws = reinterpret_cast<um_websocket_t *>(s);
+    auto *ws = reinterpret_cast<um_websocket_t *>(s);
     auto *t = static_cast<websocket_test *>(ws->data);
     if (nread > 0) {
         string text(buf->base, nread);
+        printf("received '%s'\n", text.data());
         t->resp.push_back(text);
     }
 
@@ -107,30 +109,43 @@ TEST_CASE("websocket tests", "[websocket]") {
         CHECK((rc == UV_EAI_NONAME || test.conn_status == UV_EAI_NONAME));
     }
 
+    uint8_t attempt = 1;
+    int rc = -1;
+    int s = -1;
     WHEN("ws echo test") {
-        um_websocket_init(loop, &clt);
-        test.ws = &clt;
-        clt.data = &test;
+        do {
+            uv_timer_start(timer, test_timeout, 15000, 0);
+            um_websocket_init(loop, &clt);
+            test.ws = &clt;
+            clt.data = &test;
 
-        uv_connect_t r;
-        r.data = &test;
-        int rc = um_websocket_connect(&r, &clt, "ws://echo.websocket.org", on_connect, on_ws_data);
-        uv_run(loop, UV_RUN_DEFAULT);
+            uv_connect_t r;
+            r.data = &test;
+            rc = um_websocket_connect(&r, &clt, "ws://echo.websocket.org", on_connect, on_ws_data);
+            s = uv_run(loop, UV_RUN_DEFAULT);
+            um_websocket_close(&clt, on_close_cb);
+        } while (s != 0 && attempt++ < 5);
         CHECK(rc == 0);
         CHECK(test.conn_status == 0);
         REQUIRE(test.resp.size() == 1);
         CHECK_THAT(test.resp[0],Catch::Matches("this is a test"));
     }
 
+    attempt = 1;
+    rc = -1;
     WHEN("wss echo test") {
-        um_websocket_init(loop, &clt);
-        test.ws = &clt;
-        clt.data = &test;
+        do {
+            uv_timer_start(timer, test_timeout, 15000, 0);
+            um_websocket_init(loop, &clt);
+            test.ws = &clt;
+            clt.data = &test;
 
-        uv_connect_t r;
-        r.data = &test;
-        int rc = um_websocket_connect(&r, &clt, "wss://echo.websocket.org", on_connect, on_ws_data);
-        uv_run(loop, UV_RUN_DEFAULT);
+            uv_connect_t r;
+            r.data = &test;
+            rc = um_websocket_connect(&r, &clt, "wss://echo.websocket.org", on_connect, on_ws_data);
+            s = uv_run(loop, UV_RUN_DEFAULT);
+            um_websocket_close(&clt, on_close_cb);
+        } while (s != 0 && attempt++ < 5);
         CHECK(rc == 0);
         CHECK(test.conn_status == 0);
         REQUIRE(test.resp.size() == 1);
