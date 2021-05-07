@@ -382,7 +382,10 @@ static void mbedtls_free(tls_engine *engine) {
     um_BIO_free(e->out);
 
     mbedtls_ssl_free(e->ssl);
-    free(e->ssl);
+    if (e->ssl) {
+        free(e->ssl);
+        e->ssl = NULL;
+    }
     if (e->session) {
         mbedtls_ssl_session_free(e->session);
         free(e->session);
