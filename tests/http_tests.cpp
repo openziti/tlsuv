@@ -22,6 +22,7 @@ limitations under the License.
 #include <string>
 #include <cstring>
 #include <uv_mbed/uv_mbed.h>
+#include <iostream>
 
 extern um_log_func test_log;
 using namespace std;
@@ -646,7 +647,6 @@ TEST_CASE("multiple requests", "[http]") {
 // test proper client->engine cleanup between requests
 // run in valgrind to see any leaks
 TEST_CASE("TLS reconnect", "[http]") {
-    uv_mbed_set_debug(7, test_log);
     uv_loop_t *loop = uv_loop_new();
     um_http_t clt;
     resp_capture resp(resp_body_cb);
@@ -687,6 +687,39 @@ int cert_verify(tls_cert crt, void *ctx) {
 
     int rc = vtx->tls->api->verify_signature(crt, hash_SHA256, vtx->data, vtx->datalen, vtx->sig, vtx->siglen);
     return rc;
+}
+
+TEST_CASE("large POST(GH-87)", "[http][gh-87]") {
+    uv_loop_t *loop = uv_loop_new();
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+
+    tls_context *tls = default_tls_context(nullptr, 0);
+    um_http_init(loop, &clt, "https://httpbin.org");
+    um_http_set_ssl(&clt, tls);
+
+    um_http_req_t *req = um_http_req(&clt, "POST", "/anything", resp_capture_cb, &resp);
+    char *buf = (char*)malloc(64 * 1024);
+    char length[16];
+    snprintf(length, sizeof(length), "%d", 64 * 1024);
+    um_http_req_header(req, "Content-Type", "application/octet-stream");
+    um_http_req_header(req, "Content-Length", length);
+    um_http_req_header(req, "Connection", "Close");
+    um_http_req_data(req, buf, 64*1024, req_body_cb);
+
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    CHECK(resp.code == 200);
+    std::cout << resp.body << std::endl;
+
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
+    free(buf);
+
+    tls->api->free_ctx(tls);
 }
 
 TEST_CASE("TLS verify with JWT", "[http]") {
