@@ -42,6 +42,8 @@ typedef struct tls_link_write_s {
 
 } tls_link_write_t;
 
+static const int TLS_BUF_SZ = 32 * 1024;
+
 void tls_alloc(uv_link_t *l, size_t suggested, uv_buf_t *buf) {
     tls_link_t *tls_link = (tls_link_t *) l;
     tls_handshake_state st = tls_link->engine->api->handshake_state(tls_link->engine->engine);
@@ -93,9 +95,9 @@ static int tls_read_start(uv_link_t *l) {
     uv_link_default_read_start(l);
 
     uv_buf_t buf;
-    buf.base = malloc(32 * 1024);
+    buf.base = malloc(TLS_BUF_SZ);
     st = tls->engine->api->handshake(tls->engine->engine, NULL, 0, buf.base, &buf.len,
-                                                         32 * 1024);
+                                                         TLS_BUF_SZ);
     UM_LOG(TRACE, "TLS(%p) starting handshake(sending %zd bytes, st = %d)", tls, buf.len, st);
 
     tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
@@ -129,9 +131,9 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
 
         UM_LOG(TRACE, "TLS(%p) continuing handshake(%zd bytes received)", tls, nread);
         uv_buf_t buf;
-        buf.base = malloc(32 * 1024);
+        buf.base = malloc(TLS_BUF_SZ);
         tls_handshake_state st =
-                tls->engine->api->handshake(tls->engine->engine, b->base, nread, buf.base, &buf.len, 32 * 1024);
+                tls->engine->api->handshake(tls->engine->engine, b->base, nread, buf.base, &buf.len, TLS_BUF_SZ);
 
         UM_LOG(TRACE, "TLS(%p) continuing handshake(sending %zd bytes, st = %d)", tls, buf.len, st);
         if (buf.len > 0) {
@@ -167,7 +169,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         size_t read = 0;
         size_t buf_size = b->len;
 
-        size_t out_bytes;
+        size_t out_bytes = 0;
         char *inptr = b->base;
         size_t inlen = nread;
         int rc;
@@ -183,8 +185,8 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
 
         if (rc == TLS_HAS_WRITE) {
             uv_buf_t buf;
-            buf.base = malloc(32 * 1024);
-            int tls_rc = tls->engine->api->write(tls->engine->engine, NULL, 0, buf.base, &buf.len, 32 * 1024);
+            buf.base = malloc(TLS_BUF_SZ);
+            int tls_rc = tls->engine->api->write(tls->engine->engine, NULL, 0, buf.base, &buf.len, TLS_BUF_SZ);
             uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_free_cb, buf.base);
         }
 
@@ -198,15 +200,31 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
 static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
                      unsigned int nbufs, uv_stream_t *send_handle, uv_link_write_cb cb, void *arg) {
     tls_link_t *tls = (tls_link_t *) l;
-    uv_buf_t buf;
-    buf.base = malloc(32 * 1024);
-    int tls_rc = tls->engine->api->write(tls->engine->engine, bufs[0].base, bufs[0].len, buf.base, &buf.len, 32 * 1024);
-    if (tls_rc < 0) {
-        UM_LOG(ERR, "TLS(%p) engine failed to wrap: %d(%s)", tls, tls_rc, tls->engine->api->strerror(tls->engine->engine));
-        free(buf.base);
-        return tls_rc;
+    uv_buf_t buf = uv_buf_init(NULL, 0);
+    int tls_rc = 0;
+    for (int i = 0; i < nbufs; i++) {
+        tls_rc = tls->engine->api->write(tls->engine->engine, bufs[i].base, bufs[i].len, NULL, &buf.len, 0);
+        if (tls_rc < 0) {
+            UM_LOG(ERR, "TLS(%p) engine failed to wrap: %d(%s)", tls, tls_rc, tls->engine->api->strerror(tls->engine->engine));
+            free(buf.base);
+            return tls_rc;
+        }
     }
+    
 
+    if (tls_rc > 0) {
+        buf.base = malloc(tls_rc);
+        tls_rc = tls->engine->api->write(tls->engine->engine, NULL, 0, buf.base, &buf.len, tls_rc);
+        if (tls_rc < 0) {
+            UM_LOG(ERR, "TLS(%p) engine failed to wrap: %d(%s)", tls, tls_rc, tls->engine->api->strerror(tls->engine->engine));
+            free(buf.base);
+            return tls_rc;
+        }
+    } else if (tls_rc == 0) { // nothing to send
+        tls_write_cb(l, 0, arg);
+        return 0;
+    }
+    
     tls_link_write_t *wr = calloc(1, sizeof(tls_link_write_t));
     wr->tls_buf = buf.base;
     wr->cb = cb;
