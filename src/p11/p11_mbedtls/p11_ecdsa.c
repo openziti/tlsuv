@@ -136,11 +136,11 @@ static int p11_ecdsa_sign(void *ctx, mbedtls_md_type_t md_alg,
 
     rc = p11->funcs->C_SignInit(p11->session, &mech, p11key->priv_handle);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
     }
     rc = p11->funcs->C_Sign(p11->session, hash, hash_len, rawsig, &rawsig_len);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
     }
 
     mbedtls_mpi r, s;
