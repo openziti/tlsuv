@@ -125,7 +125,7 @@ static int p11_rsa_sign(void *ctx, mbedtls_md_type_t md_alg,
     size_t oid_len = 0;
     rc = get_md_prefix(md_alg, &oid, &oid_len);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
     CK_BYTE *msg = malloc(hash_len + oid_len);
@@ -134,12 +134,12 @@ static int p11_rsa_sign(void *ctx, mbedtls_md_type_t md_alg,
 
     rc = p11->funcs->C_SignInit(p11->session, &mech, p11key->priv_handle);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
     rc = p11->funcs->C_Sign(p11->session, msg, hash_len + oid_len, rawsig, &rawsig_len);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
     memcpy(sig, rawsig, rawsig_len);

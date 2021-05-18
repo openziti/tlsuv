@@ -1,7 +1,7 @@
 include(FetchContent)
 FetchContent_Declare(mbedtls
         GIT_REPOSITORY https://github.com/netfoundry/mbedtls.git
-        GIT_TAG verify-ip-sans+gcc11+mingw-stdio_2.x
+        GIT_TAG verify-ip-sans-properly-20210505
         GIT_SHALLOW 1
 )
 
