@@ -78,6 +78,9 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 
         close_connection(c);
         uv_async_send(&c->proc);
+        if (buf && buf->base) {
+            free(buf->base);
+        }
         return;
     }
 
