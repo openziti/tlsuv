@@ -23,6 +23,8 @@ static int tcp_src_connect(um_src_t *sl, const char *host, const char *service, 
 static void tcp_src_release(um_src_t *sl);
 static void tcp_src_cancel(um_src_t *sl);
 
+static void free_handle(uv_handle_t *h);
+
 int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     tl->loop = l;
     tl->link = calloc(1, sizeof(uv_link_source_t));
@@ -53,16 +55,20 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
 
     // old request
     if (req->handle != (uv_stream_t *)sl->conn) {
+        UM_LOG(TRACE, "old handle(%p)", req->handle);
         free(req);
         return;
     }
 
     if (status == 0) {
         uv_link_source_init((uv_link_source_t *) sl->link, (uv_stream_t *) sl->conn);
+        sl->link->data = sl;
         uv_tcp_nodelay(sl->conn, sl->nodelay);
         uv_tcp_keepalive(sl->conn, sl->keepalive > 0, sl->keepalive);
     } else {
         UM_LOG(ERR, "failed to connect: %d(%s)", status, uv_strerror(status));
+        sl->conn = NULL;
+        uv_close((uv_handle_t *) req->handle, free_handle);
     }
 
     sl->connect_cb((um_src_t *)sl, status, sl->connect_ctx);
@@ -120,12 +126,28 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     return rc;
 }
 
+static void link_close_cb(uv_link_t *l) {
+    tcp_src_t *tcp = l->data;
+    free_handle((uv_handle_t *) tcp->conn);
+}
 static void tcp_src_cancel(um_src_t *sl) {
     tcp_src_t *tl = (tcp_src_t*)sl;
+    uv_link_source_t *ts = (uv_link_source_t *) tl->link;
+
     if (tl->conn) {
-        if (uv_tcp_close_reset(tl->conn, free_handle) != 0) {
-            if (!uv_is_closing((const uv_handle_t *) tl->conn)) {
-                uv_close((uv_handle_t *) tl->conn, free_handle);
+        UM_LOG(TRACE, "closing %p active(%d) src_link->stream(%p)", tl->conn, uv_is_active((const uv_handle_t *) tl->conn), ts->stream);
+        int rc = uv_tcp_close_reset(tl->conn, free_handle);
+        UM_LOG(TRACE, "close_reset() =  %d, is_closing = %d(%s)", rc, uv_is_closing((const uv_handle_t *) tl->conn), uv_strerror(rc));
+
+        if (rc != 0) {
+            if (uv_is_closing((const uv_handle_t *) tl->conn)) {
+                if (ts->stream != (uv_stream_t *)tl->conn) {
+                    free_handle((uv_handle_t *) tl->conn);
+                }
+                // N.B: tl->conn is leaked if above condition is true (i.e. close was called but link_source_close_cb not completed yet)
+                // this does not seem to happen (and seems unlikely)
+            } else {
+                uv_link_default_close(tl->link, tl->link, link_close_cb);
             }
         }
     }
