@@ -72,8 +72,7 @@ static void on_ws_data(uv_stream_t *s, ssize_t nread, const uv_buf_t* buf) {
     um_websocket_close(ws, on_close_cb);
 }
 
-
-TEST_CASE("websocket tests", "[websocket]") {
+TEST_CASE("websocket fail tests", "[websocket]") {
     uv_loop_t *loop = uv_loop_new();
     auto *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
     uv_timer_init(loop, timer);
@@ -106,6 +105,18 @@ TEST_CASE("websocket tests", "[websocket]") {
         uv_run(loop, UV_RUN_DEFAULT);
         CHECK((rc == UV_EAI_NONAME || test.conn_status == UV_EAI_NONAME));
     }
+    uv_loop_close(loop);
+    free(loop);
+}
+
+TEST_CASE("websocket echo tests", "[websocket]") {
+    uv_loop_t *loop = uv_loop_new();
+    auto *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
+    uv_timer_init(loop, timer);
+    uv_unref((uv_handle_t *) timer);
+    uv_timer_start(timer, test_timeout, 15000, 0);
+    um_websocket_t clt;
+    websocket_test test;
 
     WHEN("ws echo test") {
         um_websocket_init(loop, &clt);
