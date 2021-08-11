@@ -204,7 +204,6 @@ static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_
     SSL_CONF_CTX_set_flags(conf, SSL_CONF_FLAG_CLIENT);
 
     SSL_CTX *ctx = SSL_CTX_new(method);
-    SSL_CTX_clear_mode(ctx, SSL_MODE_AUTO_RETRY);
 
     SSL_CONF_CTX_set_ssl_ctx(conf, ctx);
     SSL_CONF_CTX_finish(conf);
@@ -698,7 +697,7 @@ static int
 tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout) {
     struct openssl_engine *eng = (struct openssl_engine *) engine;
     if (ssl_in_len > 0 && ssl_in != NULL) {
-        BIO_write(eng->in, (const unsigned char *)ssl_in, ssl_in_len);
+        BIO_write(eng->in, (const unsigned char *)ssl_in, (int)ssl_in_len);
     }
 
     int rc;

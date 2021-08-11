@@ -118,7 +118,6 @@ void send_part2(uv_timer_t *t) {
 }
 
 TEST_CASE("conn failures", "[http]") {
-    uv_mbed_set_debug(7, test_log);
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
     uv_loop_t *loop = uv_default_loop();
