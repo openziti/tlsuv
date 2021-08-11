@@ -71,13 +71,10 @@ struct openssl_engine {
 
 static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_len);
 static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
-//static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
-//            const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
-
+static int tls_set_own_cert_pkcs11(void *ctx, const char *cert_buf, size_t cert_len,
+                               const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
 tls_engine *new_openssl_engine(void *ctx, const char *host);
 static void tls_set_alpn_protocols(void *ctx, const char **protos, int len);
-
-
 
 static tls_handshake_state tls_hs_state(void *engine);
 static tls_handshake_state
@@ -118,6 +115,9 @@ static int load_key(tls_private_key *key, const char* keydata, size_t keydatalen
 
 static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...);
 
+static void msg_cb (int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg);
+static void info_cb(const SSL *s, int where, int ret);
+
 static tls_context_api openssl_context_api = {
         .strerror = tls_error,
         .new_engine = new_openssl_engine,
@@ -126,7 +126,7 @@ static tls_context_api openssl_context_api = {
         .free_key = tls_free_key,
         .free_cert = tls_free_cert,
         .set_own_cert = tls_set_own_cert,
-//        .set_own_cert_pkcs11 = tls_set_own_cert_p11, TODO
+        .set_own_cert_pkcs11 = tls_set_own_cert_pkcs11,
         .set_cert_verify = tls_set_cert_verify,
         .set_alpn_protocols = tls_set_alpn_protocols,
         .verify_signature =  tls_verify_signature,
@@ -198,30 +198,218 @@ static X509_STORE_CTX * load_certs(const char *buf, size_t buf_len) {
 
 static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_len) {
     SSL_library_init();
-    char *tls_debug = getenv("TLS_DEBUG");
-    if (tls_debug != NULL) {
-        int level = (int) strtol(tls_debug, NULL, 10);
-        // TODO mbedtls_debug_set_threshold(level);
-    }
-
 
     const SSL_METHOD *method = TLS_client_method();
+    SSL_CONF_CTX *conf = SSL_CONF_CTX_new();
+    SSL_CONF_CTX_set_flags(conf, SSL_CONF_FLAG_CLIENT);
+
     SSL_CTX *ctx = SSL_CTX_new(method);
-    X509 *c;
+    SSL_CTX_clear_mode(ctx, SSL_MODE_AUTO_RETRY);
+
+    SSL_CONF_CTX_set_ssl_ctx(conf, ctx);
+    SSL_CONF_CTX_finish(conf);
+
     if (cabuf != NULL) {
         X509_STORE_CTX *ca = load_certs(cabuf, cabuf_len);
         SSL_CTX_set1_cert_store(ctx, X509_STORE_CTX_get0_store(ca));
         X509_STORE_CTX_free(ca);
-    }
-    else { // try loading default CA stores
+    } else { // try loading default CA stores
         SSL_CTX_set_default_verify_paths(ctx);
     }
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
+
+    char *tls_debug = getenv("TLS_DEBUG");
+    if (tls_debug) {
+        SSL_CTX_set_msg_callback(ctx, msg_cb);
+        SSL_CTX_set_info_callback(ctx, info_cb);
+    }
+
     *ssl_ctx = ctx;
 }
 
+typedef struct string_int_pair_st {
+    const char *name;
+    int retval;
+} OPT_PAIR, STRINT_PAIR;
 
-void msg_cb (int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
-    UM_LOG(TRACE, "%s v[%d], ct[%d], len[%zd]", write_p ? ">" : "<", version, content_type, len);
+static const char *lookup(int val, const STRINT_PAIR* list, const char* def)
+{
+    for ( ; list->name; ++list)
+        if (list->retval == val)
+            return list->name;
+    return def;
+}
+
+static STRINT_PAIR handshakes[] = {
+    {", HelloRequest", SSL3_MT_HELLO_REQUEST},
+    {", ClientHello", SSL3_MT_CLIENT_HELLO},
+    {", ServerHello", SSL3_MT_SERVER_HELLO},
+    {", HelloVerifyRequest", DTLS1_MT_HELLO_VERIFY_REQUEST},
+    {", NewSessionTicket", SSL3_MT_NEWSESSION_TICKET},
+    {", EndOfEarlyData", SSL3_MT_END_OF_EARLY_DATA},
+    {", EncryptedExtensions", SSL3_MT_ENCRYPTED_EXTENSIONS},
+    {", Certificate", SSL3_MT_CERTIFICATE},
+    {", ServerKeyExchange", SSL3_MT_SERVER_KEY_EXCHANGE},
+    {", CertificateRequest", SSL3_MT_CERTIFICATE_REQUEST},
+    {", ServerHelloDone", SSL3_MT_SERVER_DONE},
+    {", CertificateVerify", SSL3_MT_CERTIFICATE_VERIFY},
+    {", ClientKeyExchange", SSL3_MT_CLIENT_KEY_EXCHANGE},
+    {", Finished", SSL3_MT_FINISHED},
+    {", CertificateUrl", SSL3_MT_CERTIFICATE_URL},
+    {", CertificateStatus", SSL3_MT_CERTIFICATE_STATUS},
+    {", SupplementalData", SSL3_MT_SUPPLEMENTAL_DATA},
+    {", KeyUpdate", SSL3_MT_KEY_UPDATE},
+#ifndef OPENSSL_NO_NEXTPROTONEG
+    {", NextProto", SSL3_MT_NEXT_PROTO},
+#endif
+    {", MessageHash", SSL3_MT_MESSAGE_HASH},
+    {NULL}
+};
+
+
+static STRINT_PAIR alert_types[] = {
+    {" close_notify", 0},
+    {" end_of_early_data", 1},
+    {" unexpected_message", 10},
+    {" bad_record_mac", 20},
+    {" decryption_failed", 21},
+    {" record_overflow", 22},
+    {" decompression_failure", 30},
+    {" handshake_failure", 40},
+    {" bad_certificate", 42},
+    {" unsupported_certificate", 43},
+    {" certificate_revoked", 44},
+    {" certificate_expired", 45},
+    {" certificate_unknown", 46},
+    {" illegal_parameter", 47},
+    {" unknown_ca", 48},
+    {" access_denied", 49},
+    {" decode_error", 50},
+    {" decrypt_error", 51},
+    {" export_restriction", 60},
+    {" protocol_version", 70},
+    {" insufficient_security", 71},
+    {" internal_error", 80},
+    {" inappropriate_fallback", 86},
+    {" user_canceled", 90},
+    {" no_renegotiation", 100},
+    {" missing_extension", 109},
+    {" unsupported_extension", 110},
+    {" certificate_unobtainable", 111},
+    {" unrecognized_name", 112},
+    {" bad_certificate_status_response", 113},
+    {" bad_certificate_hash_value", 114},
+    {" unknown_psk_identity", 115},
+    {" certificate_required", 116},
+    {NULL}
+};
+
+static STRINT_PAIR ssl_versions[] = {
+    {"SSL 3.0", SSL3_VERSION},
+    {"TLS 1.0", TLS1_VERSION},
+    {"TLS 1.1", TLS1_1_VERSION},
+    {"TLS 1.2", TLS1_2_VERSION},
+    {"TLS 1.3", TLS1_3_VERSION},
+    {"DTLS 1.0", DTLS1_VERSION},
+    {"DTLS 1.0 (bad)", DTLS1_BAD_VER},
+    {NULL}
+};
+
+static void msg_cb (int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
+    const char *str_write_p = write_p ? ">>>" : "<<<";
+
+    const char *str_content_type = "", *str_details1 = "", *str_details2 = "";
+    const char *str_version = lookup(version, ssl_versions, "???");
+
+    const unsigned char* bp = buf;
+
+    if (version == SSL3_VERSION ||
+        version == TLS1_VERSION ||
+        version == TLS1_1_VERSION ||
+        version == TLS1_2_VERSION ||
+        version == TLS1_3_VERSION ||
+        version == DTLS1_VERSION || version == DTLS1_BAD_VER) {
+        switch (content_type) {
+        case 20:
+            str_content_type = ", ChangeCipherSpec";
+            break;
+        case 21:
+            str_content_type = ", Alert";
+            str_details1 = ", ???";
+            if (len == 2) {
+                switch (bp[0]) {
+                case 1:
+                    str_details1 = ", warning";
+                    break;
+                case 2:
+                    str_details1 = ", fatal";
+                    break;
+                }
+                str_details2 = lookup((int)bp[1], alert_types, " ???");
+            }
+            break;
+        case 22:
+            str_content_type = ", Handshake";
+            str_details1 = "???";
+            if (len > 0)
+                str_details1 = lookup((int)bp[0], handshakes, "???");
+            break;
+        case 23:
+            str_content_type = ", ApplicationData";
+            break;
+        }
+    } else if (version == 0 && content_type == SSL3_RT_HEADER) {
+        str_version = "";
+        str_content_type = "TLS Header";
+    }
+
+    UM_LOG(TRACE, "%s %s%s [length %04lx]%s%s", str_write_p, str_version,
+               str_content_type, (unsigned long)len, str_details1,
+               str_details2);
+
+//    if (len > 0) {
+//        size_t num, i;
+//
+//        fprintf(stderr, "   ");
+//        num = len;
+//        for (i = 0; i < num; i++) {
+//            if (i % 16 == 0 && i > 0)
+//                fprintf(stderr, "\n   ");
+//            fprintf(stderr, " %02x", ((const unsigned char *)buf)[i]);
+//        }
+//        if (i < len)
+//            fprintf(stderr, " ...");
+//        fprintf(stderr, "\n");
+//    }
+
+}
+
+void info_cb(const SSL *s, int where, int ret) {
+    const char *str;
+    int w = where & ~SSL_ST_MASK;
+
+    if (w & SSL_ST_CONNECT)
+        str = "SSL_connect";
+    else if (w & SSL_ST_ACCEPT)
+        str = "SSL_accept";
+    else
+        str = "undefined";
+
+    if (where & SSL_CB_LOOP) {
+        UM_LOG(TRACE, "%s:%s", str, SSL_state_string_long(s));
+    } else if (where & SSL_CB_ALERT) {
+        str = (where & SSL_CB_READ) ? "read" : "write";
+        UM_LOG(VERB, "SSL3 alert %s:%s:%s",
+                   str,
+                   SSL_alert_type_string_long(ret),
+                   SSL_alert_desc_string_long(ret));
+    } else if (where & SSL_CB_EXIT) {
+        if (ret == 0)
+            UM_LOG(VERB, "%s:failed in %s", str, SSL_state_string_long(s));
+        else if (ret < 0)
+            UM_LOG(VERB, "%s:error in %s", str, SSL_state_string_long(s));
+    }
 }
 
 tls_engine *new_openssl_engine(void *ctx, const char *host) {
@@ -234,11 +422,10 @@ tls_engine *new_openssl_engine(void *ctx, const char *host) {
     eng->in = BIO_new(BIO_s_mem());
     eng->out = BIO_new(BIO_s_mem());
     SSL_set_bio(eng->ssl, eng->in, eng->out);
+    SSL_set_tlsext_host_name(eng->ssl, host);
     SSL_set1_host(eng->ssl, host);
     SSL_set_connect_state(eng->ssl);
     engine->api = &openssl_engine_api;
-
-    SSL_set_msg_callback(eng->ssl, msg_cb);
 
     if (context->alpn_protocols) {
         SSL_set_alpn_protos(eng->ssl, context->alpn_protocols, strlen(context->alpn_protocols));
@@ -372,6 +559,12 @@ static void tls_set_alpn_protocols(void *ctx, const char **protos, int len) {
     *p = 0;
 }
 
+#define SSL_OP_CHECK(op, desc) do{ \
+if ((op) != 1) { \
+        uint32_t err = ERR_get_error(); \
+        UM_LOG(ERR, "failed to " desc ": %d(%s)", err, tls_error(err)); \
+        return TLS_ERR; \
+    }} while(0)
 
 static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
     struct openssl_ctx *c = ctx;
@@ -384,12 +577,13 @@ static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, co
 
     STACK_OF(X509_OBJECT) *stack = X509_STORE_get0_objects(store);
 
-    int code = SSL_CTX_use_PrivateKey(ssl, c->own_key);
-
     X509_OBJECT *o = sk_X509_OBJECT_value(stack, 0);
     X509 *crt = X509_OBJECT_get0_X509(o);
-    code = SSL_CTX_use_certificate(ssl, crt);
+    SSL_OP_CHECK(SSL_CTX_use_certificate(ssl, crt), "set own cert");
     c->own_cert = crt;
+
+    SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, c->own_key), "set own key");
+    SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
     return rc;
 }
 
@@ -433,7 +627,8 @@ static int tls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len
 
 static tls_handshake_state tls_hs_state(void *engine) {
     struct openssl_engine *eng = (struct openssl_engine *) engine;
-    switch (SSL_get_state(eng->ssl)) {
+    OSSL_HANDSHAKE_STATE state = SSL_get_state(eng->ssl);
+    switch (state) {
         case TLS_ST_OK: return TLS_HS_COMPLETE;
         case TLS_ST_BEFORE: return TLS_HS_BEFORE;
         default: return TLS_HS_CONTINUE;
@@ -445,13 +640,13 @@ static tls_handshake_state
 tls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout) {
     struct openssl_engine *eng = (struct openssl_engine *) engine;
     if (in_bytes > 0) {
-        BIO_write(eng->in, (const unsigned char *)in, in_bytes);
+        BIO_write(eng->in, (const unsigned char *)in, (int)in_bytes);
     }
 
     int state = SSL_do_handshake(eng->ssl);
     int err = SSL_get_error(eng->ssl, state);
     if (BIO_ctrl_pending(eng->out) > 0) {
-        *out_bytes = BIO_read(eng->out, (unsigned char *) out, maxout);
+        *out_bytes = BIO_read(eng->out, (unsigned char *) out, (int)maxout);
     } else {
         *out_bytes = 0;
     }
@@ -697,4 +892,10 @@ static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...) {
     X509_REQ_free(req);
 
     return 0;
+}
+
+static int tls_set_own_cert_pkcs11(void *ctx, const char *cert_buf, size_t cert_len,
+                               const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id) {
+    UM_LOG(ERR, "pkcs11 support not implemented by this engine");
+    return TLS_ERR;
 }
