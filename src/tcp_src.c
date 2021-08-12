@@ -53,6 +53,12 @@ int tcp_src_keepalive(tcp_src_t *ts, int on, unsigned int val) {
 static void tcp_connect_cb(uv_connect_t *req, int status) {
     tcp_src_t *sl = req->data;
 
+    if (status == UV_ECANCELED) {
+        UM_LOG(TRACE, "connect was cancelled: handle(%p) closing(%d)", req->handle, uv_is_closing((const uv_handle_t *) req->handle));
+        free(req);
+        return;
+    }
+
     // old request
     if (req->handle != (uv_stream_t *)sl->conn) {
         UM_LOG(TRACE, "old handle(%p)", req->handle);
