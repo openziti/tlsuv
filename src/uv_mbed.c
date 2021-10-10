@@ -97,13 +97,19 @@ int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay) {
 
 static void on_tls_hs(tls_link_t *tls_link, int status) {
     uv_mbed_t *mbed = tls_link->data;
+
+    uv_connect_t *req = mbed->conn_req;
+    if (req == NULL) {
+        return;
+    }
+
     if (status == TLS_HS_COMPLETE) {
-        mbed->conn_req->cb(mbed->conn_req, 0);
+        req->cb(req, 0);
     } else if (status == TLS_HS_ERROR) {
-        mbed->conn_req->cb(mbed->conn_req, UV_ECONNABORTED);
+        req->cb(req, UV_ECONNABORTED);
     } else {
         UM_LOG(WARN, "unexpected handshake status[%d]", status);
-        mbed->conn_req->cb(mbed->conn_req, UV_EINVAL);
+        req->cb(req, UV_EINVAL);
     }
     mbed->conn_req = NULL;
 }
