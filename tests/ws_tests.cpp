@@ -46,7 +46,7 @@ static void on_close_cb(uv_handle_t *h) {
 }
 
 static void on_connect(uv_connect_t *req, int status) {
-    websocket_test *t = static_cast<websocket_test *>(req->data);
+    auto *t = static_cast<websocket_test *>(req->data);
     um_websocket_t *ws = t->ws;
     t->conn_status = status;
 
@@ -57,15 +57,17 @@ static void on_connect(uv_connect_t *req, int status) {
         uv_buf_t b = uv_buf_init((char*)msg, strlen(msg));
         CHECK(um_websocket_write(&req, ws, &b, on_ws_write) == 0);
     } else {
+        printf("connect failed: status %s\n", uv_err_name(status));
         um_websocket_close(ws, on_close_cb);
     }
 }
 
 static void on_ws_data(uv_stream_t *s, ssize_t nread, const uv_buf_t* buf) {
-    um_websocket_t *ws = reinterpret_cast<um_websocket_t *>(s);
+    auto *ws = reinterpret_cast<um_websocket_t *>(s);
     auto *t = static_cast<websocket_test *>(ws->data);
     if (nread > 0) {
         string text(buf->base, nread);
+        printf("received '%s'\n", text.data());
         t->resp.push_back(text);
     }
 
