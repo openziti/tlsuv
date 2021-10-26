@@ -183,6 +183,7 @@ int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url,
 
     ws->host = host;
     ws->read_cb = read_cb;
+    UM_LOG(DEBG, "connecting to '%s:%s'", host, portstr);
     return ws->src->connect(ws->src, host, portstr, src_connect_cb, req);
 }
 
