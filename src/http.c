@@ -434,9 +434,6 @@ int um_http_set_url(um_http_t *clt, const char *url) {
         return UV_EINVAL;
     }
 
-    if (url_parse.field_set & (U1<< UF_PATH)) {
-        clt->prefix = strndup(url + url_parse.field_data[UF_PATH].off, url_parse.field_data[UF_PATH].len);
-    }
     um_http_header(clt, "Host", clt->host);
 
     uint16_t port = -1;
@@ -481,6 +478,8 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
     clt->connected = Disconnected;
     clt->src = src;
     clt->host_change = false;
+    clt->host = NULL;
+    clt->prefix = NULL;
 
     int rc = um_http_set_url(clt, url);
     if (rc != 0) {
@@ -493,7 +492,6 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
     uv_unref((uv_handle_t *) &clt->conn_timer);
     clt->conn_timer.data = clt;
 
-    clt->prefix = NULL;
     um_http_header(clt, "Connection", "keep-alive");
 
     uv_async_init(l, &clt->proc, process_requests);
