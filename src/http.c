@@ -178,6 +178,13 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
         if (clt->tls == NULL) {
             clt->tls = get_default_tls();
         }
+
+        if (clt->host_change) {
+            clt->tls->api->free_engine(clt->engine);
+            clt->engine = NULL;
+            clt->host_change = false;
+        }
+
         if (!clt->engine) {
             clt->engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
         }
@@ -392,28 +399,30 @@ int um_http_close(um_http_t *clt) {
     return 0;
 }
 
-int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_t *src) {
-    STAILQ_INIT(&clt->requests);
-    LIST_INIT(&clt->headers);
+static void http_set_prefix(um_http_t *clt, const char *pfx, size_t pfx_len) {
+    if (clt->prefix) {
+        free(clt->prefix);
+        clt->prefix = NULL;
+    }
 
-    clt->ssl = false;
-    clt->tls = NULL;
-    clt->engine = NULL;
-    clt->active = NULL;
-    clt->connected = Disconnected;
-    clt->src = src;
+    if (pfx) {
+        clt->prefix = calloc(1, pfx_len + 1);
+        strncpy(clt->prefix, pfx, pfx_len);
+    }
+}
 
-    clt->connect_timeout = 0;
-    clt->idle_time = DEFAULT_IDLE_TIMEOUT;
-    uv_timer_init(l, &clt->conn_timer);
-    uv_unref((uv_handle_t *) &clt->conn_timer);
-    clt->conn_timer.data = clt;
-
-    clt->prefix = NULL;
-    um_http_header(clt, "Connection", "keep-alive");
-
+int um_http_set_url(um_http_t *clt, const char *url) {
     struct http_parser_url url_parse = {0};
-    int rc = http_parser_parse_url(url, strlen(url), false, &url_parse);
+    if (http_parser_parse_url(url, strlen(url), false, &url_parse)) {
+        UM_LOG(ERR, "invalid URL[%s]", url);
+        return UV_EINVAL;
+    }
+
+    if (clt->host) {
+        clt->host_change = true;
+        free(clt->host);
+    }
+    set_http_header(&clt->headers, "Host", NULL);
 
     if (url_parse.field_set & (U1 << (unsigned int) UF_HOST)) {
         clt->host = strndup(url +
@@ -424,22 +433,17 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
         UM_LOG(ERR, "invalid URL: no host");
         return UV_EINVAL;
     }
-    if (url_parse.field_set & (U1<< UF_PATH)) {
-        clt->prefix = strndup(url + url_parse.field_data[UF_PATH].off, url_parse.field_data[UF_PATH].len);
-    }
+
     um_http_header(clt, "Host", clt->host);
 
     uint16_t port = -1;
     if (url_parse.field_set & (U1 << (unsigned int) UF_SCHEMA)) {
         if (strncasecmp("http", url + url_parse.field_data[UF_SCHEMA].off, url_parse.field_data[UF_SCHEMA].len) == 0) {
             port = 80;
-        }
-        else if (strncasecmp("https", url + url_parse.field_data[UF_SCHEMA].off, url_parse.field_data[UF_SCHEMA].len) ==
-                 0) {
+        } else if (strncasecmp("https", url + url_parse.field_data[UF_SCHEMA].off, url_parse.field_data[UF_SCHEMA].len) == 0) {
             port = 443;
             clt->ssl = true;
-        }
-        else {
+        } else {
             UM_LOG(ERR, "scheme(%*.*s) is not supported",
                     url_parse.field_data[UF_SCHEMA].len, url_parse.field_data[UF_SCHEMA].len,
                     url + url_parse.field_data[UF_SCHEMA].off);
@@ -457,6 +461,39 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
 
     sprintf(clt->port, "%d", port);
 
+    if (url_parse.field_set & (U1 << (unsigned int) UF_PATH)) {
+        http_set_prefix(clt, url + url_parse.field_data[UF_PATH].off, url_parse.field_data[UF_PATH].len);
+    }
+    return 0;
+}
+
+int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_t *src) {
+    STAILQ_INIT(&clt->requests);
+    LIST_INIT(&clt->headers);
+
+    clt->ssl = false;
+    clt->tls = NULL;
+    clt->engine = NULL;
+    clt->active = NULL;
+    clt->connected = Disconnected;
+    clt->src = src;
+    clt->host_change = false;
+    clt->host = NULL;
+    clt->prefix = NULL;
+
+    int rc = um_http_set_url(clt, url);
+    if (rc != 0) {
+        return rc;
+    }
+
+    clt->connect_timeout = 0;
+    clt->idle_time = DEFAULT_IDLE_TIMEOUT;
+    uv_timer_init(l, &clt->conn_timer);
+    uv_unref((uv_handle_t *) &clt->conn_timer);
+    clt->conn_timer.data = clt;
+
+    um_http_header(clt, "Connection", "keep-alive");
+
     uv_async_init(l, &clt->proc, process_requests);
     uv_unref((uv_handle_t *) &clt->proc);
     clt->proc.data = clt;
@@ -465,14 +502,7 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
 }
 
 void um_http_set_path_prefix(um_http_t *clt, const char *prefix) {
-    if (clt->prefix) {
-        free(clt->prefix);
-        clt->prefix = NULL;
-    }
-
-    if (prefix) {
-        clt->prefix = strdup(prefix);
-    }
+    http_set_prefix(clt, prefix, strlen(prefix));
 }
 
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
