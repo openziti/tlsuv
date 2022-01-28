@@ -406,7 +406,7 @@ static void http_set_prefix(um_http_t *clt, const char *pfx, size_t pfx_len) {
     }
 
     if (pfx) {
-        clt->prefix = calloc(, pfx_len + 1);
+        clt->prefix = calloc(1, pfx_len + 1);
         strncpy(clt->prefix, pfx, pfx_len);
     }
 }
