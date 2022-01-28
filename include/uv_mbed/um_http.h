@@ -130,6 +130,7 @@ typedef struct um_http_s {
     char *host;
     char port[6];
     char *prefix;
+    bool host_change;
 
     bool ssl;
     tls_context *tls;
@@ -176,6 +177,18 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url);
  */
 int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_t *src);
 
+
+/**
+ * change the base URL for the given client.
+ *
+ * Note: this call leaves current connection intact if it is established.
+ * The new host/port will be used the next time connection has to be established.
+ *
+ * @param clt client struct
+ * @param url new base URL
+ */
+ int um_http_set_url(um_http_t *clt, const char *url);
+
 /**
  * @brief Set path prefix on the client.
  *
@@ -183,6 +196,7 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
  * @param clt
  * @param prefix path prefix, NULL to clear it
  */
+
 void um_http_set_path_prefix(um_http_t *clt, const char *prefix);
 
 /**

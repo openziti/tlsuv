@@ -172,6 +172,7 @@ const char* um_http_resp_header(um_http_resp_t *resp, const char *name) {
 static int http_headers_complete_cb(http_parser *p) {
     um_http_req_t *req = p->data;
     req->state = headers_received;
+    add_http_header(&req->resp.headers, "ziti-ctrl-address", "demo.openziti.org:443", strlen("demo.openziti.org:443"));
     if (req->resp_cb != NULL) {
         req->resp_cb(&req->resp, req->data);
     }
