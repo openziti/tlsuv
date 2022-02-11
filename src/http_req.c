@@ -18,6 +18,7 @@ limitations under the License.
 #include "um_debug.h"
 #include "win32_compat.h"
 #include <string.h>
+#include "compression.h"
 
 static void free_hdr(um_http_hdr *hdr);
 
@@ -58,6 +59,9 @@ void http_req_free(um_http_req_t *req) {
     free_hdr_list(&req->resp.headers);
     if (req->resp.status) {
         free(req->resp.status);
+    }
+    if (req->inflater) {
+        um_free_inflater(req->inflater);
     }
     free(req->path);
     free(req->method);
@@ -134,7 +138,7 @@ void add_http_header(um_header_list *hl, const char* name, const char *value, si
 void set_http_header(um_header_list *hl, const char* name, const char *value) {
     um_http_hdr *h;
     LIST_FOREACH(h, hl, _next) {
-        if (strcmp(h->name, name) == 0) {
+        if (strcasecmp(h->name, name) == 0) {
             break;
         }
     }
@@ -172,8 +176,17 @@ const char* um_http_resp_header(um_http_resp_t *resp, const char *name) {
 static int http_headers_complete_cb(http_parser *p) {
     um_http_req_t *req = p->data;
     req->state = headers_received;
+
+    const char *compression = um_http_resp_header(&req->resp, "content-encoding");
+    if (compression) {
+        set_http_header(&req->resp.headers, "Content-Length", NULL);
+        set_http_header(&req->resp.headers, "transfer-encoding", "chunked");
+    }
     if (req->resp_cb != NULL) {
         req->resp_cb(&req->resp, req->data);
+    }
+    if (compression && req->resp.body_cb) {
+        req->inflater = um_get_inflater(compression, req->resp.body_cb, req);
     }
     return 0;
 }
@@ -213,16 +226,24 @@ static int http_message_cb(http_parser *parser) {
     UM_LOG(VERB, "message complete");
     um_http_req_t *r = parser->data;
     r->state = completed;
-    if (r->resp.body_cb != NULL) {
+    if (r->inflater == NULL || um_inflate_state(r->inflater) == 1) {
         r->resp.body_cb(r, NULL, UV_EOF);
+    } else {
+        UM_LOG(ERR, "incomplete decompression at the end of HTTP message");
+        r->resp.body_cb(r, NULL, UV_EINVAL);
     }
+
     return 0;
 }
 
 static int http_body_cb(http_parser *parser, const char *body, size_t len) {
     um_http_req_t *r = parser->data;
-    if (r->resp.body_cb != NULL) {
-        r->resp.body_cb(r, body, len);
+    if (r->inflater) {
+        um_inflate(r->inflater, body, len);
+    } else {
+        if (r->resp.body_cb != NULL) {
+            r->resp.body_cb(r, body, len);
+        }
     }
     return 0;
 }

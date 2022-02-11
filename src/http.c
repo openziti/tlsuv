@@ -24,6 +24,7 @@ limitations under the License.
 #include "um_debug.h"
 #include "win32_compat.h"
 #include "http_req.h"
+#include "compression.h"
 
 #define DEFAULT_IDLE_TIMEOUT 0
 
@@ -493,6 +494,9 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
     clt->conn_timer.data = clt;
 
     um_http_header(clt, "Connection", "keep-alive");
+    if (um_available_encoding() != NULL) {
+        um_http_header(clt, "Accept-Encoding", um_available_encoding());
+    }
 
     uv_async_init(l, &clt->proc, process_requests);
     uv_unref((uv_handle_t *) &clt->proc);

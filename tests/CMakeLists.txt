@@ -4,14 +4,15 @@ set(test_srcs
         http_tests.cpp
         ws_tests.cpp
         engine_tests.cpp
-        uv_mbed_tests.cpp)
+        uv_mbed_tests.cpp compression_tests.cpp)
 
 
 add_executable(all_tests
         all_tests.cpp ${test_srcs})
 set_property(TARGET all_tests PROPERTY CXX_STANDARD 11)
 target_link_libraries(all_tests
-        uv_mbed)
+        uv_mbed
+        )
 
 target_include_directories(all_tests PRIVATE ../src)
 

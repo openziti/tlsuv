@@ -64,6 +64,8 @@ set(uv_mbed_sources
         src/tls_link.c
         src/base64.c
         src/tls_engine.c
+        src/compression.c
+        src/compression.h
         )
 
 
