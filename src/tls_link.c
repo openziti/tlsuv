@@ -166,31 +166,58 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     } else if (hs_state == TLS_HS_COMPLETE) {
         UM_LOG(TRACE, "TLS(%p) processing %zd bytes", tls, nread);
 
-        size_t read = 0;
-        size_t buf_size = b->len;
-
-        size_t out_bytes = 0;
+        size_t bufsize = b->len;
         char *inptr = b->base;
         size_t inlen = nread;
-        int rc;
-        do {
-            rc = tls->engine->api->read(tls->engine->engine, inptr, inlen,
-                    b->base + read, &out_bytes, buf_size - read);
-
+        enum TLS_RESULT rc = TLS_MORE_AVAILABLE;
+        while(rc == TLS_MORE_AVAILABLE || rc == TLS_READ_AGAIN) {
+            ssize_t out_bytes = 0;
+            rc = tls->engine->api->read(tls->engine->engine, inptr, inlen, b->base, (size_t *)&out_bytes, b->len);
             UM_LOG(TRACE, "TLS(%p) produced %zd application byte (rc=%d)", tls, out_bytes, rc);
-            read += out_bytes;
-            inptr = NULL;
-            inlen = 0;
-        } while (rc == TLS_MORE_AVAILABLE && out_bytes > 0);
 
-        if (rc == TLS_HAS_WRITE) {
-            uv_buf_t buf;
-            buf.base = malloc(TLS_BUF_SZ);
-            int tls_rc = tls->engine->api->write(tls->engine->engine, NULL, 0, buf.base, &buf.len, TLS_BUF_SZ);
-            uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_free_cb, buf.base);
+            switch (rc) {
+                case TLS_OK: {
+                    uv_link_propagate_read_cb(l, out_bytes, b);
+                    break;
+                }
+                case TLS_EOF: {
+                    if (out_bytes > 0) {
+                        uv_link_propagate_read_cb(l, out_bytes, b);
+                        uv_link_propagate_alloc_cb(l, bufsize, b);
+                    }
+                    uv_link_propagate_read_cb(l, UV_EOF, b);
+                    break;
+                }
+                case TLS_READ_AGAIN:
+                case TLS_MORE_AVAILABLE: {
+                    uv_link_propagate_read_cb(l, out_bytes, b);
+                    inlen = 0;
+                    inptr = NULL;
+                    uv_link_propagate_alloc_cb(l, bufsize, b);
+                    break;
+                }
+                case TLS_HAS_WRITE: {
+                    uv_buf_t buf;
+                    buf.base = malloc(TLS_BUF_SZ);
+                    int tls_rc = tls->engine->api->write(tls->engine->engine, NULL, 0, buf.base, &buf.len, TLS_BUF_SZ);
+                    uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_free_cb, buf.base);
+                    break;
+                }
+                case TLS_ERR:
+                default:
+                    if (out_bytes > 0) {
+                        uv_link_propagate_read_cb(l, out_bytes, b);
+                        uv_link_propagate_alloc_cb(l, bufsize, b);
+                    }
+                    if (rc != TLS_ERR) {
+                        UM_LOG(ERR, "aborting after unexpected TLS engine result: %d", rc);
+                    } else {
+                        UM_LOG(ERR, "aborting after TLS engine error: %s", tls->engine->api->strerror(tls->engine->engine));
+                    }
+                    uv_link_propagate_read_cb(l, UV_ECONNABORTED, b);
+                    break;
+            }
         }
-
-        uv_link_propagate_read_cb(l, read, b);
     }
     else {
         UM_LOG(VERB, "hs_state = %d", hs_state);

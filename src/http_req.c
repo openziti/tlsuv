@@ -186,8 +186,15 @@ static int http_header_field_cb(http_parser *parser, const char *f, size_t len) 
 
 static int http_header_value_cb(http_parser *parser, const char *v, size_t len) {
     um_http_req_t *req = parser->data;
-    add_http_header(&req->resp.headers, req->resp.curr_header, v, len);
-    free(req->resp.curr_header);
+
+    if (len > 0) {
+        if (req->resp.curr_header) {
+            add_http_header(&req->resp.headers, req->resp.curr_header, v, len);
+        } else {
+            UM_LOG(WARN, "Invalid HTTP parsing state, received header value[%.*s] without header name", (int)len, v);
+        }
+    }
+    if (req->resp.curr_header) free(req->resp.curr_header);
     req->resp.curr_header = NULL;
     return 0;
 }
