@@ -568,7 +568,7 @@ mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, siz
 
     *out_bytes = total_out;
 
-    // this indicates that more bytes are neded to complete SSL frame
+    // this indicates that more bytes are needed to complete SSL frame
     if (rc == MBEDTLS_ERR_SSL_WANT_READ) {
         return um_BIO_available(eng->out) > 0 ? TLS_HAS_WRITE : TLS_OK;
     }
