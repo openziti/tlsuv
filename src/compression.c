@@ -40,6 +40,14 @@ static void my_free(void *ctx, void *p) {
     free(p);
 }
 
+#if __linux__
+#define SO_lib(p) (#p ".so")
+#elif defined(__APPLE__)
+#define SO_lib(p) (#p ".dynlib")
+#else
+
+#endif
+
 static void init() {
 
 #define CHECK_DL(op) do{ \
@@ -47,7 +55,7 @@ if ((op) != 0)           \
 goto on_error;           \
 } while(0)
 
-    CHECK_DL(uv_dlopen("libz.so", &zlib));
+    CHECK_DL(uv_dlopen(SO_lib(libz), &zlib));
     CHECK_DL(uv_dlsym(&zlib, "zlibVersion", (void **) &zlib_ver));
     CHECK_DL(uv_dlsym(&zlib, "zlibCompileFlags", (void **) &zlib_flags));
     CHECK_DL(uv_dlsym(&zlib, "inflateEnd", (void **) &inflateEnd_f));
@@ -66,6 +74,7 @@ goto on_error;           \
     } else {
         encodings = "gzip, deflate";
     }
+    goto done;
 
     on_error:
     UM_LOG(ERR, "failed to initialize HTTP decompression: %s", uv_dlerror(&zlib));
