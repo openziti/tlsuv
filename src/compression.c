@@ -43,7 +43,7 @@ static void my_free(void *ctx, void *p) {
 #if __linux__
 #define SO_lib(p) (#p ".so")
 #elif defined(__APPLE__)
-#define SO_lib(p) (#p ".dynlib")
+#define SO_lib(p) (#p ".dylib")
 #else
 
 #endif
