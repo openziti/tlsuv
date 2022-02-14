@@ -12,7 +12,7 @@
 static uv_once_t init_guard;
 static uv_lib_t zlib;
 static const char* (*zlib_ver)(void);
-static ulong (*zlib_flags)(void);
+static unsigned long (*zlib_flags)(void);
 static int (*inflateEnd_f)(z_streamp strm);
 static int (*inflateInit_f)(z_streamp strm, const char *version, int stream_size);
 static int (*inflateInit2_f) (z_streamp strm, int  windowBits, const char *version, int stream_size);
