@@ -10,3 +10,5 @@ endif()
 include(http_parser.cmake)
 
 include(uv_link.cmake)
+
+include(zlib.cmake)

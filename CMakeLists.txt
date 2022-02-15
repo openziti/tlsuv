@@ -113,7 +113,9 @@ endif()
 
 if (WIN32)
     target_link_libraries(uv_mbed
-            PUBLIC crypt32)
+            PUBLIC crypt32
+            PUBLIC zlibstatic)
+
 
 endif()
 

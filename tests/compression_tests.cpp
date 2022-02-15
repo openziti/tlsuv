@@ -1,6 +1,5 @@
 
 
-#include <zlib.h>
 #include <uv.h>
 #include "catch.hpp"
 #include "compression.h"

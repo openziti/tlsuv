@@ -30,13 +30,11 @@ struct um_http_inflater_s {
     void *cb_ctx;
 };
 
-
-static void* my_alloc(void *ctx, unsigned int c, unsigned int s) {
-    printf("allocating %d * %d\n", c, s);
+static void* comp_alloc(void *ctx, unsigned int c, unsigned int s) {
     return calloc(c, s);
 }
 
-static void my_free(void *ctx, void *p) {
+static void comp_free(void *ctx, void *p) {
     free(p);
 }
 
@@ -50,6 +48,17 @@ static void my_free(void *ctx, void *p) {
 
 static void init() {
 
+#if WIN32
+    // on WIN32 zlib is not usually available
+    // so we link it statically and set functions pointers directly
+    zlib_ver = zlibVersion;
+    zlib_flags = zlibCompileFlags;
+    inflateInit_f = inflateInit_;
+    inflateInit2_f = inflateInit2_;
+    inflateEnd_f = inflateEnd;
+    inflate_f = inflate;
+    zError_f = zError;
+#else
 #define CHECK_DL(op) do{ \
 if ((op) != 0)           \
 goto on_error;           \
@@ -63,7 +72,7 @@ goto on_error;           \
     CHECK_DL(uv_dlsym(&zlib, "inflateInit2_", (void **) &inflateInit2_f));
     CHECK_DL(uv_dlsym(&zlib, "inflate", (void **) &inflate_f));
     CHECK_DL(uv_dlsym(&zlib, "zError", (void **) &zError_f));
-
+#endif
 
     ZLibVersion = zlib_ver();
     if (ZLibVersion[0] != ZLIB_VERSION[0]) {
@@ -95,8 +104,8 @@ http_inflater_t *um_get_inflater(const char *encoding, data_cb cb, void *ctx) {
     um_available_encoding();
 
     http_inflater_t *inf = calloc(1, sizeof(http_inflater_t));
-    inf->s.zalloc = my_alloc;
-    inf->s.zfree = my_free;
+    inf->s.zalloc = comp_alloc;
+    inf->s.zfree = comp_free;
     if (strcmp(encoding, "gzip") == 0)
         inflateInit2(&inf->s, 16 + MAX_WBITS);
     else if (strcmp(encoding, "deflate") == 0)

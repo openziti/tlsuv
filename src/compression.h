@@ -2,6 +2,13 @@
 #ifndef UV_MBED_COMPRESSION_H
 #define UV_MBED_COMPRESSION_H
 
+#if !defined(_SSIZE_T_) && !defined(_SSIZE_T_DEFINED)
+typedef intptr_t ssize_t;
+# define SSIZE_MAX INTPTR_MAX
+# define _SSIZE_T_
+# define _SSIZE_T_DEFINED
+#endif
+
 typedef struct um_http_inflater_s http_inflater_t;
 
 #if __cplusplus
