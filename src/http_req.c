@@ -18,6 +18,7 @@ limitations under the License.
 #include "um_debug.h"
 #include "win32_compat.h"
 #include <string.h>
+#include <ctype.h>
 #include "compression.h"
 
 static void free_hdr(um_http_hdr *hdr);
@@ -67,8 +68,14 @@ void http_req_free(um_http_req_t *req) {
     free(req->method);
 }
 
+static int printable_len(const char* buf, size_t len) {
+    const char *p = buf;
+    while (p - buf < len && (isprint(*p) || isspace(*p))) p++;
+    return (int)(p - buf);
+}
+
 size_t http_req_process(um_http_req_t *req, const char* buf, ssize_t len) {
-    UM_LOG(TRACE, "processing \n%.*s", len, buf);
+    UM_LOG(TRACE, "processing %zd bytes\n%.*s", len, printable_len(buf, len), buf);
     size_t processed = http_parser_execute(&req->parser, &HTTP_PROC, buf, len);
     UM_LOG(VERB, "processed %zd out of %zd", processed, len);
     return processed;
@@ -179,7 +186,7 @@ static int http_headers_complete_cb(http_parser *p) {
 
     const char *compression = um_http_resp_header(&req->resp, "content-encoding");
     if (compression) {
-        set_http_header(&req->resp.headers, "Content-Length", NULL);
+        set_http_header(&req->resp.headers, "content-length", NULL);
         set_http_header(&req->resp.headers, "transfer-encoding", "chunked");
     }
     if (req->resp_cb != NULL) {
