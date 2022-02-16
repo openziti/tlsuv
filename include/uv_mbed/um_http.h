@@ -55,7 +55,7 @@ typedef LIST_HEAD(hdr_list, um_http_hdr_s) um_header_list;
 typedef struct um_http_resp_s um_http_resp_t;
 typedef struct um_http_req_s um_http_req_t;
 typedef struct um_http_s um_http_t;
-
+typedef struct um_http_inflater_s um_http_inflater_t;
 /**
  * HTTP response callback type.
  */
@@ -114,6 +114,7 @@ typedef struct um_http_req_s {
 
     /** @brief callback called after server has sent response headers. Called before #body_cb */
     um_http_resp_cb resp_cb;
+    um_http_inflater_t *inflater;
 
     /*! request context */
     void *data;

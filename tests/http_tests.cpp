@@ -23,6 +23,7 @@ limitations under the License.
 #include <cstring>
 #include <uv_mbed/uv_mbed.h>
 #include <iostream>
+#include <compression.h>
 
 extern um_log_func test_log;
 using namespace std;
@@ -62,8 +63,8 @@ public:
     string body;
     string req_body;
 
-    bool resp_body_end_called{};
-    bool req_body_cb_called{};
+    int resp_body_end_called{};
+    int req_body_cb_called{};
 
     uv_timeval64_t resp_start{};
     uv_timeval64_t resp_endtime{};
@@ -82,7 +83,7 @@ void resp_body_cb(um_http_req_t *req, const char *chunk, ssize_t len) {
         rc->body.append(chunk, len);
     }
     else if (len == UV_EOF) {
-        rc->resp_body_end_called = true;
+        rc->resp_body_end_called += 1;
     }
 }
 
@@ -835,4 +836,62 @@ TEST_CASE("connect timeout", "[http]") {
     free(loop);
 
     tls->api->free_ctx(tls);
+}
+
+
+
+TEST_CASE("HTTP gzip", "[http]") {
+    uv_loop_t *loop = uv_loop_new();
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+    um_http_init(loop, &clt, "https://httpbin.org");
+    um_http_req_t *req = um_http_req(&clt, "GET", "/gzip", resp_capture_cb, &resp);
+
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    THEN("request should be fast and then idle for 5 seconds") {
+        CHECK(resp.code == HTTP_STATUS_OK);
+        CHECK_THAT(resp.http_version, Equals("1.1"));
+        CHECK_THAT(resp.status, Equals("OK"));
+        CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
+        CHECK(resp.headers["Content-Encoding"] == "gzip");
+        CHECK_THAT(resp.body, Contains(R"("Accept-Encoding": "gzip, deflate")"));
+        CHECK(resp.resp_body_end_called == 1);
+    }
+
+    std::cout << resp.req_body << std::endl;
+
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
+}
+
+TEST_CASE("deflate_compression", "[http]") {
+    uv_loop_t *loop = uv_loop_new();
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+    um_http_init(loop, &clt, "https://httpbin.org");
+    um_http_req_t *req = um_http_req(&clt, "GET", "/deflate", resp_capture_cb, &resp);
+
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    THEN("request should be fast and then idle for 5 seconds") {
+        CHECK(resp.code == HTTP_STATUS_OK);
+        CHECK_THAT(resp.http_version, Equals("1.1"));
+        CHECK_THAT(resp.status, Equals("OK"));
+        CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
+        CHECK(resp.headers["Content-Encoding"] == "deflate");
+        CHECK_THAT(resp.body, Contains(R"("Accept-Encoding": "gzip, deflate")"));
+        CHECK(resp.resp_body_end_called == 1);
+    }
+
+    std::cout << resp.req_body << std::endl;
+
+    um_http_close(&clt);
+    uv_run(loop, UV_RUN_ONCE);
+
+    uv_loop_close(loop);
+    free(loop);
 }

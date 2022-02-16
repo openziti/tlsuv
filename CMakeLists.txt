@@ -64,6 +64,8 @@ set(uv_mbed_sources
         src/tls_link.c
         src/base64.c
         src/tls_engine.c
+        src/compression.c
+        src/compression.h
         )
 
 
@@ -111,7 +113,9 @@ endif()
 
 if (WIN32)
     target_link_libraries(uv_mbed
-            PUBLIC crypt32)
+            PUBLIC crypt32
+            PUBLIC zlibstatic)
+
 
 endif()
 
