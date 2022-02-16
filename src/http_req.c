@@ -68,14 +68,14 @@ void http_req_free(um_http_req_t *req) {
     free(req->method);
 }
 
-static int printable_len(const char* buf, size_t len) {
-    const char *p = buf;
+static int printable_len(const unsigned char* buf, size_t len) {
+    const unsigned char *p = buf;
     while (p - buf < len && (isprint(*p) || isspace(*p))) p++;
     return (int)(p - buf);
 }
 
 size_t http_req_process(um_http_req_t *req, const char* buf, ssize_t len) {
-    UM_LOG(TRACE, "processing %zd bytes\n%.*s", len, printable_len(buf, len), buf);
+    UM_LOG(TRACE, "processing %zd bytes\n%.*s", len, printable_len((const unsigned char*)buf, len), buf);
     size_t processed = http_parser_execute(&req->parser, &HTTP_PROC, buf, len);
     UM_LOG(VERB, "processed %zd out of %zd", processed, len);
     return processed;
