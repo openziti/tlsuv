@@ -321,7 +321,7 @@ static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* d
     }
 
     mbedtls_x509_crt *crt = cert;
-    if (mbedtls_pk_verify(&crt->MBEDTLS_PRIVATE(pk), type, hash, 0, (uint8_t *)sig, siglen) != 0) {
+    if (mbedtls_pk_verify(&crt->pk, type, hash, 0, (uint8_t *)sig, siglen) != 0) {
         return -1;
     }
 
@@ -654,9 +654,9 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len
     }
 
     mbedtls_asn1_buf oid;
-    oid.MBEDTLS_PRIVATE(p) = p;
-    oid.MBEDTLS_PRIVATE(len) = len;
-    if (!MBEDTLS_OID_CMP_PRIVATE(OID_PKCS7_SIGNED_DATA, &oid)) {
+    oid.p = p;
+    oid.len = len;
+    if (!MBEDTLS_OID_CMP(OID_PKCS7_SIGNED_DATA, &oid)) {
         UM_LOG(ERR, "invalid pkcs7 signed data");
         return -1;
     }
@@ -693,9 +693,9 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len
         return rc;
     }
 
-    oid.MBEDTLS_PRIVATE(p) = p;
-    oid.MBEDTLS_PRIVATE(len) = len;
-    if (!MBEDTLS_OID_CMP_PRIVATE(OID_PKCS7_DATA, &oid)) {
+    oid.p = p;
+    oid.len = len;
+    if (!MBEDTLS_OID_CMP(OID_PKCS7_DATA, &oid)) {
         UM_LOG(ERR, "invalid pkcs7 data");
         return -1;
     }
@@ -745,10 +745,10 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
     size_t total_len = 0;
     while (c != NULL) {
         size_t len;
-        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->MBEDTLS_PRIVATE(raw).MBEDTLS_PRIVATE(p), c->MBEDTLS_PRIVATE(raw).MBEDTLS_PRIVATE(len), NULL, 0, &len);
+        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->raw.p, c->raw.len, NULL, 0, &len);
         total_len += len;
         if (!full_chain) { break; }
-        c = c->MBEDTLS_PRIVATE(next);
+        c = c->next;
     }
 
     uint8_t *pembuf = malloc(total_len + 1);
@@ -756,12 +756,12 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
     c = cert;
     while (c != NULL) {
         size_t len;
-        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->MBEDTLS_PRIVATE(raw).MBEDTLS_PRIVATE(p), c->MBEDTLS_PRIVATE(raw).MBEDTLS_PRIVATE(len), p, total_len - (p - pembuf), &len);
+        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->raw.p, c->raw.len, p, total_len - (p - pembuf), &len);
         p += (len - 1);
         if (!full_chain) {
             break;
         }
-        c = c->MBEDTLS_PRIVATE(next);
+        c = c->next;
     }
 
     *pem = (char *) pembuf;
