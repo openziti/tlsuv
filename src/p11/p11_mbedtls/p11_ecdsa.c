@@ -17,7 +17,7 @@ limitations under the License.
 #include <stdlib.h>
 #include <string.h>
 #include <mbedtls/pk.h>
-#include <mbedtls/pk_internal.h>
+#include <mbedtls/error.h>
 #include "mbed_p11.h"
 #include <mbedtls/asn1write.h>
 #include <mbedtls/oid.h>
@@ -40,32 +40,9 @@ static void p11_ecdsa_free(void *ctx);
 static int ecdsa_signature_to_asn1(const mbedtls_mpi *r, const mbedtls_mpi *s,
                                    unsigned char *sig, size_t *slen);
 
-const mbedtls_pk_info_t p11_ecdsa_info = {
-        MBEDTLS_PK_ECDSA,
-        "ECDSA",
-        p11_ecdsa_bitlen,
-        p11_ecdsa_can_do,
-        p11_ecdsa_verify,
-        p11_ecdsa_sign,
-#if defined(MBEDTLS_ECP_RESTARTABLE)
-ecdsa_verify_rs_wrap,
-ecdsa_sign_rs_wrap,
-#endif
-        NULL,
-        NULL,
-        NULL, //eckey_check_pair,   /* Compatible key structures */
-        NULL, //ecdsa_alloc_wrap,
-        p11_ecdsa_free,
-#if defined(MBEDTLS_ECP_RESTARTABLE)
-ecdsa_rs_alloc,
-ecdsa_rs_free,
-#endif
-        NULL, //eckey_debug,        /* Compatible key structures */
-};
-
 int p11_load_ecdsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_context *p11) {
-    pk->pk_info = &p11_ecdsa_info;
-    pk->pk_ctx = p11key;
+    pk->MBEDTLS_PRIVATE(pk_info) = mbedtls_pk_info_from_type(MBEDTLS_PK_ECDSA);
+    pk->MBEDTLS_PRIVATE(pk_ctx) = p11key;
     p11key->ctx = p11;
 
     // load public key
@@ -85,8 +62,8 @@ int p11_load_ecdsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_c
 
     mbedtls_asn1_buf oid;
     unsigned char *p = ec_param;
-    oid.p = ec_param;
-    mbedtls_asn1_get_tag(&oid.p, p + pubattr[0].ulValueLen, &oid.len, MBEDTLS_ASN1_OID);
+    oid.MBEDTLS_PRIVATE(p) = ec_param;
+    mbedtls_asn1_get_tag(&oid.MBEDTLS_PRIVATE(p), p + pubattr[0].ulValueLen, &oid.MBEDTLS_PRIVATE(p), MBEDTLS_ASN1_OID);
 
     mbedtls_ecp_group_id grp_id = 0;
     mbedtls_oid_get_ec_grp(&oid, &grp_id);
@@ -94,17 +71,17 @@ int p11_load_ecdsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_c
     mbedtls_ecdsa_context *ecdsa = calloc(1, sizeof(mbedtls_ecdsa_context));
 
     mbedtls_ecp_keypair_init(ecdsa);
-    mbedtls_ecp_group_load(&ecdsa->grp, grp_id);
+    mbedtls_ecp_group_load(&ecdsa->MBEDTLS_PRIVATE(grp), grp_id);
 
     p = ec_point;
     size_t point_len;
     mbedtls_asn1_get_tag(&p, p + pubattr[1].ulValueLen, &point_len, MBEDTLS_ASN1_OCTET_STRING);
 
-    mbedtls_ecp_point_read_binary(&ecdsa->grp, &ecdsa->Q, p, point_len);
+    mbedtls_ecp_point_read_binary(&ecdsa->MBEDTLS_PRIVATE(grp), &ecdsa->MBEDTLS_PRIVATE(Q), p, point_len);
     p11key->pub = ecdsa;
 
     CK_MECHANISM_TYPE sign_mech;
-    switch (ecdsa->grp.pbits) {
+    switch (ecdsa->MBEDTLS_PRIVATE(grp).pbits) {
         case 512:
             sign_mech = CKM_ECDSA_SHA512;
             break;
@@ -159,11 +136,11 @@ static int p11_ecdsa_sign(void *ctx, mbedtls_md_type_t md_alg,
 
     rc = p11->funcs->C_SignInit(p11->session, &mech, p11key->priv_handle);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
     rc = p11->funcs->C_Sign(p11->session, hash, hash_len, rawsig, &rawsig_len);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
     mbedtls_mpi r, s;
@@ -219,5 +196,5 @@ static void p11_ecdsa_free(void *ctx) {
 
 static size_t p11_ecdsa_bitlen(const void *ctx) {
     mp11_key_ctx *p11key = (mp11_key_ctx *) ctx;
-    return (((mbedtls_ecdsa_context *) p11key->pub)->grp.pbits);
+    return (((mbedtls_ecdsa_context *) p11key->pub)->MBEDTLS_PRIVATE(grp).pbits);
 }

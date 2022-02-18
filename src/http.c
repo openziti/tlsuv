@@ -163,6 +163,7 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
         case TLS_HS_ERROR:
             UM_LOG(ERR, "handshake failed status[%d]", status);
             close_connection(clt);
+            fail_active_request(clt, UV_ECONNABORTED, uv_strerror(UV_ECONNABORTED));
             break;
 
         default:

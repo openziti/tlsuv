@@ -321,7 +321,7 @@ static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* d
     }
 
     mbedtls_x509_crt *crt = cert;
-    if (mbedtls_pk_verify(&crt->pk, type, hash, 0, (uint8_t *)sig, siglen) != 0) {
+    if (mbedtls_pk_verify(&crt->MBEDTLS_PRIVATE(pk), type, hash, 0, (uint8_t *)sig, siglen) != 0) {
         return -1;
     }
 
@@ -331,11 +331,11 @@ static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* d
 
 static void mbedtls_free_ctx(tls_context *ctx) {
     struct mbedtls_context *c = ctx->ctx;
-    mbedtls_x509_crt_free(c->config.ca_chain);
-    free(c->config.ca_chain);
-    mbedtls_ctr_drbg_context *drbg = c->config.p_rng;
-    mbedtls_entropy_free(drbg->p_entropy);
-    free(drbg->p_entropy);
+    mbedtls_x509_crt_free(c->config.MBEDTLS_PRIVATE(ca_chain));
+    free(c->config.MBEDTLS_PRIVATE(ca_chain));
+    mbedtls_ctr_drbg_context *drbg = c->config.MBEDTLS_PRIVATE(p_rng);
+    mbedtls_entropy_free(drbg->MBEDTLS_PRIVATE(p_entropy));
+    free(drbg->MBEDTLS_PRIVATE(p_entropy));
     mbedtls_ctr_drbg_free(drbg);
     free(drbg);
 
@@ -382,6 +382,10 @@ static void mbedtls_free(tls_engine *engine) {
     um_BIO_free(e->out);
 
     mbedtls_ssl_free(e->ssl);
+    if (e->ssl) {
+        free(e->ssl);
+        e->ssl = NULL;
+    }
     free(e->ssl);
     if (e->session) {
         mbedtls_ssl_session_free(e->session);
@@ -492,7 +496,7 @@ static void tls_debug_f(void *ctx, int level, const char *file, int line, const 
 
 static tls_handshake_state mbedtls_hs_state(void *engine) {
     struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
-    switch (eng->ssl->state) {
+    switch (eng->ssl->MBEDTLS_PRIVATE(state)) {
         case MBEDTLS_SSL_HANDSHAKE_OVER: return TLS_HS_COMPLETE;
         case MBEDTLS_SSL_HELLO_REQUEST: return TLS_HS_BEFORE;
         default: return TLS_HS_CONTINUE;
@@ -510,7 +514,7 @@ mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *
     if (in_bytes > 0) {
         um_BIO_put(eng->in, (const unsigned char *)in, in_bytes);
     }
-    if (eng->ssl->state == MBEDTLS_SSL_HELLO_REQUEST && eng->session) {
+    if (eng->ssl->MBEDTLS_PRIVATE(state) == MBEDTLS_SSL_HELLO_REQUEST && eng->session) {
         mbedtls_ssl_set_session(eng->ssl, eng->session);
         mbedtls_ssl_session_free(eng->session);
     }
@@ -519,7 +523,7 @@ mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *
     mbedtls_strerror(state, err, 1024);
     *out_bytes = um_BIO_read(eng->out, (unsigned char *)out, maxout);
 
-    if (eng->ssl->state == MBEDTLS_SSL_HANDSHAKE_OVER) {
+    if (eng->ssl->MBEDTLS_PRIVATE(state) == MBEDTLS_SSL_HANDSHAKE_OVER) {
         return TLS_HS_COMPLETE;
     }
     else if (state == MBEDTLS_ERR_SSL_WANT_READ || state == MBEDTLS_ERR_SSL_WANT_WRITE) {
@@ -619,6 +623,10 @@ static int mbed_ssl_send(void *ctx, const uint8_t *buf, size_t len) {
 #define OID_PKCS7_DATA OID_PKCS7 "\x02"
 #define OID_PKCS7_SIGNED_DATA OID_PKCS7 "\x01"
 
+#define MBEDTLS_OID_CMP_PRIVATE(oid_str, oid_buf)                                   \
+                ( ( MBEDTLS_OID_SIZE(oid_str) != (oid_buf)->MBEDTLS_PRIVATE(len) ) ||                \
+                  memcmp( (oid_str), (oid_buf)->MBEDTLS_PRIVATE(p), (oid_buf)->MBEDTLS_PRIVATE(len)) != 0 )
+
 static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len) {
     size_t der_len;
     unsigned char *p;
@@ -646,9 +654,9 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len
     }
 
     mbedtls_asn1_buf oid;
-    oid.p = p;
-    oid.len = len;
-    if (!MBEDTLS_OID_CMP(OID_PKCS7_SIGNED_DATA, &oid)) {
+    oid.MBEDTLS_PRIVATE(p) = p;
+    oid.MBEDTLS_PRIVATE(len) = len;
+    if (!MBEDTLS_OID_CMP_PRIVATE(OID_PKCS7_SIGNED_DATA, &oid)) {
         UM_LOG(ERR, "invalid pkcs7 signed data");
         return -1;
     }
@@ -685,9 +693,9 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len
         return rc;
     }
 
-    oid.p = p;
-    oid.len = len;
-    if (!MBEDTLS_OID_CMP(OID_PKCS7_DATA, &oid)) {
+    oid.MBEDTLS_PRIVATE(p) = p;
+    oid.MBEDTLS_PRIVATE(len) = len;
+    if (!MBEDTLS_OID_CMP_PRIVATE(OID_PKCS7_DATA, &oid)) {
         UM_LOG(ERR, "invalid pkcs7 data");
         return -1;
     }
@@ -737,10 +745,10 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
     size_t total_len = 0;
     while (c != NULL) {
         size_t len;
-        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->raw.p, c->raw.len, NULL, 0, &len);
+        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->MBEDTLS_PRIVATE(raw).MBEDTLS_PRIVATE(p), c->MBEDTLS_PRIVATE(raw).MBEDTLS_PRIVATE(len), NULL, 0, &len);
         total_len += len;
         if (!full_chain) { break; }
-        c = c->next;
+        c = c->MBEDTLS_PRIVATE(next);
     }
 
     uint8_t *pembuf = malloc(total_len + 1);
@@ -748,12 +756,12 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
     c = cert;
     while (c != NULL) {
         size_t len;
-        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->raw.p, c->raw.len, p, total_len - (p - pembuf), &len);
+        mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->MBEDTLS_PRIVATE(raw).MBEDTLS_PRIVATE(p), c->MBEDTLS_PRIVATE(raw).MBEDTLS_PRIVATE(len), p, total_len - (p - pembuf), &len);
         p += (len - 1);
         if (!full_chain) {
             break;
         }
-        c = c->next;
+        c = c->MBEDTLS_PRIVATE(next);
     }
 
     *pem = (char *) pembuf;
@@ -779,9 +787,24 @@ static int load_key(tls_private_key *key, const char* keydata, size_t keydatalen
     mbedtls_pk_context *pk = calloc(1, sizeof(mbedtls_pk_context));
     mbedtls_pk_init(pk);
 
-    int rc = mbedtls_pk_parse_key(pk, (const unsigned char *) keydata, keydatalen, NULL, 0);
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_ctr_drbg_init(&ctr_drbg);
+
+    mbedtls_entropy_context entropy;
+    mbedtls_entropy_init(&entropy);
+
+    // todo move this into engine init?
+    int rc = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
+    if (rc != 0) {
+        mbedtls_pk_free(pk);
+        free(pk);
+        *key = NULL;
+        return rc;
+    }
+
+    rc = mbedtls_pk_parse_key(pk, (const unsigned char *) keydata, keydatalen, NULL, 0, mbedtls_ctr_drbg_random, &ctr_drbg);
     if (rc < 0) {
-        rc = mbedtls_pk_parse_keyfile(pk, keydata, NULL);
+        rc = mbedtls_pk_parse_keyfile(pk, keydata, NULL, mbedtls_ctr_drbg_random, &ctr_drbg);
         if (rc < 0) {
             mbedtls_pk_free(pk);
             free(pk);

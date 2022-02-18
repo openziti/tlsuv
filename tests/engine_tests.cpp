@@ -168,7 +168,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     tls->api->set_alpn_protocols(tls->ctx, protos, 2);
     tls_engine *engine = tls->api->new_engine(tls->ctx, host);
 
-    SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+    SOCKET sock = socket(addr->ai_family, SOCK_STREAM, 0);
 
     struct sockaddr_in *address = reinterpret_cast<sockaddr_in *>(addr->ai_addr);
     int addrlen = addr->ai_addrlen;

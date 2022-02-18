@@ -183,6 +183,7 @@ int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url,
 
     ws->host = host;
     ws->read_cb = read_cb;
+    UM_LOG(DEBG, "connecting to '%s:%s'", host, portstr);
     return ws->src->connect(ws->src, host, portstr, src_connect_cb, req);
 }
 
@@ -422,7 +423,7 @@ static void send_pong(um_websocket_t *ws, const char* ping_data, int len) {
 }
 
 static void on_ws_close(um_websocket_t *ws) {
-    if (ws == NULL) return;
+    if (ws == NULL || ws->closed) return;
     if (ws->close_cb) {
         ws->close_cb((uv_handle_t *) ws);
     }
@@ -443,6 +444,7 @@ static void on_ws_close(um_websocket_t *ws) {
         ws->src->release(ws->src);
         ws->src = NULL;
     }
+    ws->closed = true;
 }
 static void ws_close_cb(uv_link_t *l) {
     um_websocket_t *ws = l->data;

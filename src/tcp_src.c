@@ -125,6 +125,7 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     uv_getaddrinfo_t *resolv_req = calloc(1, sizeof(uv_getaddrinfo_t));
     resolv_req->data = sl;
 
+    UM_LOG(DEBG, "resolving '%s:%s'", host, service);
     int rc = uv_getaddrinfo(sl->loop, resolv_req, resolve_cb, host, service, NULL);
     if (rc != 0) {
         free(resolv_req);

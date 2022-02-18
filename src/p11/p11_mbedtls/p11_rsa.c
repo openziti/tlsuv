@@ -14,8 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#define MBEDTLS_ALLOW_PRIVATE_ACCESS
 #include <mbedtls/pk.h>
-#include <mbedtls/pk_internal.h>
+#include <mbedtls/error.h>
 #include "mbed_p11.h"
 #include <mbedtls/asn1write.h>
 #include <mbedtls/oid.h>
@@ -41,29 +42,6 @@ static void p11_rsa_free(void *ctx);
 
 static int get_md_prefix(mbedtls_md_type_t md, const char **prefix, size_t *len);
 
-const mbedtls_pk_info_t p11_rsa_info = {
-        MBEDTLS_PK_RSA,
-        "RSA",
-        p11_rsa_bitlen,
-        p11_rsa_can_do,
-        p11_rsa_verify,
-        p11_rsa_sign,
-#if defined(MBEDTLS_ECP_RESTARTABLE)
-rsa_verify_rs_wrap,
-rsa_sign_rs_wrap,
-#endif
-        NULL,
-        NULL,
-        NULL, //eckey_check_pair,   /* Compatible key structures */
-        NULL, //rsa_alloc_wrap,
-        p11_rsa_free,
-#if defined(MBEDTLS_ECP_RESTARTABLE)
-rsa_rs_alloc,
-rsa_rs_free,
-#endif
-        NULL, //eckey_debug,        /* Compatible key structures */
-};
-
 int p11_load_rsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_context *p11) {
     int rc;
     CK_BYTE ec_param[512];
@@ -73,7 +51,7 @@ int p11_load_rsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_con
             {CKA_MODULUS,         NULL, 0},
     };
 
-    pk->pk_info = &p11_rsa_info;
+    pk->pk_info = mbedtls_pk_info_from_type(MBEDTLS_PK_RSA);
     pk->pk_ctx = p11key;
     p11key->ctx = p11;
 
@@ -93,7 +71,7 @@ int p11_load_rsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_con
 
     mbedtls_rsa_context *rsa = malloc(sizeof(mbedtls_rsa_context));
     mbedtls_platform_zeroize(rsa, sizeof(mbedtls_rsa_context));
-    mbedtls_rsa_init(rsa, MBEDTLS_RSA_PKCS_V15, MBEDTLS_MD_SHA256);
+    mbedtls_rsa_init(rsa /*, MBEDTLS_RSA_PKCS_V15, MBEDTLS_MD_SHA256*/);
     mbedtls_mpi_read_binary(&rsa->N, pubattr[1].pValue, pubattr[1].ulValueLen);
     mbedtls_mpi_read_binary(&rsa->E, pubattr[0].pValue, pubattr[0].ulValueLen);
 
@@ -148,7 +126,7 @@ static int p11_rsa_sign(void *ctx, mbedtls_md_type_t md_alg,
     size_t oid_len = 0;
     rc = get_md_prefix(md_alg, &oid, &oid_len);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
     CK_BYTE *msg = malloc(hash_len + oid_len);
@@ -157,12 +135,12 @@ static int p11_rsa_sign(void *ctx, mbedtls_md_type_t md_alg,
 
     rc = p11->funcs->C_SignInit(p11->session, &mech, p11key->priv_handle);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
     rc = p11->funcs->C_Sign(p11->session, msg, hash_len + oid_len, rawsig, &rawsig_len);
     if (rc != CKR_OK) {
-        return MBEDTLS_ERR_ECP_HW_ACCEL_FAILED;
+        return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
     memcpy(sig, rawsig, rawsig_len);
@@ -175,7 +153,7 @@ static int p11_rsa_verify(void *ctx, mbedtls_md_type_t md_alg,
                           const unsigned char *hash, size_t hash_len,
                           const unsigned char *sig, size_t sig_len) {
     mp11_key_ctx *p11key = ctx;
-    return mbedtls_rsa_rsassa_pkcs1_v15_verify(p11key->pub, NULL, NULL, MBEDTLS_RSA_PUBLIC, md_alg, hash_len, hash, sig);
+    return mbedtls_rsa_rsassa_pkcs1_v15_verify(p11key->pub, md_alg, hash_len, hash, sig);
 }
 
 static void p11_rsa_free(void *ctx) {
