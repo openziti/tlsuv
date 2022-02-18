@@ -62,8 +62,8 @@ int p11_load_ecdsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_c
 
     mbedtls_asn1_buf oid;
     unsigned char *p = ec_param;
-    oid.MBEDTLS_PRIVATE(p) = ec_param;
-    mbedtls_asn1_get_tag(&oid.MBEDTLS_PRIVATE(p), p + pubattr[0].ulValueLen, &oid.MBEDTLS_PRIVATE(p), MBEDTLS_ASN1_OID);
+    oid.p = ec_param;
+    mbedtls_asn1_get_tag(&oid.p, p + pubattr[0].ulValueLen, &oid.len, MBEDTLS_ASN1_OID);
 
     mbedtls_ecp_group_id grp_id = 0;
     mbedtls_oid_get_ec_grp(&oid, &grp_id);
