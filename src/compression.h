@@ -4,9 +4,15 @@
 
 #if !defined(_SSIZE_T_) && !defined(_SSIZE_T_DEFINED)
 typedef intptr_t ssize_t;
+#ifndef SSIZE_MAX
 # define SSIZE_MAX INTPTR_MAX
+#endif
+#ifndef _SSIZE_T_
 # define _SSIZE_T_
+#endif
+#ifndef _SSIZE_T_DEFINED
 # define _SSIZE_T_DEFINED
+#endif
 #endif
 
 typedef struct um_http_inflater_s http_inflater_t;
