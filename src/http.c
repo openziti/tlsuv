@@ -19,7 +19,6 @@ limitations under the License.
 
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 
 #include "um_debug.h"
 #include "win32_compat.h"
@@ -412,7 +411,7 @@ int um_http_close(um_http_t *clt, um_http_close_cb close_cb) {
     clt->tls = NULL;
 
     clt->close_cb = close_cb;
-    uv_close((uv_handle_t *) clt->conn_timer, free);
+    uv_close((uv_handle_t *) clt->conn_timer, (uv_close_cb) free);
     return 0;
 }
 
@@ -626,7 +625,7 @@ void um_http_req_end(um_http_req_t *req) {
     }
 }
 
-int um_http_req_data(um_http_req_t *req, const char *body, ssize_t body_len, um_http_body_cb cb) {
+int um_http_req_data(um_http_req_t *req, const char *body, size_t body_len, um_http_body_cb cb) {
     if (strcmp(req->method, "POST") != 0 && strcmp(req->method, "PUT") != 0) {
         return UV_EINVAL;
     }
