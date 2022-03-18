@@ -33,6 +33,7 @@ static void timer_cb(uv_timer_t *timer) {
         req->resp.body_cb = body_cb;
     } else {
         uv_timer_stop(timer);
+        um_http_close(&time_clt, NULL);
     }
 }
 
@@ -44,7 +45,6 @@ int main(int argc, char **argv) {
     uv_timer_start(&time_timer, timer_cb, 1000, 5000);
 
     uv_run(loop, UV_RUN_DEFAULT);
-    um_http_close(&time_clt);
     uv_loop_close(loop);
 }
 
