@@ -286,7 +286,7 @@ int um_http_req_header(um_http_req_t *req, const char *name, const char *value);
  * @param cb
  * @return
  */
-int um_http_req_data(um_http_req_t *req, const char *body, ssize_t bodylen, um_http_body_cb cb);
+int um_http_req_data(um_http_req_t *req, const char *body, size_t bodylen, um_http_body_cb cb);
 
 /**
  * Indicate the end of the request body. Only needed if `Transfer-Encoding` header was set to `chunked`
