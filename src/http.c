@@ -220,7 +220,7 @@ static void link_close_cb(uv_link_t *l) {
 static void src_connect_cb(um_src_t *src, int status, void *ctx) {
     UM_LOG(VERB, "src connected status = %d", status);
     um_http_t *clt = ctx;
-    uv_timer_stop(&clt->conn_timer);
+    uv_timer_stop(clt->conn_timer);
     if (status == 0) {
         switch (clt->connected) {
             case Connecting:
@@ -321,7 +321,7 @@ static void send_body(um_http_req_t *req) {
 }
 
 static void close_connection(um_http_t *c) {
-    uv_timer_stop(&c->conn_timer);
+    uv_timer_stop(c->conn_timer);
     switch (c->connected) {
         case Handshaking:
         case Connected:
@@ -350,7 +350,7 @@ static void process_requests(uv_async_t *ar) {
     if (c->active == NULL) {
         if (c->connected == Connected && c->idle_time >= 0) {
             UM_LOG(VERB, "no more requests, scheduling idle(%ld) close", c->idle_time);
-            uv_timer_start(&c->conn_timer, idle_timeout, c->idle_time, 0);
+            uv_timer_start(c->conn_timer, idle_timeout, c->idle_time, 0);
         }
         uv_unref((uv_handle_t *) &c->proc);
         return;
@@ -360,7 +360,7 @@ static void process_requests(uv_async_t *ar) {
         c->connected = Connecting;
         UM_LOG(VERB, "client not connected, starting connect sequence");
         if (c->connect_timeout > 0) {
-            uv_timer_start(&c->conn_timer, src_connect_timeout, c->connect_timeout, 0);
+            uv_timer_start(c->conn_timer, src_connect_timeout, c->connect_timeout, 0);
         }
         int rc = c->src->connect(c->src, c->host, c->port, src_connect_cb, c);
         if (rc != 0) {
@@ -387,17 +387,32 @@ static void process_requests(uv_async_t *ar) {
     }
 }
 
-int um_http_close(um_http_t *clt) {
+static void on_clt_close(uv_handle_t *h) {
+    um_http_t *clt = h->data;
+    free_http(clt);
+    if (clt->close_cb) {
+        clt->close_cb(clt);
+    }
+}
+
+int um_http_close(um_http_t *clt, um_http_close_cb close_cb) {
+    uv_close((uv_handle_t *) &clt->proc, on_clt_close);
+
     fail_active_request(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
     close_connection(clt);
-    uv_close((uv_handle_t *) &clt->conn_timer, NULL);
-    uv_close((uv_handle_t *) &clt->proc, NULL);
 
     if (clt->src != NULL) { 
         clt->src->release(clt->src);
     }
 
-    free_http(clt);
+    if (clt->engine != NULL) {
+        clt->tls->api->free_engine(clt->engine);
+        clt->engine = NULL;
+    }
+    clt->tls = NULL;
+
+    clt->close_cb = close_cb;
+    uv_close((uv_handle_t *) clt->conn_timer, free);
     return 0;
 }
 
@@ -490,9 +505,10 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
 
     clt->connect_timeout = 0;
     clt->idle_time = DEFAULT_IDLE_TIMEOUT;
-    uv_timer_init(l, &clt->conn_timer);
-    uv_unref((uv_handle_t *) &clt->conn_timer);
-    clt->conn_timer.data = clt;
+    clt->conn_timer = calloc(1, sizeof(uv_timer_t));
+    uv_timer_init(l, clt->conn_timer);
+    uv_unref((uv_handle_t *) clt->conn_timer);
+    clt->conn_timer->data = clt;
 
     um_http_header(clt, "Connection", "keep-alive");
     if (um_available_encoding() != NULL) {
@@ -511,9 +527,12 @@ void um_http_set_path_prefix(um_http_t *clt, const char *prefix) {
 }
 
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
-    tcp_src_init(l, &clt->default_src);
-    return um_http_init_with_src(l, clt, url, (um_src_t *)&clt->default_src);
+    tcp_src_t *src = calloc(1, sizeof(tcp_src_t));
+    tcp_src_init(l, src);
+    clt->own_src = true;
+    return um_http_init_with_src(l, clt, url, (um_src_t *)src);
 }
+
 int um_http_connect_timeout(um_http_t *clt, long millis) {
     clt->connect_timeout = millis;
     return 0;
@@ -543,7 +562,7 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, u
     }
 
     STAILQ_INSERT_TAIL(&c->requests, r, _next);
-    uv_timer_stop(&c->conn_timer);
+    uv_timer_stop(c->conn_timer);
     uv_ref((uv_handle_t *) &c->proc);
     uv_async_send(&c->proc);
 
@@ -641,11 +660,6 @@ static void free_http(um_http_t *clt) {
     free_hdr_list(&clt->headers);
     free(clt->host);
     if (clt->prefix) free(clt->prefix);
-    if (clt->engine != NULL) {
-        clt->tls->api->free_engine(clt->engine);
-        clt->engine = NULL;
-    }
-    clt->tls = NULL;
 
     if (clt->active) {
         http_req_free(clt->active);
