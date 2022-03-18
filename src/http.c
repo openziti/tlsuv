@@ -488,6 +488,7 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
     STAILQ_INIT(&clt->requests);
     LIST_INIT(&clt->headers);
 
+    clt->own_src = false;
     clt->ssl = false;
     clt->tls = NULL;
     clt->engine = NULL;
@@ -529,8 +530,9 @@ void um_http_set_path_prefix(um_http_t *clt, const char *prefix) {
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     tcp_src_t *src = calloc(1, sizeof(tcp_src_t));
     tcp_src_init(l, src);
+    int rc = um_http_init_with_src(l, clt, url, (um_src_t *)src);
     clt->own_src = true;
-    return um_http_init_with_src(l, clt, url, (um_src_t *)src);
+    return rc;
 }
 
 int um_http_connect_timeout(um_http_t *clt, long millis) {
@@ -672,5 +674,10 @@ static void free_http(um_http_t *clt) {
         STAILQ_REMOVE_HEAD(&clt->requests, _next);
         http_req_free(req);
         free(req);
+    }
+
+    if (clt->own_src && clt->src) {
+        free(clt->src);
+        clt->src = NULL;
     }
 }
