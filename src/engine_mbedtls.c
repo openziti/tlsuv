@@ -97,6 +97,8 @@ static int mbedtls_reset(void *engine);
 
 static const char *mbedtls_error(int code);
 
+static const char *mbedtls_version();
+
 static const char *mbedtls_eng_error(void *eng);
 
 static void mbedtls_free(tls_engine *engine);
@@ -123,6 +125,7 @@ static int load_key(tls_private_key *key, const char* keydata, size_t keydatalen
 static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...);
 
 static tls_context_api mbedtls_context_api = {
+        .version = mbedtls_version,
         .strerror = mbedtls_error,
         .new_engine = new_mbedtls_engine,
         .free_engine = mbedtls_free,
@@ -160,6 +163,9 @@ static int mbed_ssl_recv(void *ctx, uint8_t *buf, size_t len);
 
 static int mbed_ssl_send(void *ctx, const uint8_t *buf, size_t len);
 
+static const char* mbedtls_version() {
+    return MBEDTLS_VERSION_STRING_FULL;
+}
 
 static const char *mbedtls_error(int code) {
     static char errbuf[1024];

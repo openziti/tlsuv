@@ -26,9 +26,11 @@ void logger(int level, const char *file, unsigned int line, const char *msg) {
 }
 
 void resp_cb(um_http_resp_t *resp, void *data) {
+    if (resp->req->client->tls) {
+            printf("Using %s\n", resp->req->client->tls->api->version());
+    }
     if (resp->code < 0) {
         fprintf(stderr, "ERROR: %d(%s)", resp->code, uv_strerror(resp->code));
-        //exit(-1);
         return;
     }
     um_http_hdr *h;

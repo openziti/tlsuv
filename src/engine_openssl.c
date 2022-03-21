@@ -91,6 +91,7 @@ static int tls_close(void *engine, char *out, size_t *out_bytes, size_t maxout);
 
 static int tls_reset(void *engine);
 
+static const char* tls_lib_version();
 static const char *tls_error(int code);
 static const char *tls_eng_error(void *eng);
 
@@ -119,6 +120,7 @@ static void msg_cb (int write_p, int version, int content_type, const void *buf,
 static void info_cb(const SSL *s, int where, int ret);
 
 static tls_context_api openssl_context_api = {
+        .version = tls_lib_version,
         .strerror = tls_error,
         .new_engine = new_openssl_engine,
         .free_engine = tls_free,
@@ -149,6 +151,10 @@ static tls_engine_api openssl_engine_api = {
         .reset = tls_reset,
         .strerror = tls_eng_error
 };
+
+static const char* tls_lib_version() {
+    return OpenSSL_version(OPENSSL_VERSION);
+}
 
 static const char *tls_error(int code) {
     static char errbuf[1024];
