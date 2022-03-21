@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 #include "catch.hpp"
+#include "fixtures.h"
 
 #include <uv_mbed/um_http.h>
 #include <uv_mbed/tls_engine.h>
@@ -51,7 +52,7 @@ public:
 
     um_http_body_cb body_cb;
 
-    resp_capture(um_http_body_cb cb) : body_cb(cb), status("not set"), code(-666) {}
+    explicit resp_capture(um_http_body_cb cb) : body_cb(cb), status("not set"), code(-666) {}
 
     resp_capture() : resp_capture(nullptr) {}
 
@@ -107,74 +108,68 @@ void test_timeout(uv_timer_t *t) {
     uv_stop(t->loop);
 }
 
-static string part2("this is part 2");
-
+static const char* part2 = "this is part 2";
 void send_part2(uv_timer_t *t) {
     auto req = static_cast<um_http_req_t *>(t->data);
-    um_http_req_data(req, part2.c_str(), part2.length(), req_body_cb);
+    um_http_req_data(req, part2, strlen(part2), req_body_cb);
     um_http_req_end(req);
 
     uv_close((uv_handle_t *) (t), nullptr);
-
 }
 
 TEST_CASE("conn failures", "[http]") {
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
+    UvLoopTest test;
 
-    uv_loop_t *loop = uv_default_loop();
     um_http_t clt;
-    uv_timer_t *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
-    uv_timer_init(loop, timer);
-    uv_unref((uv_handle_t *) timer);
-    uv_timer_start(timer, test_timeout, 15000, 0);
     resp_capture resp(resp_body_cb);
 
-    WHEN("resolve failure " << scheme) {
-        um_http_init(loop, &clt, (scheme + "://not.a.real.host").c_str());
-        um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
-        uv_run(loop, UV_RUN_DEFAULT);
+    string url = scheme + "://localhost:1222";
+    INFO(url);
+    um_http_init(test.loop, &clt, url.c_str());
+    um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
-        REQUIRE(resp.code == UV_EAI_NONAME);
-    }
+    test.run();
 
-    WHEN(scheme << " connect failure") {
-        string url = scheme + "://localhost:1222";
-        um_http_init(loop, &clt, url.c_str());
-        um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
+    REQUIRE(resp.code == UV_ECONNREFUSED);
 
-        uv_run(loop, UV_RUN_DEFAULT);
+    um_http_close(&clt, nullptr);
+}
 
-        REQUIRE(resp.code == UV_ECONNREFUSED);
-    }
-    um_http_close(&clt);
-    uv_timer_stop(timer);
 
-    uv_close(reinterpret_cast<uv_handle_t *>(timer), [](uv_handle_t *h) { free(h); });
+TEST_CASE("resolve failures", "[http]") {
+    auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
-    // need to run loop one to process all closing handles
-    uv_run(loop, UV_RUN_ONCE);
+    UvLoopTest test;
+
+    auto clt = t_alloc<um_http_t>();
+    resp_capture resp(resp_body_cb);
+
+    um_http_init(test.loop, clt, (scheme + "://not.a.real.host").c_str());
+    um_http_req_t *req = um_http_req(clt, "GET", "/", resp_capture_cb, &resp);
+
+    test.run();
+
+    REQUIRE(resp.code == UV_EAI_NONAME);
+
+    um_http_close(clt, (um_http_close_cb)free);
 }
 
 TEST_CASE("http_tests", "[http]") {
 
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
-    uv_loop_t l;
-    uv_loop_t* loop = &l;
-    uv_loop_init(&l);
+    UvLoopTest test;
     um_http_t clt;
-    uv_timer_t *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
-    uv_timer_init(loop, timer);
-    uv_unref((uv_handle_t *) timer);
-    uv_timer_start(timer, test_timeout, 5000, 0);
+
     resp_capture resp(resp_body_cb);
 
     WHEN(scheme << " redirect google.com ") {
-        um_http_init(loop, &clt, (scheme + "://google.com").c_str());
+        um_http_init(test.loop, &clt, (scheme + "://google.com").c_str());
         um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
-        uv_run(loop, UV_RUN_DEFAULT);
+        test.run();
 
         REQUIRE(resp.code == HTTP_STATUS_MOVED_PERMANENTLY);
         REQUIRE_THAT(resp.headers["Location"], Equals(scheme + "://www.google.com/"));
@@ -182,10 +177,10 @@ TEST_CASE("http_tests", "[http]") {
     }
 
     WHEN(scheme << " redirect") {
-        um_http_init(loop, &clt, "http://httpbin.org");
+        um_http_init(test.loop, &clt, "http://httpbin.org");
         um_http_req_t *req = um_http_req(&clt, "GET", "/redirect/2", resp_capture_cb, &resp);
 
-        uv_run(loop, UV_RUN_DEFAULT);
+        test.run();
 
         INFO("httpbin.org redirect currently fails")
 //        REQUIRE(resp.code == HTTP_STATUS_FOUND);
@@ -194,22 +189,22 @@ TEST_CASE("http_tests", "[http]") {
     }
 
     WHEN(scheme << " body GET") {
-        um_http_init(loop, &clt, "http://httpbin.org");
+        um_http_init(test.loop, &clt, "http://httpbin.org");
         um_http_req_t *req = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
 
-        uv_run(loop, UV_RUN_DEFAULT);
+        test.run();
 
         REQUIRE(resp.code == HTTP_STATUS_OK);
         REQUIRE(resp.resp_body_end_called);
         REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
         REQUIRE(resp.headers.find("Content-Length") != resp.headers.end());
-        int body_len = resp.body.size();
-        int content_len = atoi(resp.headers["Content-Length"].c_str());
+        size_t body_len = resp.body.size();
+        size_t content_len = strtol(resp.headers["Content-Length"].c_str(), nullptr, 10);
         REQUIRE(body_len == content_len);
     }
 
     WHEN(scheme << " send headers") {
-        um_http_init(loop, &clt, "http://httpbin.org");
+        um_http_init(test.loop, &clt, "http://httpbin.org");
         um_http_header(&clt, "Client-Header", "This is client header");
 
         um_http_req_t *req = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
@@ -218,7 +213,7 @@ TEST_CASE("http_tests", "[http]") {
         resp_capture resp2(resp_body_cb);
         um_http_req_t *req2 = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp2);
 
-        uv_run(loop, UV_RUN_DEFAULT);
+        test.run();
 
         REQUIRE(resp.code == HTTP_STATUS_OK);
         REQUIRE(resp2.code == HTTP_STATUS_OK);
@@ -230,20 +225,20 @@ TEST_CASE("http_tests", "[http]") {
     }
 
     WHEN(scheme << " POST body") {
-        um_http_init(loop, &clt, (scheme + "://httpbin.org").c_str());
+        um_http_init(test.loop, &clt, (scheme + "://httpbin.org").c_str());
         um_http_req_t *req = um_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
         string req_body("this is a test message");
         um_http_req_data(req, req_body.c_str(), req_body.length(), req_body_cb);
 
-        uv_run(loop, UV_RUN_DEFAULT);
+        test.run();
 
         THEN("request should complete") {
             REQUIRE(resp.code == HTTP_STATUS_OK);
             REQUIRE(resp.resp_body_end_called);
         }
         REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
-        int body_len = resp.body.size();
-        int content_len = atoi(resp.headers["Content-Length"].c_str());
+        size_t body_len = resp.body.size();
+        size_t content_len = strtol(resp.headers["Content-Length"].c_str(), nullptr, 10);
         REQUIRE(body_len == content_len);
 
         REQUIRE_THAT(resp.body, Contains(req_body));
@@ -252,7 +247,7 @@ TEST_CASE("http_tests", "[http]") {
 
 
     WHEN(scheme << " posting chunked") {
-        um_http_init(loop, &clt, (scheme + "://httpbin.org").c_str());
+        um_http_init(test.loop, &clt, (scheme + "://httpbin.org").c_str());
         um_http_req_t *req = um_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
         um_http_req_header(req, "Transfer-Encoding", "chunked");
 
@@ -260,11 +255,11 @@ TEST_CASE("http_tests", "[http]") {
         um_http_req_data(req, part1.c_str(), part1.length(), req_body_cb);
 
         uv_timer_t p2_timer;
-        uv_timer_init(loop, &p2_timer);
+        uv_timer_init(test.loop, &p2_timer);
         p2_timer.data = req;
         uv_timer_start(&p2_timer, send_part2, 1000, 0);
 
-        uv_run(loop, UV_RUN_DEFAULT);
+        test.run();
 
         THEN("request should complete") {
             REQUIRE(resp.code == HTTP_STATUS_OK);
@@ -272,8 +267,8 @@ TEST_CASE("http_tests", "[http]") {
             REQUIRE(resp.resp_body_end_called);
             REQUIRE(resp.headers.find("Content-Length") != resp.headers.end());
         }
-        int body_len = resp.body.size();
-        int content_len = atoi(resp.headers["Content-Length"].c_str());
+        size_t body_len = resp.body.size();
+        size_t content_len = strtol(resp.headers["Content-Length"].c_str(), nullptr, 10);
 
         THEN("response body size matches") {
             REQUIRE(body_len == content_len);
@@ -284,43 +279,38 @@ TEST_CASE("http_tests", "[http]") {
             REQUIRE(resp.req_body_cb_called);
         }
     }
-    um_http_close(&clt);
-    uv_timer_stop(timer);
-
-    uv_close(reinterpret_cast<uv_handle_t *>(timer), [](uv_handle_t* h){ free(h); });
-
-    // need to run loop one to process all closing handles
-    uv_run(loop, UV_RUN_ONCE);
+    um_http_close(&clt, nullptr);
 }
 
 TEST_CASE("client_cert_test","[http]") {
-    uv_loop_t *loop = uv_loop_new();
+    UvLoopTest test;
+
     um_http_t clt;
     resp_capture resp(resp_body_cb);
 
     const char *test_site = "https://client.badssl.com";
 
     WHEN("client cert NOT set") {
-        um_http_init(loop, &clt, test_site);
+        um_http_init(test.loop, &clt, test_site);
         um_http_req_t *req = um_http_req(&clt, "GET", "/secure/", resp_capture_cb, &resp);
 
-        uv_run(loop, UV_RUN_DEFAULT);
+        test.run();
 
         THEN("request should be bad") {
             CHECK(resp.code == HTTP_STATUS_BAD_REQUEST);
             CHECK_THAT(resp.body, Contains("No required SSL certificate was sent"));
         }
-        int body_len = resp.body.size();
-        int content_len = atoi(resp.headers["Content-Length"].c_str());
 
         AND_THEN("response body size matches") {
+            size_t body_len = resp.body.size();
+            size_t content_len = strtol(resp.headers["Content-Length"].c_str(), nullptr, 10);
             REQUIRE(body_len == content_len);
         }
     }
 
     WHEN("client cert set") {
         tls_context *tls = default_tls_context(nullptr, 0);
-        um_http_init(loop, &clt, test_site);
+        um_http_init(test.loop, &clt, test_site);
         um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
         // client cert downloaded from https://badssl.com/download/
@@ -382,7 +372,7 @@ TEST_CASE("client_cert_test","[http]") {
         tls->api->set_own_cert(tls->ctx, cert, strlen(cert) + 1, key, strlen(key) + 1);
         um_http_set_ssl(&clt, tls);
 
-        uv_run(loop, UV_RUN_DEFAULT);
+        test.run();
 
         THEN("request should complete") {
             CHECK(resp.code == HTTP_STATUS_OK);
@@ -390,10 +380,7 @@ TEST_CASE("client_cert_test","[http]") {
         }
     }
 
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(&clt, nullptr);
 }
 
 const int ONE_SECOND = 1000000;
@@ -403,7 +390,8 @@ static long duration(uv_timeval64_t &start, uv_timeval64_t &stop) {
 }
 
 TEST_CASE("client_idle_test","[http]") {
-    uv_loop_t *loop = uv_loop_new();
+    UvLoopTest test;
+
     um_http_t clt;
 
     um_http_body_cb bodyCb = [](um_http_req_t *req, const char *b, ssize_t len) {
@@ -414,14 +402,14 @@ TEST_CASE("client_idle_test","[http]") {
         }
     };
     resp_capture resp(bodyCb);
-    um_http_init(loop, &clt, "https://httpbin.org");
+    um_http_init(test.loop, &clt, "https://httpbin.org");
     um_http_idle_keepalive(&clt, 5000);
     um_http_req_t *req = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
 
     WHEN("client idle timeout is set to 5 seconds") {
         uv_timeval64_t start;
         uv_gettimeofday(&start);
-        uv_run(loop, UV_RUN_DEFAULT);
+        test.run();
         uv_timeval64_t stop;
         uv_gettimeofday(&stop);
 
@@ -431,18 +419,15 @@ TEST_CASE("client_idle_test","[http]") {
             CHECK(duration(resp.resp_endtime, stop) >= 5 * ONE_SECOND);
         }
 
-        um_http_close(&clt);
+        um_http_close(&clt, nullptr);
     }
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
 }
 
 // hidden test
 // can't rely on server closing connection in time
 TEST_CASE("server_idle_close","[.]") {
-    uv_loop_t *loop = uv_loop_new();
+    UvLoopTest test;
+
     um_http_t clt;
 
     um_http_body_cb body_cb = [](um_http_req_t *req, const char *b, ssize_t len) {
@@ -454,14 +439,16 @@ TEST_CASE("server_idle_close","[.]") {
     };
     resp_capture resp(body_cb);
 
-    um_http_init(loop, &clt, "http://www.aptivate.org");
+    um_http_init(test.loop, &clt, "http://www.aptivate.org");
     um_http_idle_keepalive(&clt, -1);
     um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
     WHEN("client timeout is set to -1") {
         uv_timeval64_t start;
         uv_gettimeofday(&start);
-        uv_run(loop, UV_RUN_DEFAULT);
+
+        test.run();
+
         uv_timeval64_t stop;
         uv_gettimeofday(&stop);
 
@@ -473,23 +460,20 @@ TEST_CASE("server_idle_close","[.]") {
             REQUIRE(test_duration < 30 * ONE_SECOND);
         }
 
-        um_http_close(&clt);
+        um_http_close(&clt, nullptr);
     }
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
 }
 
 
 TEST_CASE("basic_test", "[http]") {
-    uv_loop_t *loop = uv_loop_new();
+    UvLoopTest test;
+
     um_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(loop, &clt, "https://httpbin.org");
+    um_http_init(test.loop, &clt, "https://httpbin.org");
     um_http_req_t *req = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
 
-    uv_run(loop, UV_RUN_DEFAULT);
+    test.run();
 
     THEN("request should be fast and then idle for 5 seconds") {
         CHECK(resp.code == HTTP_STATUS_OK);
@@ -499,55 +483,48 @@ TEST_CASE("basic_test", "[http]") {
         CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
     }
 
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(&clt, nullptr);
 }
 
 TEST_CASE("http_prefix", "[http]") {
-    uv_loop_t *loop = uv_loop_new();
+    UvLoopTest test;
+
     um_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(loop, &clt, "http://httpbin.org/bytes");
+    um_http_init(test.loop, &clt, "http://httpbin.org/bytes");
     um_http_req_t *req = um_http_req(&clt, "GET", "/256", resp_capture_cb, &resp);
-    uv_run(loop, UV_RUN_DEFAULT);
+
+    test.run();
 
     REQUIRE(resp.code == HTTP_STATUS_OK);
     CHECK_THAT(resp.headers["Content-Length"], Equals("256"));
 
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(&clt, nullptr);
 }
 
 TEST_CASE("http_prefix_after", "[http]") {
-    uv_loop_t *loop = uv_loop_new();
+    UvLoopTest test;
+
     um_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(loop, &clt, "http://httpbin.org");
+    um_http_init(test.loop, &clt, "http://httpbin.org");
     um_http_req_t *req = um_http_req(&clt, "GET", "/256", resp_capture_cb, &resp);
     um_http_set_path_prefix(&clt, "/bytes");
-    uv_run(loop, UV_RUN_DEFAULT);
+
+    test.run();
 
     REQUIRE(resp.code == HTTP_STATUS_OK);
     CHECK_THAT(resp.headers["Content-Length"], Equals("256"));
 
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(&clt, nullptr);
 }
 
-TEST_CASE("conten_length_test", "[http]") {
-    uv_loop_t *loop = uv_loop_new();
+TEST_CASE("content_length_test", "[http]") {
+    UvLoopTest test;
+
     um_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(loop, &clt, "http://httpbin.org");
+    um_http_init(test.loop, &clt, "http://httpbin.org");
     um_http_req_t *req = um_http_req(&clt, "POST", "/json", resp_capture_cb, &resp);
 
     WHEN("set Content-Length first") {
@@ -574,23 +551,14 @@ TEST_CASE("conten_length_test", "[http]") {
         CHECK(req->req_chunked);
     }
 
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(&clt, nullptr);
 }
 
 TEST_CASE("multiple requests", "[http]") {
-    uv_loop_t *loop = uv_loop_new();
-
-    auto timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
-    uv_timer_init(loop, timer);
-    uv_unref((uv_handle_t *) timer);
-    uv_timer_start(timer, test_timeout, 5000, 0);
+    UvLoopTest test;
 
     um_http_t clt;
-    um_http_init(loop, &clt, "http://httpbin.org");
+    um_http_init(test.loop, &clt, "http://httpbin.org");
 
     resp_capture resp1(resp_body_cb);
     um_http_req_t *req1 = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp1);
@@ -601,7 +569,7 @@ TEST_CASE("multiple requests", "[http]") {
     WHEN("two non-keepalive requests") {
         um_http_req_header(req1, "Connection", "close");
         um_http_req_header(req2, "Connection", "close");
-        uv_run(loop, UV_RUN_DEFAULT);
+        test.run();
 
         THEN("both requests should succeed") {
             CHECK(resp1.code == HTTP_STATUS_OK);
@@ -621,7 +589,7 @@ TEST_CASE("multiple requests", "[http]") {
     WHEN("two keep-alive requests") {
         um_http_req_header(req1, "Connection", "keep-alive");
         um_http_req_header(req2, "Connection", "keep-alive");
-        uv_run(loop, UV_RUN_DEFAULT);
+        test.run();
 
         THEN("both requests should succeed") {
             CHECK(resp1.code == HTTP_STATUS_OK);
@@ -637,39 +605,31 @@ TEST_CASE("multiple requests", "[http]") {
         }
     }
 
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(&clt, nullptr);
 }
 
 // test proper client->engine cleanup between requests
 // run in valgrind to see any leaks
 TEST_CASE("TLS reconnect", "[http]") {
-    uv_loop_t *loop = uv_loop_new();
+    UvLoopTest test;
     um_http_t clt;
     resp_capture resp(resp_body_cb);
     resp_capture resp2(resp_body_cb);
 
-    tls_context *tls = default_tls_context(NULL, 0);
-    um_http_init(loop, &clt, "https://httpbin.org");
+    tls_context *tls = default_tls_context(nullptr, 0);
+    um_http_init(test.loop, &clt, "https://httpbin.org");
     um_http_set_ssl(&clt, tls);
     um_http_header(&clt, "Connection", "close");
 
     um_http_req_t *req = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
     um_http_req_t *req2 = um_http_req(&clt, "GET", "/anything", resp_capture_cb, &resp2);
 
-    uv_run(loop, UV_RUN_DEFAULT);
+    test.run();
 
     CHECK(resp.code == 200);
     CHECK(resp2.code == 200);
 
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(&clt, nullptr);
 
     tls->api->free_ctx(tls);
 }
@@ -683,19 +643,20 @@ typedef struct verify_ctx_s {
 } verify_ctx;
 
 int cert_verify(tls_cert crt, void *ctx) {
-    verify_ctx *vtx = (verify_ctx *)ctx;
+    auto vtx = (verify_ctx *)ctx;
 
     int rc = vtx->tls->api->verify_signature(crt, hash_SHA256, vtx->data, vtx->datalen, vtx->sig, vtx->siglen);
     return rc;
 }
 
 TEST_CASE("large POST(GH-87)", "[http][gh-87]") {
-    uv_loop_t *loop = uv_loop_new();
+    UvLoopTest test;
+
     um_http_t clt;
     resp_capture resp(resp_body_cb);
 
     tls_context *tls = default_tls_context(nullptr, 0);
-    um_http_init(loop, &clt, "https://httpbin.org");
+    um_http_init(test.loop, &clt, "https://httpbin.org");
     um_http_set_ssl(&clt, tls);
 
     um_http_req_t *req = um_http_req(&clt, "POST", "/anything", resp_capture_cb, &resp);
@@ -707,16 +668,11 @@ TEST_CASE("large POST(GH-87)", "[http][gh-87]") {
     um_http_req_header(req, "Connection", "Close");
     um_http_req_data(req, buf, 64*1024, req_body_cb);
 
-    uv_run(loop, UV_RUN_DEFAULT);
+    test.run();
 
     CHECK(resp.code == 200);
-    std::cout << resp.body << std::endl;
 
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(&clt, nullptr);
     free(buf);
 
     tls->api->free_ctx(tls);
@@ -726,7 +682,8 @@ TEST_CASE("TLS verify with JWT", "[http]") {
     INFO("skipping JWT test");
     return;
 
-    uv_loop_t *loop = uv_loop_new();
+    UvLoopTest test;
+
     um_http_t clt;
     resp_capture resp(resp_body_cb);
     const char *jwt = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9."
@@ -755,67 +712,53 @@ TEST_CASE("TLS verify with JWT", "[http]") {
     um_base64url_decode(dot + 1, &vtx.sig, &vtx.siglen);
 
     tls->api->set_cert_verify(tls, cert_verify, &vtx);
-    um_http_init(loop, &clt, "https://demo4.ziti.netfoundry.io");
+    um_http_init(test.loop, &clt, "https://demo4.ziti.netfoundry.io");
     um_http_set_ssl(&clt, tls);
 
     um_http_header(&clt, "Connection", "close");
 
     um_http_req_t *req = um_http_req(&clt, "GET", "/version", resp_capture_cb, &resp);
 
-    uv_run(loop, UV_RUN_DEFAULT);
+    test.run();
 
     CHECK(resp.code == 200);
 
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(&clt, nullptr);
 
     free(vtx.sig);
     tls->api->free_ctx(tls);
 }
 
 TEST_CASE("TLS to IP address", "[http]") {
-    uv_mbed_set_debug(7, test_log);
-    uv_loop_t *loop = uv_loop_new();
+    UvLoopTest test;
+
     um_http_t clt;
     resp_capture resp(resp_body_cb);
 
-    tls_context *tls = default_tls_context(nullptr, 0);
-    um_http_init(loop, &clt, "https://1.1.1.1");
-    um_http_set_ssl(&clt, tls);
+    um_http_init(test.loop, &clt, "https://1.1.1.1");
     um_http_header(&clt, "Connection", "close");
 
     um_http_req_t *req = um_http_req(&clt, "GET", "/dns-query?name=google.com&type=AAAA", resp_capture_cb, &resp);
     um_http_req_header(req, "Accept", "application/dns-json");
 
-    uv_run(loop, UV_RUN_DEFAULT);
+    test.run();
 
     CHECK(resp.code == 200);
     CHECK(resp.headers["Content-Type"] == "application/dns-json");
     CHECK_THAT(resp.body, Contains("\"Answer\":[{\"name\":\"google.com\""));
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
-
-    tls->api->free_ctx(tls);
+    um_http_close(&clt, nullptr);
 }
 
 TEST_CASE("connect timeout", "[http]") {
-    uv_mbed_set_debug(7, test_log);
-    uv_loop_t *loop = uv_loop_new();
+    UvLoopTest test;
+
     um_http_t clt;
     resp_capture resp(resp_body_cb);
     resp_capture resp2(resp_body_cb);
 
-
     uv_gettimeofday(&resp.resp_start);
 
-    tls_context *tls = default_tls_context(nullptr, 0);
-    um_http_init(loop, &clt, "https://10.1.1.1"); // not reachable
+    um_http_init(test.loop, &clt, "https://10.1.1.1"); // not reachable
     um_http_connect_timeout(&clt, 10); // should be short enough
     um_http_header(&clt, "Connection", "close");
 
@@ -825,73 +768,60 @@ TEST_CASE("connect timeout", "[http]") {
     um_http_req_header(req, "Accept", "application/dns-json");
     um_http_req_header(req2, "Accept", "application/dns-json");
 
-    uv_run(loop, UV_RUN_DEFAULT);
+    test.run();
 
     CHECK(resp.code == UV_ETIMEDOUT);
     CHECK(resp2.code == UV_ETIMEDOUT);
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
-
-    tls->api->free_ctx(tls);
+    um_http_close(&clt, nullptr);
 }
 
 
 
 TEST_CASE("HTTP gzip", "[http]") {
-    uv_loop_t *loop = uv_loop_new();
-    um_http_t clt;
+    UvLoopTest test;
+
+    auto clt = new um_http_t;
     resp_capture resp(resp_body_cb);
-    um_http_init(loop, &clt, "https://httpbin.org");
-    um_http_req_t *req = um_http_req(&clt, "GET", "/gzip", resp_capture_cb, &resp);
+    um_http_init(test.loop, clt, "https://httpbin.org");
+    um_http_req_t *req = um_http_req(clt, "GET", "/gzip", resp_capture_cb, &resp);
 
-    uv_run(loop, UV_RUN_DEFAULT);
+    test.run();
 
-    THEN("request should be fast and then idle for 5 seconds") {
-        CHECK(resp.code == HTTP_STATUS_OK);
-        CHECK_THAT(resp.http_version, Equals("1.1"));
-        CHECK_THAT(resp.status, Equals("OK"));
-        CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
-        CHECK(resp.headers["Content-Encoding"] == "gzip");
-        CHECK_THAT(resp.body, Contains(R"("Accept-Encoding": "gzip, deflate")"));
-        CHECK(resp.resp_body_end_called == 1);
-    }
+    CHECK(resp.code == HTTP_STATUS_OK);
+    CHECK_THAT(resp.http_version, Equals("1.1"));
+    CHECK_THAT(resp.status, Equals("OK"));
+    CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
+    CHECK(resp.headers["Content-Encoding"] == "gzip");
+    CHECK_THAT(resp.body, Contains(R"("Accept-Encoding": "gzip, deflate")"));
+    CHECK(resp.resp_body_end_called == 1);
 
     std::cout << resp.req_body << std::endl;
 
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(clt, [](um_http_t *c){
+        delete c;
+    });
 }
 
-TEST_CASE("deflate_compression", "[http]") {
-    uv_loop_t *loop = uv_loop_new();
+TEST_CASE("HTTP deflate", "[http]") {
+    UvLoopTest test;
+
     um_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(loop, &clt, "https://httpbin.org");
+    um_http_init(test.loop, &clt, "https://httpbin.org");
     um_http_req_t *req = um_http_req(&clt, "GET", "/deflate", resp_capture_cb, &resp);
 
-    uv_run(loop, UV_RUN_DEFAULT);
+    test.run();
 
-    THEN("request should be fast and then idle for 5 seconds") {
-        CHECK(resp.code == HTTP_STATUS_OK);
-        CHECK_THAT(resp.http_version, Equals("1.1"));
-        CHECK_THAT(resp.status, Equals("OK"));
-        CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
-        CHECK(resp.headers["Content-Encoding"] == "deflate");
-        CHECK_THAT(resp.body, Contains(R"("Accept-Encoding": "gzip, deflate")"));
-        CHECK(resp.resp_body_end_called == 1);
-    }
+    CHECK(resp.code == HTTP_STATUS_OK);
+    CHECK_THAT(resp.http_version, Equals("1.1"));
+    CHECK_THAT(resp.status, Equals("OK"));
+    CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
+    CHECK(resp.headers["Content-Encoding"] == "deflate");
+    CHECK_THAT(resp.body, Contains(R"("Accept-Encoding": "gzip, deflate")"));
+    CHECK(resp.resp_body_end_called == 1);
+
 
     std::cout << resp.req_body << std::endl;
 
-    um_http_close(&clt);
-    uv_run(loop, UV_RUN_ONCE);
-
-    uv_loop_close(loop);
-    free(loop);
+    um_http_close(&clt, nullptr);
 }

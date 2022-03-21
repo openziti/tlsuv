@@ -35,6 +35,9 @@ static void do_request(uv_timer_t *t) {
 
     if (app->count-- > 0) {
         uv_timer_start(t, do_request, app->cycle * 1000, 0);
+    } else {
+        uv_close((uv_handle_t *) t, NULL);
+        um_http_close(&app->clt, NULL);
     }
 }
 

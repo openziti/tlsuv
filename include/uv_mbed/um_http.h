@@ -66,6 +66,7 @@ typedef void (*um_http_resp_cb)(um_http_resp_t *resp, void *ctx);
  */
 typedef void (*um_http_body_cb)(um_http_req_t *req, const char *body, ssize_t len);
 
+typedef void (*um_http_close_cb)(um_http_t *);
 /**
  * @brief State of HTTP request.
  */
@@ -141,18 +142,21 @@ typedef struct um_http_s {
 
     int connected;
     um_src_t *src;
-    tcp_src_t default_src;
+    bool own_src;
 
     uv_link_t http_link;
     tls_link_t tls_link;
 
     long connect_timeout;
     long idle_time;
-    uv_timer_t conn_timer;
+    uv_timer_t *conn_timer;
 
     uv_async_t proc;
     um_http_req_t *active;
     STAILQ_HEAD(req_q, um_http_req_s) requests;
+
+    void *data;
+    um_http_close_cb close_cb;
 } um_http_t;
 
 /**
@@ -248,10 +252,10 @@ void um_http_header(um_http_t *clt, const char *name, const char *value);
 
 /**
  * close client and release all resources associate with it
- * @param l
+ * @param clt
  * @return 0 or error code
  */
-int um_http_close(um_http_t *l);
+int um_http_close(um_http_t *clt, um_http_close_cb close_cb);
 
 /**
  * Create HTTP request with givan client and queue it for execution.
@@ -282,7 +286,7 @@ int um_http_req_header(um_http_req_t *req, const char *name, const char *value);
  * @param cb
  * @return
  */
-int um_http_req_data(um_http_req_t *req, const char *body, ssize_t bodylen, um_http_body_cb cb);
+int um_http_req_data(um_http_req_t *req, const char *body, size_t bodylen, um_http_body_cb cb);
 
 /**
  * Indicate the end of the request body. Only needed if `Transfer-Encoding` header was set to `chunked`
