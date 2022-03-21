@@ -124,7 +124,6 @@ TEST_CASE("conn failures", "[http]") {
     um_http_t clt;
     resp_capture resp(resp_body_cb);
 
-
     string url = scheme + "://localhost:1222";
     INFO(url);
     um_http_init(test.loop, &clt, url.c_str());

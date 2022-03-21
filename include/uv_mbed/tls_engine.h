@@ -239,6 +239,11 @@ typedef struct {
      */
     const char *(*strerror)(int code);
 
+    /**
+     * Get TLS implementation and version
+     */
+     const char *(*version)();
+
 } tls_context_api;
 
 struct tls_context_s {
