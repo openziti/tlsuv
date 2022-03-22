@@ -79,6 +79,8 @@ static void on_mbed_close(uv_link_t *l) {
     }
     if (mbed->socket) {
         mbed->socket->cancel((um_src_t *) mbed->socket);
+        free(mbed->socket);
+        mbed->socket = NULL;
     }
     if(mbed->close_cb) mbed->close_cb((uv_handle_t *) mbed);
 }
@@ -88,9 +90,6 @@ int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
     if (mbed->parent)
         uv_link_propagate_close((uv_link_t *) mbed, (uv_link_t *) mbed, on_mbed_close);
     else {
-        if (mbed->socket) {
-            mbed->socket->cancel((um_src_t *) mbed->socket);
-        }
         on_mbed_close((uv_link_t *) mbed);
     }
     return 0;
@@ -187,9 +186,11 @@ int uv_mbed_free(uv_mbed_t *mbed) {
         mbed->tls->api->free_engine(mbed->tls_engine);
         mbed->tls_engine = NULL;
     }
-    mbed->socket->cancel((um_src_t *) mbed->socket);
-    free(mbed->socket);
-    mbed->socket = NULL;
+    if (mbed->socket) {
+        mbed->socket->cancel((um_src_t *) mbed->socket);
+        free(mbed->socket);
+        mbed->socket = NULL;
+    }
     return 0;
 }
 
