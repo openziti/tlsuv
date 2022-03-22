@@ -15,11 +15,11 @@ limitations under the License.
 */
 
 #include <uv.h>
-#include <uv_mbed/um_http.h>
 #include <uv_mbed/um_websocket.h>
 #include <cstring>
 #include <uv_mbed/uv_mbed.h>
 #include "catch.hpp"
+#include "fixtures.h"
 
 static void test_timeout(uv_timer_t *t) {
     printf("timeout stopping loop\n");
@@ -29,12 +29,13 @@ static void test_timeout(uv_timer_t *t) {
 using namespace std;
 class websocket_test {
 public:
-    websocket_test(): ws(nullptr), conn_status(0)
+    websocket_test(int count): expected_count(count),ws(nullptr), conn_status(0)
     {}
 
     um_websocket_t *ws;
     int conn_status = -1;
     vector<string> resp;
+    int expected_count;
 };
 
 static void on_ws_write(uv_write_t *req, int status) {
@@ -71,84 +72,77 @@ static void on_ws_data(uv_stream_t *s, ssize_t nread, const uv_buf_t* buf) {
         t->resp.push_back(text);
     }
 
-    um_websocket_close(ws, on_close_cb);
+    if (t->resp.size() >= t->expected_count) {
+        um_websocket_close(ws, on_close_cb);
+    }
 }
 
 TEST_CASE("websocket fail tests", "[websocket]") {
-    uv_loop_t *loop = uv_loop_new();
-    auto *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
-    uv_timer_init(loop, timer);
-    uv_unref((uv_handle_t *) timer);
-    uv_timer_start(timer, test_timeout, 15000, 0);
+    UvLoopTest lt;
     um_websocket_t clt;
-    websocket_test test;
+    websocket_test test(0);
 
     WHEN("invalid URL") {
-        um_websocket_init(loop, &clt);
+        um_websocket_init(lt.loop, &clt);
         test.ws = &clt;
         clt.data = &test;
 
         uv_connect_t r;
         r.data = &test;
         int rc = um_websocket_connect(&r, &clt, "not a real URL", on_connect, on_ws_data);
-        uv_run(loop, UV_RUN_DEFAULT);
+        lt.run();
         CHECK(test.conn_status == 0);
         CHECK(rc == UV_EINVAL);
     }
 
     WHEN("resolve failure ") {
-        um_websocket_init(loop, &clt);
+        um_websocket_init(lt.loop, &clt);
         test.ws = &clt;
         clt.data = &test;
 
         uv_connect_t r;
         r.data = &test;
         int rc = um_websocket_connect(&r, &clt, "ws://not.a.real.host", on_connect, on_ws_data);
-        uv_run(loop, UV_RUN_DEFAULT);
+        lt.run();
         CHECK((rc == UV_EAI_NONAME || test.conn_status == UV_EAI_NONAME));
     }
-    uv_loop_close(loop);
-    free(loop);
 }
 
+#define WS_TEST_HOST "echo.websocket.events"
+
 TEST_CASE("websocket echo tests", "[websocket]") {
-    uv_loop_t *loop = uv_loop_new();
-    auto *timer = static_cast<uv_timer_t *>(malloc(sizeof(uv_timer_t)));
-    uv_timer_init(loop, timer);
-    uv_unref((uv_handle_t *) timer);
-    uv_timer_start(timer, test_timeout, 15000, 0);
+    UvLoopTest lt;
+
     um_websocket_t clt;
-    websocket_test test;
+    websocket_test test(2);
 
     WHEN("ws echo test") {
-        um_websocket_init(loop, &clt);
+        um_websocket_init(lt.loop, &clt);
         test.ws = &clt;
         clt.data = &test;
 
         uv_connect_t r;
         r.data = &test;
-        int rc = um_websocket_connect(&r, &clt, "ws://echo.websocket.org", on_connect, on_ws_data);
-        uv_run(loop, UV_RUN_DEFAULT);
+        int rc = um_websocket_connect(&r, &clt, "ws://" WS_TEST_HOST, on_connect, on_ws_data);
+        lt.run();
         CHECK(rc == 0);
         CHECK(test.conn_status == 0);
-        REQUIRE(test.resp.size() == 1);
-        CHECK_THAT(test.resp[0],Catch::Matches("this is a test"));
+        REQUIRE(test.resp.size() == 2);
+        CHECK_THAT(test.resp[1],Catch::Matches("this is a test"));
     }
 
     WHEN("wss echo test") {
-        um_websocket_init(loop, &clt);
+        um_websocket_init(lt.loop, &clt);
         test.ws = &clt;
         clt.data = &test;
 
         uv_connect_t r;
         r.data = &test;
-        int rc = um_websocket_connect(&r, &clt, "wss://echo.websocket.org", on_connect, on_ws_data);
-        uv_run(loop, UV_RUN_DEFAULT);
+        int rc = um_websocket_connect(&r, &clt, "wss://" WS_TEST_HOST, on_connect, on_ws_data);
+        lt.run();
         CHECK(rc == 0);
         CHECK(test.conn_status == 0);
-        REQUIRE(test.resp.size() == 1);
-        CHECK_THAT(test.resp[0],Catch::Matches("this is a test"));
+        REQUIRE(test.resp.size() == 2);
+        CHECK_THAT(test.resp[1],Catch::Matches("this is a test"));
     }
-    uv_loop_close(loop);
-    free(loop);
 }
