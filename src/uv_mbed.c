@@ -55,7 +55,11 @@ const char* uv_mbed_version() {
 }
 
 int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls) {
-    tcp_src_init(l, &mbed->socket);
+    mbed->loop = l;
+
+    mbed->socket = calloc(1, sizeof(*mbed->socket));
+    tcp_src_init(l, mbed->socket);
+
     uv_link_init((uv_link_t *) mbed, &mbed_methods);
     mbed->tls = tls != NULL ? tls : get_default_tls();
     mbed->tls_engine = NULL;
@@ -73,6 +77,9 @@ static void on_mbed_close(uv_link_t *l) {
         mbed->conn_req = NULL;
         cr->cb(cr, UV_ECANCELED);
     }
+    if (mbed->socket) {
+        mbed->socket->cancel((um_src_t *) mbed->socket);
+    }
     if(mbed->close_cb) mbed->close_cb((uv_handle_t *) mbed);
 }
 
@@ -81,18 +88,20 @@ int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
     if (mbed->parent)
         uv_link_propagate_close((uv_link_t *) mbed, (uv_link_t *) mbed, on_mbed_close);
     else {
-        mbed->socket.cancel((um_src_t *) &mbed->socket);
+        if (mbed->socket) {
+            mbed->socket->cancel((um_src_t *) mbed->socket);
+        }
         on_mbed_close((uv_link_t *) mbed);
     }
     return 0;
 }
 
 int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, unsigned int delay) {
-    return tcp_src_keepalive(&mbed->socket, keepalive, delay);
+    return tcp_src_keepalive(mbed->socket, keepalive, delay);
 }
 
 int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay) {
-    return tcp_src_nodelay(&mbed->socket, nodelay);
+    return tcp_src_nodelay(mbed->socket, nodelay);
 }
 
 static void on_tls_hs(tls_link_t *tls_link, int status) {
@@ -133,6 +142,7 @@ static void on_src_connect(um_src_t *src, int status, void *ctx) {
         mbed->conn_req = NULL;
     }
 }
+
 int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int port, uv_connect_cb cb) {
     if (!req) {
         return UV_EINVAL;
@@ -147,7 +157,7 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
     mbed->host = strdup(host);
     mbed->conn_req = req;
 
-    return mbed->socket.connect((um_src_t *) &mbed->socket, host, portstr, on_src_connect, mbed);
+    return mbed->socket->connect((um_src_t *) mbed->socket, host, portstr, on_src_connect, mbed);
 }
 
 int uv_mbed_read(uv_mbed_t *mbed, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
@@ -177,7 +187,9 @@ int uv_mbed_free(uv_mbed_t *mbed) {
         mbed->tls->api->free_engine(mbed->tls_engine);
         mbed->tls_engine = NULL;
     }
-    mbed->socket.release((um_src_t *) &mbed->socket);
+    mbed->socket->cancel((um_src_t *) mbed->socket);
+    free(mbed->socket);
+    mbed->socket = NULL;
     return 0;
 }
 

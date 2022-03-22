@@ -142,7 +142,10 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
 
 static void link_close_cb(uv_link_t *l) {
     tcp_src_t *tcp = l->data;
-    free_handle((uv_handle_t *) tcp->conn);
+    if (tcp) {
+        free_handle((uv_handle_t *) tcp->conn);
+    }
+    free(l);
 }
 
 static void tcp_src_cancel(um_src_t *sl) {
@@ -156,9 +159,12 @@ static void tcp_src_cancel(um_src_t *sl) {
 
     if (tl->conn) {
         UM_LOG(TRACE, "closing %p active(%d) src_link->stream(%p)", tl->conn, uv_is_active((const uv_handle_t *) tl->conn), ts->stream);
-        int rc = uv_tcp_close_reset(tl->conn, free_handle);
+        if (!uv_is_closing((const uv_handle_t *) tl->conn))
+            uv_close(tl->conn, free_handle);
+        int rc = 0;
         UM_LOG(TRACE, "close_reset() =  %d, is_closing = %d(%s)", rc, uv_is_closing((const uv_handle_t *) tl->conn),
                rc ? uv_strerror(rc) : "");
+        tl->conn = NULL;
 
         if (rc != 0) {
             if (uv_is_closing((const uv_handle_t *) tl->conn)) {
@@ -171,12 +177,14 @@ static void tcp_src_cancel(um_src_t *sl) {
                 uv_link_default_close(tl->link, tl->link, link_close_cb);
             }
         }
+    } else {
+        uv_link_default_close(tl->link, tl->link, link_close_cb);
     }
     tl->conn = NULL;
 }
 
 static void tcp_src_release(um_src_t *sl) {
     tcp_src_cancel(sl);
-    free(sl->link);
-    sl->link = NULL;
+//    free(sl->link);
+//    sl->link = NULL;
 }

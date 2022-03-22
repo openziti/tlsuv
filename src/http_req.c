@@ -155,6 +155,7 @@ void set_http_header(um_header_list *hl, const char* name, const char *value) {
             LIST_REMOVE(h, _next);
             free(h->value);
             free(h->name);
+            free(h);
         }
         return;
     }
