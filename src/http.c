@@ -125,11 +125,26 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     }
 }
 
+static void clear_req_body(um_http_req_t *req, int code) {
+    struct body_chunk_s *chunk = req->req_body, *next;
+    while(chunk) {
+        next = chunk->next;
+        if (chunk->cb) {
+            chunk->cb(req, chunk->chunk, code);
+        }
+        free(chunk);
+
+        chunk = next;
+    }
+    req->req_body = NULL;
+}
+
 static void fail_active_request(um_http_t *c, int code, const char *msg) {
     if (c->active != NULL && c->active->resp_cb != NULL) {
         c->active->resp.code = code;
         c->active->resp.status = strdup(msg);
         c->active->resp_cb(&c->active->resp, c->active->data);
+        clear_req_body(c->active, code);
         http_req_free(c->active);
         free(c->active);
         c->active = NULL;
@@ -145,6 +160,7 @@ static void fail_active_request(um_http_t *c, int code, const char *msg) {
             r->resp_cb(&r->resp, r->data);
             uv_unref((uv_handle_t *) &c->proc);
         }
+        clear_req_body(r, code);
         http_req_free(r);
         free(r);
     }
