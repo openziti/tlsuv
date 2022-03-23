@@ -127,7 +127,9 @@ TEST_CASE("conn failures", "[http]") {
     string url = scheme + "://localhost:1222";
     INFO(url);
     um_http_init(test.loop, &clt, url.c_str());
-    um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
+    um_http_req_t *req = um_http_req(&clt, "POST", "/", resp_capture_cb, &resp);
+    const char *msg = "this is a message";
+    um_http_req_data(req, msg, strlen(msg), nullptr);
 
     test.run();
 

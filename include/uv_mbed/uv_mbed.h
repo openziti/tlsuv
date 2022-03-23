@@ -55,7 +55,8 @@ int uv_mbed_free(uv_mbed_t *session);
 struct uv_mbed_s {
     UV_LINK_FIELDS
 
-    tcp_src_t socket;
+    uv_loop_t *loop;
+    tcp_src_t *socket;
     tls_link_t tls_link;
 
     tls_context *tls;

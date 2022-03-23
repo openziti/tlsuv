@@ -155,6 +155,7 @@ void set_http_header(um_header_list *hl, const char* name, const char *value) {
             LIST_REMOVE(h, _next);
             free(h->value);
             free(h->name);
+            free(h);
         }
         return;
     }
@@ -233,11 +234,13 @@ static int http_message_cb(http_parser *parser) {
     UM_LOG(VERB, "message complete");
     um_http_req_t *r = parser->data;
     r->state = completed;
-    if (r->inflater == NULL || um_inflate_state(r->inflater) == 1) {
-        r->resp.body_cb(r, NULL, UV_EOF);
-    } else {
-        UM_LOG(ERR, "incomplete decompression at the end of HTTP message");
-        r->resp.body_cb(r, NULL, UV_EINVAL);
+    if (r->resp.body_cb) {
+        if (r->inflater == NULL || um_inflate_state(r->inflater) == 1) {
+            r->resp.body_cb(r, NULL, UV_EOF);
+        } else {
+            UM_LOG(ERR, "incomplete decompression at the end of HTTP message");
+            r->resp.body_cb(r, NULL, UV_EINVAL);
+        }
     }
 
     return 0;
