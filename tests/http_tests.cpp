@@ -826,3 +826,25 @@ TEST_CASE("HTTP deflate", "[http]") {
 
     um_http_close(&clt, nullptr);
 }
+
+TEST_CASE("URL encode", "[http]") {
+    UvLoopTest test;
+
+    um_http_t clt;
+    resp_capture resp(resp_body_cb);
+
+    um_http_init(test.loop, &clt, "https://www.google.com/search");
+    um_http_req_t *req = um_http_req(&clt, "GET", R"(?query=this is a <test>!)", resp_capture_cb, &resp);
+
+    test.run();
+
+    CHECK(resp.code == HTTP_STATUS_OK);
+    CHECK_THAT(resp.http_version, Equals("1.1"));
+    CHECK_THAT(resp.status, Equals("OK"));
+    CHECK(resp.resp_body_end_called == 1);
+    CHECK_THAT(resp.body, Contains("this is a test", Catch::CaseSensitive::No));
+
+    std::cout << resp.req_body << std::endl;
+
+    um_http_close(&clt, nullptr);
+}

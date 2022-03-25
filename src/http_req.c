@@ -97,14 +97,35 @@ void free_hdr_list(um_header_list *l) {
     }
 }
 
+#define HEXIFY(c) (((c) < 10) ? '0' + (c) : 'A' + (c) - 10)
+
+static size_t write_url_encoded(char *buf, const char *url) {
+    static char unsafe[] = "\"<>%{}|\\^`";
+    char *p = buf;
+    for(; *url != 0; url++) {
+        if (*url <= ' ' || strchr(unsafe, *url) != NULL) {
+            *p++ = '%';
+            *p++ = HEXIFY((*url >> 4) & 0xf);
+            *p++ = HEXIFY(*url & 0xf);
+        } else {
+            *p++ = *url;
+        }
+    }
+    return p - buf;
+}
+
 size_t http_req_write(um_http_req_t *req, char *buf, size_t maxlen) {
     const char *pfx = "";
     if (req->client && req->client->prefix) {
         pfx = req->client->prefix;
     }
-    size_t len = snprintf(buf, maxlen,
-                          "%s %s%s HTTP/1.1\r\n",
-                          req->method, pfx, req->path);
+
+    size_t len = 0;
+    len += snprintf(buf, maxlen, "%s ", req->method);
+    len += write_url_encoded(buf + len, pfx);
+    len += write_url_encoded(buf + len, req->path);
+    len += snprintf(buf + len, maxlen - len, " HTTP/1.1\r\n");
+
 
     if (strcmp(req->method, "POST") == 0 ||
         strcmp(req->method, "PUT") == 0 ||
