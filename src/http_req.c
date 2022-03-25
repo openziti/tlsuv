@@ -97,16 +97,16 @@ void free_hdr_list(um_header_list *l) {
     }
 }
 
+#define HEXIFY(c) (((c) < 10) ? '0' + (c) : 'A' + (c) - 10)
+
 static size_t write_url_encoded(char *buf, const char *url) {
     static char unsafe[] = "\"<>%{}|\\^`";
     char *p = buf;
     for(; *url != 0; url++) {
         if (*url <= ' ' || strchr(unsafe, *url) != NULL) {
-            char b[3];
-            snprintf(b, sizeof(b), "%X", *url);
             *p++ = '%';
-            *p++ = b[0];
-            *p++ = b[1];
+            *p++ = HEXIFY((*url >> 4) & 0xf);
+            *p++ = HEXIFY(*url & 0xf);
         } else {
             *p++ = *url;
         }
