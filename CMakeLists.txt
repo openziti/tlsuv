@@ -18,7 +18,7 @@ PROJECT("uv-mbed"
         VERSION ${ver}
         )
 
-message("Project: ${CMAKE_PROJECT_NAME}@v${CMAKE_PROJECT_VERSION}")
+message("Project: ${PROJECT_NAME}@v${PROJECT_VERSION}")
 
 include(GNUInstallDirs)
 
@@ -98,7 +98,7 @@ target_link_libraries(uv_mbed
         PUBLIC ${LIBUV_NAME}
         PUBLIC uv_link
         )
-TARGET_COMPILE_DEFINITIONS(uv_mbed PRIVATE UV_MBED_VERSION=v${CMAKE_PROJECT_VERSION})
+TARGET_COMPILE_DEFINITIONS(uv_mbed PRIVATE UV_MBED_VERSION=v${PROJECT_VERSION})
 
 if (USE_MBEDTLS)
     target_compile_definitions(uv_mbed PRIVATE USE_MBEDTLS)
