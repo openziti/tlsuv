@@ -194,6 +194,10 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
                     inlen = 0;
                     inptr = NULL;
                     uv_link_propagate_alloc_cb(l, bufsize, b);
+                    if (b->base == NULL || b->len == 0) {
+                        uv_link_propagate_read_cb(l, UV_ENOBUFS, b);
+                        return;
+                    }
                     break;
                 }
                 case TLS_HAS_WRITE: {
