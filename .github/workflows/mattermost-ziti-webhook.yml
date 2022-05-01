@@ -1,5 +1,5 @@
 name: mattermost-ziti-webhook
-on: 
+on:
   create:
   delete:
   issues:
@@ -10,13 +10,17 @@ on:
   push:
   fork:
   release:
+  workflow_dispatch:
 
 jobs:
   mattermost-ziti-webhook:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     name: POST Webhook
     steps:
-    - uses: openziti/ziti-webhook-action@main
+    - uses: openziti/ziti-webhook-action@v2
+      if: ${{ env.ZITI_MATTERMOST_WEBHOOK_URL != null }}
+      env:
+          ZITI_MATTERMOST_WEBHOOK_URL: ${{ secrets.ZITI_MATTERMOST_WEBHOOK_URL }}
       with:
         ziti-id: ${{ secrets.ZITI_MATTERMOST_IDENTITY }}
         webhook-url: ${{ secrets.ZITI_MATTERMOST_WEBHOOK_URL }}
