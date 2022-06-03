@@ -292,6 +292,8 @@ static void send_body(um_http_req_t *req) {
         UM_LOG(ERR, "attempt to send body for inactive request");
     }
 
+    if (req->req_body == NULL) {}
+
     uv_buf_t buf;
     while (req->req_body != NULL) {
         struct body_chunk_s *b = req->req_body;
@@ -545,6 +547,8 @@ void um_http_set_path_prefix(um_http_t *clt, const char *prefix) {
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     tcp_src_t *src = calloc(1, sizeof(tcp_src_t));
     tcp_src_init(l, src);
+    tcp_src_nodelay(src, 1);
+    tcp_src_keepalive(src, 1, 3);
     int rc = um_http_init_with_src(l, clt, url, (um_src_t *)src);
     clt->own_src = true;
     return rc;
