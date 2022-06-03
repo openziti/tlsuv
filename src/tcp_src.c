@@ -107,7 +107,9 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
             if (sl->conn_req) {
                 free(sl->conn_req);
                 sl->conn_req = NULL;
-                free(conn);
+                if (conn) {
+                    uv_close((uv_handle_t *) conn, free_handle);
+                }
             }
         }
 
