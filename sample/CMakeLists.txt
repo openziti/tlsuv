@@ -19,3 +19,7 @@ target_link_libraries(repeat-fetch PUBLIC uv_mbed)
 
 add_executable(ws-client ws-client.c)
 target_link_libraries(ws-client PUBLIC uv_mbed)
+
+
+add_executable(http-ping http-ping.c)
+target_link_libraries(http-ping PUBLIC uv_mbed)
