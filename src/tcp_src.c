@@ -38,6 +38,13 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     return 0;
 }
 
+void tcp_src_free(tcp_src_t *ts) {
+    if (ts) {
+        free(ts->link);
+        ts->link = NULL;
+    }
+}
+
 int tcp_src_nodelay(tcp_src_t *ts, int val) {
     ts->nodelay = val;
     if (ts->conn)
@@ -53,24 +60,28 @@ int tcp_src_keepalive(tcp_src_t *ts, int on, unsigned int val) {
 static void tcp_connect_cb(uv_connect_t *req, int status) {
     tcp_src_t *sl = req->data;
 
-    if (status == UV_ECANCELED) {
-        UM_LOG(TRACE, "connect was cancelled: handle(%p) closing(%d)", req->handle, uv_is_closing((const uv_handle_t *) req->handle));
+    if (sl == NULL) {
+        UM_LOG(TRACE, "connect requests was cancelled");
+        uv_close((uv_handle_t *) req->handle, free_handle);
         free(req);
         return;
     }
 
-    // old request
-    if (req->handle != (uv_stream_t *)sl->conn) {
-        UM_LOG(TRACE, "old handle(%p)", req->handle);
+    sl->conn_req = NULL;
+    if (status == UV_ECANCELED) {
+        UM_LOG(TRACE, "connect was cancelled: handle(%p) closing(%d)", req->handle, uv_is_closing((const uv_handle_t *) req->handle));
+        uv_close((uv_handle_t *) req->handle, free_handle);
         free(req);
         return;
     }
 
     if (status == 0) {
+        sl->conn = (uv_tcp_t *)req->handle;
+        uv_tcp_nodelay(sl->conn, 1);
+        uv_tcp_keepalive(sl->conn, sl->keepalive > 0, sl->keepalive);
+
         uv_link_source_init((uv_link_source_t *) sl->link, (uv_stream_t *) sl->conn);
         sl->link->data = sl;
-        uv_tcp_nodelay(sl->conn, sl->nodelay);
-        uv_tcp_keepalive(sl->conn, sl->keepalive > 0, sl->keepalive);
     } else {
         UM_LOG(ERR, "failed to connect: %d(%s)", status, uv_strerror(status));
         sl->conn = NULL;
@@ -85,25 +96,29 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
     tcp_src_t *sl = req->data;
 
     if (sl != NULL) {
-        uv_connect_t *conn_req = NULL;
-
         UM_LOG(TRACE, "resolved status = %d", status);
+        uv_tcp_t *conn = NULL;
         if (status == 0) {
-            sl->conn = calloc(1, sizeof(uv_tcp_t));
-            status = uv_tcp_init_ex(req->loop, sl->conn, addr->ai_family);
+            conn = calloc(1, sizeof(uv_tcp_t));
+            status = uv_tcp_init_ex(req->loop, conn, addr->ai_family);
         }
 
         if (status == 0) {
-            conn_req = calloc(1, sizeof(uv_connect_t));
-            conn_req->data = sl;
-            status = uv_tcp_connect(conn_req, sl->conn, addr->ai_addr, tcp_connect_cb);
+            sl->conn_req = calloc(1, sizeof(uv_connect_t));
+            sl->conn_req->data = sl;
+            status = uv_tcp_connect(sl->conn_req, conn, addr->ai_addr, tcp_connect_cb);
         }
 
         if (status != 0) {
             UM_LOG(ERR, "connect failed: %d(%s)", status, uv_strerror(status));
             sl->connect_cb((um_src_t *) sl, status, sl->connect_ctx);
-            if (conn_req)
-                free(conn_req);
+            if (sl->conn_req) {
+                free(sl->conn_req);
+                sl->conn_req = NULL;
+                if (conn) {
+                    uv_close((uv_handle_t *) conn, free_handle);
+                }
+            }
         }
 
         sl->resolve_req = NULL;
@@ -117,6 +132,14 @@ static void free_handle(uv_handle_t *h) {
     free(h);
 }
 
+static void link_close_cb(uv_link_t *l) {
+    tcp_src_t *tcp = l->data;
+    if (tcp->conn) {
+        free_handle((uv_handle_t *) tcp->conn);
+        tcp->conn = NULL;
+    }
+}
+
 static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, um_src_connect_cb cb, void *ctx) {
     tcp_src_t *tcp = (tcp_src_t *) sl;
 
@@ -124,7 +147,8 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     sl->connect_ctx = ctx;
 
     if (tcp->conn) {
-        tcp->cancel((um_src_t *) tcp);
+        tcp->link->methods->close(tcp->link, tcp->link, link_close_cb);
+        tcp->conn = NULL;
     }
 
     tcp->resolve_req = calloc(1, sizeof(uv_getaddrinfo_t));
@@ -140,14 +164,6 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     return rc;
 }
 
-static void link_close_cb(uv_link_t *l) {
-    tcp_src_t *tcp = l->data;
-    if (tcp) {
-        free_handle((uv_handle_t *) tcp->conn);
-    }
-    free(l);
-}
-
 static void tcp_src_cancel(um_src_t *sl) {
     tcp_src_t *tl = (tcp_src_t*)sl;
     uv_link_source_t *ts = (uv_link_source_t *) tl->link;
@@ -157,32 +173,19 @@ static void tcp_src_cancel(um_src_t *sl) {
         tl->resolve_req = NULL;
     }
 
-    if (tl->conn) {
-        UM_LOG(TRACE, "closing %p active(%d) src_link->stream(%p)", tl->conn, uv_is_active((const uv_handle_t *) tl->conn), ts->stream);
-        if (!uv_is_closing((const uv_handle_t *) tl->conn))
-            uv_close(tl->conn, free_handle);
-        int rc = 0;
-        UM_LOG(TRACE, "close_reset() =  %d, is_closing = %d(%s)", rc, uv_is_closing((const uv_handle_t *) tl->conn),
-               rc ? uv_strerror(rc) : "");
-        tl->conn = NULL;
-
-        if (rc != 0) {
-            if (uv_is_closing((const uv_handle_t *) tl->conn)) {
-                if (ts->stream != (uv_stream_t *)tl->conn) {
-                    free_handle((uv_handle_t *) tl->conn);
-                }
-                // N.B: tl->conn is leaked if above condition is true (i.e. close was called but link_source_close_cb not completed yet)
-                // this does not seem to happen (and seems unlikely)
-            } else {
-                uv_link_default_close(tl->link, tl->link, link_close_cb);
-            }
-        }
-    } else {
-        uv_link_default_close(tl->link, tl->link, link_close_cb);
+    if (tl->conn_req) {
+        tl->conn_req->data = NULL;
+        tl->conn_req = NULL;
     }
-    tl->conn = NULL;
+
+    if (tl->conn && !uv_is_closing(tl->conn)) {
+        ts->methods->close(ts, ts, link_close_cb);
+    }
 }
 
 static void tcp_src_release(um_src_t *sl) {
-    tcp_src_cancel(sl);
+    tcp_src_t *tcp = sl;
+
+    free(tcp->conn);
+    tcp->conn = NULL;
 }

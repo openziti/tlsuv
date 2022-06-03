@@ -228,6 +228,7 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
 static void link_close_cb(uv_link_t *l) {
     um_http_t *clt = l->data;
     if (clt) {
+        clt->src->release(clt->src);
         uv_async_send(&clt->proc);
     }
 }
@@ -545,6 +546,8 @@ void um_http_set_path_prefix(um_http_t *clt, const char *prefix) {
 int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
     tcp_src_t *src = calloc(1, sizeof(tcp_src_t));
     tcp_src_init(l, src);
+    tcp_src_nodelay(src, 1);
+    tcp_src_keepalive(src, 1, 3);
     int rc = um_http_init_with_src(l, clt, url, (um_src_t *)src);
     clt->own_src = true;
     return rc;
