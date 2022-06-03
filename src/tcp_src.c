@@ -133,6 +133,9 @@ static void free_handle(uv_handle_t *h) {
 
 static void link_close_cb(uv_link_t *l) {
     tcp_src_t *tcp = l->data;
+    if (tcp->conn) {
+        free_handle(tcp->conn);
+    }
     tcp->conn = NULL;
 }
 
@@ -180,5 +183,8 @@ static void tcp_src_cancel(um_src_t *sl) {
 }
 
 static void tcp_src_release(um_src_t *sl) {
-    tcp_src_cancel(sl);
+    tcp_src_t *tcp = sl;
+
+    free(tcp->conn);
+    tcp->conn = NULL;
 }

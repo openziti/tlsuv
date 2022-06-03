@@ -228,6 +228,7 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
 static void link_close_cb(uv_link_t *l) {
     um_http_t *clt = l->data;
     if (clt) {
+        clt->src->release(clt->src);
         uv_async_send(&clt->proc);
     }
 }
