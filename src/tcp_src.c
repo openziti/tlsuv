@@ -69,6 +69,7 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
     sl->conn_req = NULL;
     if (status == UV_ECANCELED) {
         UM_LOG(TRACE, "connect was cancelled: handle(%p) closing(%d)", req->handle, uv_is_closing((const uv_handle_t *) req->handle));
+        uv_close((uv_handle_t *) req->handle, free_handle);
         free(req);
         return;
     }
