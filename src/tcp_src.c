@@ -41,6 +41,7 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
 void tcp_src_free(tcp_src_t *ts) {
     if (ts) {
         free(ts->link);
+        ts->link = NULL;
     }
 }
 
@@ -134,9 +135,9 @@ static void free_handle(uv_handle_t *h) {
 static void link_close_cb(uv_link_t *l) {
     tcp_src_t *tcp = l->data;
     if (tcp->conn) {
-        free_handle(tcp->conn);
+        free_handle((uv_handle_t *) tcp->conn);
+        tcp->conn = NULL;
     }
-    tcp->conn = NULL;
 }
 
 static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, um_src_connect_cb cb, void *ctx) {
