@@ -53,6 +53,8 @@ int tcp_src_nodelay(tcp_src_t *ts, int val);
 
 int tcp_src_keepalive(tcp_src_t *ts, int on, unsigned int val);
 
+void tcp_src_free(tcp_src_t *ts);
+
 #ifdef __cplusplus
 }
 #endif

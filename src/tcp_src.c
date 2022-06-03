@@ -38,6 +38,12 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     return 0;
 }
 
+void tcp_src_free(tcp_src_t *ts) {
+    if (ts) {
+        free(ts->link);
+    }
+}
+
 int tcp_src_nodelay(tcp_src_t *ts, int val) {
     ts->nodelay = val;
     if (ts->conn)
@@ -124,6 +130,11 @@ static void free_handle(uv_handle_t *h) {
     free(h);
 }
 
+static void link_close_cb(uv_link_t *l) {
+    tcp_src_t *tcp = l->data;
+    tcp->conn = NULL;
+}
+
 static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, um_src_connect_cb cb, void *ctx) {
     tcp_src_t *tcp = (tcp_src_t *) sl;
 
@@ -131,7 +142,8 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     sl->connect_ctx = ctx;
 
     if (tcp->conn) {
-        tcp->cancel((um_src_t *) tcp);
+        tcp->link->methods->close(tcp->link, tcp->link, link_close_cb);
+        tcp->conn = NULL;
     }
 
     tcp->resolve_req = calloc(1, sizeof(uv_getaddrinfo_t));
@@ -145,12 +157,6 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
         tcp->resolve_req = NULL;
     }
     return rc;
-}
-
-static void link_close_cb(uv_link_t *l) {
-    tcp_src_t *tcp = l->data;
-    tcp->conn = NULL;
-
 }
 
 static void tcp_src_cancel(um_src_t *sl) {
@@ -170,22 +176,6 @@ static void tcp_src_cancel(um_src_t *sl) {
     if (tl->conn && !uv_is_closing(tl->conn)) {
         ts->methods->close(ts, ts, link_close_cb);
     }
-
-//    if (tl->conn) {
-//        UM_LOG(TRACE, "closing %p active(%d) src_link->stream(%p)", tl->conn, uv_is_active((const uv_handle_t *) tl->conn), ts->stream);
-//        if (!uv_is_closing((const uv_handle_t *) tl->conn))
-//            uv_close(tl->conn, free_handle);
-//        int rc = 0;
-//        UM_LOG(TRACE, "close_reset() =  %d, is_closing = %d(%s)", rc, uv_is_closing((const uv_handle_t *) tl->conn),
-//               rc ? uv_strerror(rc) : "");
-//        tl->conn = NULL;
-//
-//        if (rc != 0) {
-//        }
-//    } else {
-//        uv_link_default_close(tl->link, tl->link, link_close_cb);
-//    }
-//    tl->conn = NULL;
 }
 
 static void tcp_src_release(um_src_t *sl) {

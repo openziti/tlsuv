@@ -292,8 +292,6 @@ static void send_body(um_http_req_t *req) {
         UM_LOG(ERR, "attempt to send body for inactive request");
     }
 
-    if (req->req_body == NULL) {}
-
     uv_buf_t buf;
     while (req->req_body != NULL) {
         struct body_chunk_s *b = req->req_body;
