@@ -23,6 +23,11 @@ jobs:
             openssl: on
 
     steps:
+    - name: Install tools
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        apt install -y valgrind
+
     - uses: actions/checkout@v2
       with:
         fetch-depth: '0'
@@ -41,7 +46,7 @@ jobs:
 
     - name: Memory Check
       working-directory: ${{runner.workspace}}/build
-      if: always()
+      if: always() && matrix.os == 'ubuntu-latest'
       run: ctest --no-compress-output -T MemCheck
       env:
         UM_TEST_DEBUG: 7
