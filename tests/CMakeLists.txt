@@ -16,6 +16,10 @@ target_link_libraries(all_tests
 
 target_include_directories(all_tests PRIVATE ../src)
 
+add_custom_target(run-tests
+        BYPRODUCTS ${PROJECT_BINARY_DIR}/Testing/results.xml
+        DEPENDS all_tests
+        COMMAND $<TARGET_FILE:all_tests> -r xml -o ${PROJECT_BINARY_DIR}/Testing/results.xml)
 #find_program(MEMORYCHECK_COMMAND valgrindor)
 #set( MEMORYCHECK_COMMAND_OPTIONS "--trace-children=yes --leak-check=full" )
 

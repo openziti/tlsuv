@@ -40,7 +40,7 @@ jobs:
 
     - name: test
       working-directory: ${{runner.workspace}}/build
-      run: ./tests/all_tests -r xml -o ./Testing/report.xml
+      run: cmake --build . --target run-tests
       env:
         UM_TEST_DEBUG: 7
 
