@@ -35,13 +35,19 @@ jobs:
 
     - name: test
       working-directory: ${{runner.workspace}}/build
-      run: ctest -VV --no-compress-output -T Test
+      run: ./test/all_tests -r xunit -o ./Testing/report.xml
+      env:
+        UM_TEST_DEBUG: 7
+
+    - name: Memory Check
+      working-directory: ${{runner.workspace}}/build
+      run: ctest --no-compress-output -T MemCheck
       env:
         UM_TEST_DEBUG: 7
 
     - name: upload test report
       if: always()
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3.1
       with:
         name: ${{ matrix.os }}-TestReport
-        path: ${{runner.workspace}}/build/Testing/*/Test.xml
+        path: ${{runner.workspace}}/build/Testing/
