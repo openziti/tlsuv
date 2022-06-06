@@ -35,12 +35,13 @@ jobs:
 
     - name: test
       working-directory: ${{runner.workspace}}/build
-      run: ./tests/all_tests -r xunit -o ./Testing/report.xml
+      run: ./tests/all_tests -r xml -o ./Testing/report.xml
       env:
         UM_TEST_DEBUG: 7
 
     - name: Memory Check
       working-directory: ${{runner.workspace}}/build
+      if: always()
       run: ctest --no-compress-output -T MemCheck
       env:
         UM_TEST_DEBUG: 7
