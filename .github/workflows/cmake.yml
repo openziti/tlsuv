@@ -35,7 +35,7 @@ jobs:
 
     - name: test
       working-directory: ${{runner.workspace}}/build
-      run: ./test/all_tests -r xunit -o ./Testing/report.xml
+      run: ./tests/all_tests -r xunit -o ./Testing/report.xml
       env:
         UM_TEST_DEBUG: 7
 
