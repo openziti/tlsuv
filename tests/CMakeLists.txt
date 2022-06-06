@@ -16,6 +16,9 @@ target_link_libraries(all_tests
 
 target_include_directories(all_tests PRIVATE ../src)
 
+#find_program(MEMORYCHECK_COMMAND valgrindor)
+#set( MEMORYCHECK_COMMAND_OPTIONS "--trace-children=yes --leak-check=full" )
+
 include(CTest)
 add_test(engine_tests all_tests [engine])
 add_test(http_tests all_tests [http])

@@ -47,7 +47,7 @@ jobs:
 
     - name: upload test report
       if: always()
-      uses: actions/upload-artifact@v3.1
+      uses: actions/upload-artifact@v3
       with:
         name: ${{ matrix.os }}-TestReport
         path: ${{runner.workspace}}/build/Testing/
