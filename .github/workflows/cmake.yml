@@ -55,5 +55,5 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ matrix.os }}-TestReport
+        name: ${{ matrix.os }}-${{ matrix.openssl }}-TestReport
         path: ${{runner.workspace}}/build/Testing/
