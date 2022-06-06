@@ -39,7 +39,7 @@ TEST_CASE("key gen", "[engine]") {
 
     tls_private_key k1;
     char *pem2;
-    REQUIRE(ctx->api->load_key(&k1, pem, pemlen) > 0);
+    REQUIRE(ctx->api->load_key(&k1, pem, pemlen) == 0);
     REQUIRE(ctx->api->write_key_to_pem(key, &pem2, &pemlen) == 0);
 
     REQUIRE_THAT(pem2, Catch::Matchers::Equals(pem));
