@@ -62,7 +62,8 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
 
     if (sl == NULL) {
         UM_LOG(TRACE, "connect requests was cancelled");
-        uv_close((uv_handle_t *) req->handle, free_handle);
+        if (!uv_is_closing((const uv_handle_t *) req->handle))
+            uv_close((uv_handle_t *) req->handle, free_handle);
         free(req);
         return;
     }
@@ -174,6 +175,7 @@ static void tcp_src_cancel(um_src_t *sl) {
     }
 
     if (tl->conn_req) {
+        uv_tcp_close_reset((uv_tcp_t *) tl->conn_req->handle, free_handle);
         tl->conn_req->data = NULL;
         tl->conn_req = NULL;
     }

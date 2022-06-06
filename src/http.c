@@ -417,10 +417,6 @@ int um_http_close(um_http_t *clt, um_http_close_cb close_cb) {
     fail_active_request(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
     close_connection(clt);
 
-    if (clt->src != NULL) { 
-        clt->src->release(clt->src);
-    }
-
     if (clt->engine != NULL) {
         clt->tls->api->free_engine(clt->engine);
         clt->engine = NULL;

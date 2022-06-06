@@ -16,6 +16,11 @@ target_link_libraries(all_tests
 
 target_include_directories(all_tests PRIVATE ../src)
 
+add_custom_target(run-tests
+        BYPRODUCTS ${PROJECT_BINARY_DIR}/Testing/results.xml
+        DEPENDS all_tests
+        COMMAND $<TARGET_FILE:all_tests> -r xml -o ${PROJECT_BINARY_DIR}/Testing/results.xml)
+
 include(CTest)
 add_test(engine_tests all_tests [engine])
 add_test(http_tests all_tests [http])

@@ -87,11 +87,7 @@ static void on_mbed_close(uv_link_t *l) {
 
 int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
     mbed->close_cb = close_cb;
-    if (mbed->parent)
-        uv_link_propagate_close((uv_link_t *) mbed, (uv_link_t *) mbed, on_mbed_close);
-    else {
-        on_mbed_close((uv_link_t *) mbed);
-    }
+    uv_link_propagate_close((uv_link_t *) mbed, (uv_link_t *) mbed, on_mbed_close);
     return 0;
 }
 
