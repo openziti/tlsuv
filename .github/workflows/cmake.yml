@@ -31,13 +31,16 @@ jobs:
     - name: configure cmake
       run: cmake -S ${{ github.workspace }} -B ${{runner.workspace}}/build -DUSE_OPENSSL=${{ matrix.openssl }}
     - name: build 
-      run: cmake --build ${{runner.workspace}}/build 
+      run: cmake --build ${{runner.workspace}}/build
+
     - name: test
       working-directory: ${{runner.workspace}}/build
       run: ctest -VV --no-compress-output -T Test
       env:
         UM_TEST_DEBUG: 7
+
     - name: upload test report
+      if: always()
       uses: actions/upload-artifact@v2
       with:
         name: ${{ matrix.os }}-TestReport
