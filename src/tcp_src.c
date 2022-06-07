@@ -148,8 +148,11 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     sl->connect_ctx = ctx;
 
     if (tcp->conn) {
-        tcp->link->methods->close(tcp->link, tcp->link, link_close_cb);
-        tcp->conn = NULL;
+        if (!uv_is_closing((const uv_handle_t *) tcp->conn)) {
+            tcp->link->methods->close(tcp->link, tcp->link, link_close_cb);
+        } else {
+            tcp->conn = NULL;
+        }
     }
 
     tcp->resolve_req = calloc(1, sizeof(uv_getaddrinfo_t));
