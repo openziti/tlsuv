@@ -285,6 +285,7 @@ TEST_CASE("http_tests", "[http]") {
 
 TEST_CASE("client_cert_test","[http]") {
     UvLoopTest test;
+    tls_context *tls = default_tls_context(nullptr, 0);
 
     um_http_t clt;
     resp_capture resp(resp_body_cb);
@@ -310,7 +311,6 @@ TEST_CASE("client_cert_test","[http]") {
     }
 
     WHEN("client cert set") {
-        tls_context *tls = default_tls_context(nullptr, 0);
         um_http_init(test.loop, &clt, test_site);
         um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
@@ -375,13 +375,13 @@ TEST_CASE("client_cert_test","[http]") {
 
         test.run();
 
-        THEN("request should complete") {
-            CHECK(resp.code == HTTP_STATUS_OK);
-            CHECK(resp.resp_body_end_called);
-        }
+
+        CHECK(resp.code == HTTP_STATUS_OK);
+        CHECK(resp.resp_body_end_called);
     }
 
     um_http_close(&clt, nullptr);
+    tls->api->free_ctx(tls);
 }
 
 const int ONE_SECOND = 1000000;
@@ -661,9 +661,11 @@ TEST_CASE("large POST(GH-87)", "[http][gh-87]") {
     um_http_set_ssl(&clt, tls);
 
     um_http_req_t *req = um_http_req(&clt, "POST", "/anything", resp_capture_cb, &resp);
-    char *buf = (char*)malloc(64 * 1024);
+    int buf_size = 64 * 1024;
+    char *buf = (char*)calloc(1,buf_size);
+    memset(buf, 'Z', buf_size - 1);
     char length[16];
-    snprintf(length, sizeof(length), "%d", 64 * 1024);
+    snprintf(length, sizeof(length), "%d", buf_size);
     um_http_req_header(req, "Content-Type", "application/octet-stream");
     um_http_req_header(req, "Content-Length", length);
     um_http_req_header(req, "Connection", "Close");
