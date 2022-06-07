@@ -213,6 +213,7 @@ static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_
 
     SSL_CONF_CTX_set_ssl_ctx(conf, ctx);
     SSL_CONF_CTX_finish(conf);
+    SSL_CONF_CTX_free(conf);
 
     if (cabuf != NULL) {
         X509_STORE_CTX *ca = load_certs(cabuf, cabuf_len);
@@ -502,6 +503,7 @@ static void tls_free_ctx(tls_context *ctx) {
     if (c->alpn_protocols) {
         free(c->alpn_protocols);
     }
+    tls_free_key(&c->own_key);
     SSL_CTX_free(c->ctx);
     free(c);
     free(ctx);
@@ -589,6 +591,9 @@ static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, co
 
     SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, c->own_key), "set own key");
     SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
+
+    X509_STORE_CTX_free(certs);
+    X509_STORE_free(store);
     return rc;
 }
 
@@ -819,12 +824,14 @@ static int write_key_pem(tls_private_key pk, char **pem, size_t *pemlen) {
     *pem = calloc(1, len + 1);
     BIO_read(b, *pem, len);
     *pemlen = len;
+    BIO_free(b);
     return 0;
 }
 
 static int load_key(tls_private_key *key, const char* keydata, size_t keydatalen) {
     // try file
     BIO *kb;
+    int rc = 0;
     FILE *kf = fopen(keydata, "r");
     if (kf != NULL) {
         kb = BIO_new_fp(kf, 1);
@@ -834,11 +841,13 @@ static int load_key(tls_private_key *key, const char* keydata, size_t keydatalen
 
     EVP_PKEY *pk = NULL;
     if (!PEM_read_bio_PrivateKey(kb, &pk, NULL, NULL)) {
-        return -1;
-    }
+        rc = -1;
+    } else {
+        *key = pk;
 
-    *key = pk;
-    return 0;
+    }
+    BIO_free(kb);
+    return rc;
 }
 
 
