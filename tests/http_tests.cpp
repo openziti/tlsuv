@@ -285,6 +285,7 @@ TEST_CASE("http_tests", "[http]") {
 
 TEST_CASE("client_cert_test","[http]") {
     UvLoopTest test;
+    tls_context *tls = default_tls_context(nullptr, 0);
 
     um_http_t clt;
     resp_capture resp(resp_body_cb);
@@ -310,7 +311,6 @@ TEST_CASE("client_cert_test","[http]") {
     }
 
     WHEN("client cert set") {
-        tls_context *tls = default_tls_context(nullptr, 0);
         um_http_init(test.loop, &clt, test_site);
         um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
@@ -375,13 +375,13 @@ TEST_CASE("client_cert_test","[http]") {
 
         test.run();
 
-        THEN("request should complete") {
-            CHECK(resp.code == HTTP_STATUS_OK);
-            CHECK(resp.resp_body_end_called);
-        }
+
+        CHECK(resp.code == HTTP_STATUS_OK);
+        CHECK(resp.resp_body_end_called);
     }
 
     um_http_close(&clt, nullptr);
+    tls->api->free_ctx(tls);
 }
 
 const int ONE_SECOND = 1000000;

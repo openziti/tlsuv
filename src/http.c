@@ -691,6 +691,8 @@ static void free_http(um_http_t *clt) {
     }
 
     if (clt->own_src && clt->src) {
+        clt->src->release(clt->src);
+        tcp_src_free((tcp_src_t *) clt->src);
         free(clt->src);
         clt->src = NULL;
     }
