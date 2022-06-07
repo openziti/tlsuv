@@ -120,10 +120,14 @@ static void on_src_connect(um_src_t *src, int status, void *ctx) {
     uv_mbed_t *mbed = ctx;
 
     if (status == 0) {
-        if (mbed->tls_engine == NULL) {
-            mbed->tls_engine = mbed->tls->api->new_engine(mbed->tls->ctx, mbed->host);
+        if (mbed->tls_engine != NULL) {
+            mbed->tls->api->free_engine(mbed->tls_engine);
         }
+        void *data = mbed->data;
+        mbed->tls_engine = mbed->tls->api->new_engine(mbed->tls->ctx, mbed->host);
         um_tls_init(&mbed->tls_link, mbed->tls_engine, on_tls_hs);
+        uv_link_init((uv_link_t *) mbed, &mbed_methods);
+        mbed->data = data;
 
         mbed->tls_link.data = mbed;
         uv_link_chain(src->link, (uv_link_t *)&mbed->tls_link);
@@ -139,6 +143,9 @@ static void on_src_connect(um_src_t *src, int status, void *ctx) {
 int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int port, uv_connect_cb cb) {
     if (!req) {
         return UV_EINVAL;
+    }
+    if (mbed->conn_req != NULL) {
+        return UV_EALREADY;
     }
 
     char portstr[6];
@@ -156,7 +163,6 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
 int uv_mbed_read(uv_mbed_t *mbed, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
     mbed->alloc_cb = (uv_link_alloc_cb) alloc_cb;
     mbed->read_cb = (uv_link_read_cb) read_cb;
-    // uv_link_read_start((uv_link_t *) mbed);
     return 0;
 }
 
