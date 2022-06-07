@@ -661,9 +661,11 @@ TEST_CASE("large POST(GH-87)", "[http][gh-87]") {
     um_http_set_ssl(&clt, tls);
 
     um_http_req_t *req = um_http_req(&clt, "POST", "/anything", resp_capture_cb, &resp);
-    char *buf = (char*)malloc(64 * 1024);
+    int buf_size = 64 * 1024;
+    char *buf = (char*)calloc(1,buf_size);
+    memset(buf, 'Z', buf_size - 1);
     char length[16];
-    snprintf(length, sizeof(length), "%d", 64 * 1024);
+    snprintf(length, sizeof(length), "%d", buf_size);
     um_http_req_header(req, "Content-Type", "application/octet-stream");
     um_http_req_header(req, "Content-Length", length);
     um_http_req_header(req, "Connection", "Close");
