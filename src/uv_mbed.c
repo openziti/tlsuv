@@ -187,7 +187,6 @@ int uv_mbed_free(uv_mbed_t *mbed) {
         mbed->tls_engine = NULL;
     }
     if (mbed->socket) {
-        mbed->socket->cancel((um_src_t *) mbed->socket);
         tcp_src_free(mbed->socket);
         free(mbed->socket);
         mbed->socket = NULL;
