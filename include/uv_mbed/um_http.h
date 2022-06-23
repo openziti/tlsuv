@@ -295,6 +295,24 @@ int um_http_req_data(um_http_req_t *req, const char *body, size_t bodylen, um_ht
 void um_http_req_end(um_http_req_t *req);
 
 /**
+ * Cancels provided request
+ * @param clt client
+ * @param req request to be cancelled
+ * @return 0, or error code
+ */
+int um_http_req_cancel(um_http_t *clt, um_http_req_t *req);
+
+/**
+ * Cancels all (active and queued) requests for the given client.
+ * All pending requests would have their callbacks called with cancellation code.
+ * If there is an active request, either resp_cb or body_cb (depending on the state) will be called with cancellation code.
+ *
+ * @param clt client
+ * @return
+ */
+int um_http_cancel_all(um_http_t *clt);
+
+/**
  * @brief return response header
  * @param resp HTTP response
  * @param name header name

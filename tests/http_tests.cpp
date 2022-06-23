@@ -850,3 +850,47 @@ TEST_CASE("URL encode", "[http]") {
 
     um_http_close(&clt, nullptr);
 }
+
+class testdata {
+public:
+    testdata(): resp1(nullptr), resp2(nullptr), r1(nullptr), r2(nullptr)
+    {}
+
+    um_http_t clt;
+    um_http_req_t *r1;
+    um_http_req_t *r2;
+
+    resp_capture resp1;
+    resp_capture resp2;
+
+};
+
+TEST_CASE("test request cancel", "[http]") {
+    UvLoopTest test;
+
+    testdata td;
+
+    um_http_init(test.loop, &td.clt, "https://www.google.com/search");
+
+    auto r1_cb = [](um_http_resp_t *resp, void *p) {
+        auto t = (testdata*)p;
+        um_http_req_cancel(&t->clt, t->r2);
+        resp_capture_cb(resp, &t->resp1);
+    };
+
+    auto r2_cb = [](um_http_resp_t *resp, void *t) {
+        auto _td = (testdata*)t;
+        resp_capture_cb(resp, &_td->resp2);
+    };
+
+    td.r1 = um_http_req(&td.clt, "GET", R"(?query=this is a <test>!)", r1_cb, &td);
+
+    td.r2 = um_http_req(&td.clt, "GET", R"(?query=this is NOT a <test2>!)", r2_cb, &td);
+
+    test.run();
+
+    CHECK(td.resp1.code == HTTP_STATUS_OK);
+    CHECK(td.resp2.code == UV_ECANCELED);
+
+    um_http_close(&td.clt, nullptr);
+}
