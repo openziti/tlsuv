@@ -585,6 +585,43 @@ um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, u
     return r;
 }
 
+int um_http_cancel_all(um_http_t *clt) {
+    fail_active_request(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
+    close_connection(clt);
+}
+
+int um_http_req_cancel(um_http_t *clt, um_http_req_t *req) {
+    um_http_req_t *r = NULL;
+    STAILQ_FOREACH(r, &clt->requests, _next) {
+        if (r == req) break;
+    }
+
+    if (r == req || req == clt->active) { // req is in the queue
+        if (req == clt->active) {
+            clt->active = NULL;
+            // since active request is being cancelled we don't want to consume what's left on the wire for it
+            // and need to close connection
+            close_connection(clt);
+        } else {
+            STAILQ_REMOVE(&clt->requests, req, um_http_req_s, _next);
+        }
+
+        req->resp.code = UV_ECANCELED;
+        req->resp.status = strdup(uv_strerror(req->resp.code));
+        clear_req_body(req, req->resp.code);
+
+        if (req->state < headers_received) { // resp_cb has not been called yet
+            req->resp_cb(&r->resp, r->data);
+        } else if (req->resp.body_cb) {
+            req->resp.body_cb(req, NULL, req->resp.code);
+        }
+
+        http_req_free(req);
+        return 0;
+    } else {
+        return UV_EINVAL;
+    }
+}
 
 
 void um_http_header(um_http_t *clt, const char *name, const char *value) {
