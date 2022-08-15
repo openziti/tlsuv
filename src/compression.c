@@ -48,7 +48,7 @@ static void comp_free(void *ctx, void *p) {
 
 static void init() {
 
-#if WIN32
+#if _WIN32
     // on WIN32 zlib is not usually available
     // so we link it statically and set functions pointers directly
     zlib_ver = zlibVersion;
