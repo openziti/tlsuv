@@ -106,6 +106,7 @@ TEST_CASE("websocket fail tests", "[websocket]") {
         lt.run();
         CHECK((rc == UV_EAI_NONAME || test.conn_status == UV_EAI_NONAME));
     }
+    um_websocket_close(&clt, on_close_cb);
 }
 
 #define WS_TEST_HOST "echo.websocket.events"
@@ -145,4 +146,6 @@ TEST_CASE("websocket echo tests", "[websocket]") {
         REQUIRE(test.resp.size() == 2);
         CHECK_THAT(test.resp[1],Catch::Matches("this is a test"));
     }
+
+    um_websocket_close(&clt, on_close_cb);
 }

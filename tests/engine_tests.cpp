@@ -43,7 +43,10 @@ TEST_CASE("key gen", "[engine]") {
     REQUIRE(ctx->api->write_key_to_pem(key, &pem2, &pemlen) == 0);
 
     REQUIRE_THAT(pem2, Catch::Matchers::Equals(pem));
-
+    free(pem);
+    free(pem2);
+    ctx->api->free_key(&key);
+    ctx->api->free_key(&k1);
     ctx->api->free_ctx(ctx);
 }
 

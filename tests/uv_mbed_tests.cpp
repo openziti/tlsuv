@@ -52,6 +52,7 @@ TEST_CASE("uv-mbed connect fail", "[uv-mbed]") {
     }
 
     uv_mbed_free(&mbed);
+    tls->api->free_ctx(tls);
 }
 
 TEST_CASE("cancel connect", "[uv-mbed]") {
