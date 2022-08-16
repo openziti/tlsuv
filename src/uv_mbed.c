@@ -79,6 +79,10 @@ static void on_mbed_close(uv_link_t *l) {
     }
     if (mbed->socket) {
         mbed->socket->cancel((um_src_t *) mbed->socket);
+        mbed->socket->release((um_src_t *) mbed->socket);
+        tcp_src_free(mbed->socket);
+        free(mbed->socket);
+        mbed->socket = NULL;
     }
     if(mbed->close_cb) mbed->close_cb((uv_handle_t *) mbed);
 }
