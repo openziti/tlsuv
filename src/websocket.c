@@ -423,8 +423,9 @@ static void send_pong(um_websocket_t *ws, const char* ping_data, int len) {
 }
 
 static void on_ws_close(um_websocket_t *ws) {
-    if (ws == NULL || ws->closed) return;
-    if (ws->close_cb) {
+    if (ws == NULL) return;
+
+    if (!ws->closed && ws->close_cb) {
         ws->close_cb((uv_handle_t *) ws);
     }
 
@@ -437,11 +438,13 @@ static void on_ws_close(um_websocket_t *ws) {
         free(ws->host);
         ws->host = NULL;
     }
-    if (ws->tls) {
+    if (ws->tls && ws->tls_link.engine) {
         ws->tls->api->free_engine(ws->tls_link.engine);
+        ws->tls_link.engine = NULL;
     }
     if (ws->src) {
-        ws->src->release(ws->src);
+        ws->src->cancel(ws->src);
+        tcp_src_free((tcp_src_t *) ws->src);
         ws->src = NULL;
     }
     ws->closed = true;
@@ -449,6 +452,7 @@ static void on_ws_close(um_websocket_t *ws) {
 static void ws_close_cb(uv_link_t *l) {
     um_websocket_t *ws = l->data;
     on_ws_close(ws);
+    l->data = NULL;
 }
 
 int um_websocket_close(um_websocket_t *ws, uv_close_cb cb) {

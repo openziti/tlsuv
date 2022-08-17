@@ -1,7 +1,7 @@
 include(FetchContent)
 
 if (NOT DEFINED LIBUV_VERSION)
-    set(LIBUV_VERSION v1.44.1)
+    set(LIBUV_VERSION v1.44.2)
 endif()
 
 message("using libuv@${LIBUV_VERSION}")

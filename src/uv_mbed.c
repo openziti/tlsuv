@@ -43,9 +43,17 @@ static const uv_link_methods_t mbed_methods = {
 
 static tls_context *DEFAULT_TLS = NULL;
 
+static void free_default_tls() {
+    if (DEFAULT_TLS) {
+        DEFAULT_TLS->api->free_ctx(DEFAULT_TLS);
+        DEFAULT_TLS = NULL;
+    }
+}
+
 tls_context *get_default_tls() {
     if (DEFAULT_TLS == NULL) {
         DEFAULT_TLS = default_tls_context(NULL, 0);
+        atexit(free_default_tls);
     }
     return DEFAULT_TLS;
 }
@@ -79,6 +87,10 @@ static void on_mbed_close(uv_link_t *l) {
     }
     if (mbed->socket) {
         mbed->socket->cancel((um_src_t *) mbed->socket);
+        mbed->socket->release((um_src_t *) mbed->socket);
+        tcp_src_free(mbed->socket);
+        free(mbed->socket);
+        mbed->socket = NULL;
     }
     if(mbed->close_cb) mbed->close_cb((uv_handle_t *) mbed);
 }

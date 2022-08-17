@@ -183,13 +183,13 @@ static void tcp_src_cancel(um_src_t *sl) {
         tl->conn_req = NULL;
     }
 
-    if (tl->conn && !uv_is_closing(tl->conn)) {
-        ts->methods->close(ts, ts, link_close_cb);
+    if (tl->conn && !uv_is_closing((const uv_handle_t *) tl->conn)) {
+        ts->methods->close((uv_link_t *) ts, (uv_link_t *) ts, link_close_cb);
     }
 }
 
 static void tcp_src_release(um_src_t *sl) {
-    tcp_src_t *tcp = sl;
+    tcp_src_t *tcp = (tcp_src_t *) sl;
 
     free(tcp->conn);
     tcp->conn = NULL;

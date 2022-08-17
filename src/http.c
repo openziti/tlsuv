@@ -617,6 +617,7 @@ int um_http_req_cancel(um_http_t *clt, um_http_req_t *req) {
         }
 
         http_req_free(req);
+        free(req);
         return 0;
     } else {
         return UV_EINVAL;

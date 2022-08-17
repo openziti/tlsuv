@@ -206,4 +206,5 @@ TEST_CASE("gzip invalid", "[http]") {
 
     CHECK(um_inflate(inflater, (const char*)packet_bytes, sizeof(packet_bytes)) == -1);
     CHECK(um_inflate_state(inflater) == -1);
+    um_free_inflater(inflater);
 }
