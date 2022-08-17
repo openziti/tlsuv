@@ -129,5 +129,6 @@ endif()
 
 if(ENABLE_UM_TESTS)
 ENABLE_TESTING()
+set(MEMORYCHECK_SUPPRESSIONS_FILE "${CMAKE_CURRENT_LIST_DIR}/.valgrind.suppressions")
 add_subdirectory(tests)
 endif()

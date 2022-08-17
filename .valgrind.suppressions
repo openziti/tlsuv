@@ -1,0 +1,6 @@
+{
+   <dl_open>
+   Memcheck:Leak
+   ...
+   fun:_dl_open
+}
