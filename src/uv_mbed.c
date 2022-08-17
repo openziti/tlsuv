@@ -43,9 +43,17 @@ static const uv_link_methods_t mbed_methods = {
 
 static tls_context *DEFAULT_TLS = NULL;
 
+static void free_default_tls() {
+    if (DEFAULT_TLS) {
+        DEFAULT_TLS->api->free_ctx(DEFAULT_TLS);
+        DEFAULT_TLS = NULL;
+    }
+}
+
 tls_context *get_default_tls() {
     if (DEFAULT_TLS == NULL) {
         DEFAULT_TLS = default_tls_context(NULL, 0);
+        atexit(free_default_tls);
     }
     return DEFAULT_TLS;
 }
