@@ -169,6 +169,11 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
     mbed->host = strdup(host);
     mbed->conn_req = req;
 
+    if (!mbed->socket) {
+        mbed->socket = calloc(1, sizeof(*mbed->socket));
+        tcp_src_init(mbed->loop, mbed->socket);
+    }
+
     return mbed->socket->connect((um_src_t *) mbed->socket, host, portstr, on_src_connect, mbed);
 }
 
