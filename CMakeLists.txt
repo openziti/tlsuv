@@ -1,17 +1,7 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.10)
 
-execute_process(
-        COMMAND git describe --tags HEAD
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        OUTPUT_VARIABLE GIT_INFO
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
-if(${GIT_INFO} MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)$")
-    set(ver ${CMAKE_MATCH_1})
-elseif(${GIT_INFO} MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)-([0-9]+)-[^-]*")
-    string(JOIN "." ver ${CMAKE_MATCH_1} ${CMAKE_MATCH_2})
-endif()
+include(cmake/version.cmake)
+get_version(${CMAKE_CURRENT_LIST_DIR}/version.txt ver)
 
 PROJECT("uv-mbed"
         LANGUAGES C
