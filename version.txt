@@ -1,3 +1,3 @@
-$Format: %d$
-$Format: %D$
-$Format: %(describe)$
+$Format: %(describe:tags)$
+ref: $Format: %D$
+hash: $Format: %h$
