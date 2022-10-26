@@ -13,10 +13,7 @@ function(get_version version_file version_var)
         message("getting version from ${version_file}")
         file(STRINGS ${version_file} ver_info)
         list(LENGTH ver_info ver_info_len)
-        message("ver_info_len = ${ver_info_len}")
-        message(${ver_info})
         list(GET ver_info 0 GIT_INFO)
-
     endif ()
 
     if (${GIT_INFO} MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)$")
