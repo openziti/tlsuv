@@ -1,7 +1,7 @@
 include(FetchContent)
 FetchContent_Declare(uv_link
         GIT_REPOSITORY https://github.com/netfoundry/uv_link_t.git
-        GIT_TAG master
+        GIT_TAG v1.0.5+openziti.1
         GIT_SHALLOW 1
 )
 
