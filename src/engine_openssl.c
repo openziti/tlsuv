@@ -873,10 +873,13 @@ static int gen_key(tls_private_key *key) {
 
 
 static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...) {
-
+    int ret = 0;
+    const char* op = "";
     EVP_PKEY *pk = key;
     X509_REQ *req = X509_REQ_new();
     X509_NAME *subj = X509_REQ_get_subject_name(req);
+    BIO *b = BIO_new(BIO_s_mem());
+
 
     va_list va;
     va_start(va, pemlen);
@@ -891,21 +894,30 @@ static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...) {
         X509_NAME_add_entry_by_txt(subj, id, MBSTRING_ASC, val, -1, -1, 0);
     }
 
+#define ssl_check(OP) do{ \
+op = #OP;                 \
+if((OP) == 0) {           \
+ret = ERR_get_error();    \
+goto on_error;            \
+}}while(0)
     
-    X509_REQ_set_pubkey(req, pk);
-    X509_REQ_sign(req, pk, EVP_sha1());
-    
-    BIO *b = BIO_new(BIO_s_mem());
-    PEM_write_bio_X509_REQ(b, req);
+    ssl_check(X509_REQ_set_pubkey(req, pk));
+    ssl_check(X509_REQ_sign(req, pk, EVP_sha1()));
+    ssl_check(PEM_write_bio_X509_REQ(b, req));
 
-    size_t len = BIO_ctrl_pending(b);
-    *pem = calloc(1, len + 1);
-    BIO_read(b, *pem, len);
+    on_error:
+    if (ret) {
+        UM_LOG(WARN, "%s => %s", op, tls_error(ret));
+    } else {
+        size_t len = BIO_ctrl_pending(b);
+        *pem = calloc(1, len + 1);
+        BIO_read(b, *pem, len);
+    }
 
     BIO_free(b);
     X509_REQ_free(req);
 
-    return 0;
+    return ret;
 }
 
 static int tls_set_own_cert_pkcs11(void *ctx, const char *cert_buf, size_t cert_len,

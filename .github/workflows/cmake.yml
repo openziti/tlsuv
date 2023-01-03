@@ -28,7 +28,7 @@ jobs:
       run: |
         sudo apt install -y valgrind
 
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
       with:
         fetch-depth: '0'
     - name: make build dir
