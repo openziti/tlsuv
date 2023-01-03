@@ -895,10 +895,10 @@ static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...) {
     }
 
 #define ssl_check(OP) do{ \
-op = #OP;                          \
-if((OP) == 0) {             \
-ret = ERR_get_error();\
-goto on_error;\
+op = #OP;                 \
+if((OP) == 0) {           \
+ret = ERR_get_error();    \
+goto on_error;            \
 }}while(0)
     
     ssl_check(X509_REQ_set_pubkey(req, pk));
