@@ -1,0 +1,7 @@
+test/deps/libuv
+build/
+tools/gyp
+out/
+gypkg_deps/
+node_modules/
+npm-debug.log
