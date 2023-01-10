@@ -141,13 +141,14 @@ static void uv_link_source_close_cb(uv_handle_t* handle) {
   uv_link_source_t* source;
 
   source = handle->data;
+  handle->data = NULL;
 
-  source->stream = NULL;
-  if (source->close_cb) {
-      source->close_cb(source->close_source);
+  if (source != NULL) {
+      source->stream = NULL;
+      if (source->close_cb) {
+          source->close_cb(source->close_source);
+      }
   }
-  source->close_cb = NULL;
-  source->close_source = NULL;
 }
 
 
