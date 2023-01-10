@@ -47,7 +47,7 @@ jobs:
     - name: Memory Check
       working-directory: ${{runner.workspace}}/build
       if: always() && matrix.os == 'ubuntu-latest'
-      run: ctest --no-compress-output -T MemCheck
+      run: ctest --no-compress-output --output-on-failure -T MemCheck
       env:
         UM_TEST_DEBUG: 7
 
