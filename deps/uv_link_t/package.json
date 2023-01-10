@@ -1,0 +1,15 @@
+{
+  "name": "uv_link_t",
+  "version": "1.0.5",
+  "private": true,
+  "keywords": [],
+  "scripts": {
+    "build": "gypkg build uv_link_t.gyp",
+    "test": "npm run build && ./out/Release/uv_link_t-test"
+  },
+  "author": "Fedor Indutny <fedor@indutny.com>",
+  "license": "MIT",
+  "dependencies": {
+    "gypkg": "^2.3.0"
+  }
+}
