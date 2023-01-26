@@ -3,7 +3,7 @@ CMAKE_MINIMUM_REQUIRED(VERSION 3.10)
 include(cmake/version.cmake)
 get_version(${CMAKE_CURRENT_LIST_DIR}/version.txt ver)
 
-PROJECT("uv-mbed"
+PROJECT("tlsuv"
         LANGUAGES C
         VERSION ${ver}
         )
@@ -13,8 +13,8 @@ message("Project: ${PROJECT_NAME}@v${PROJECT_VERSION}")
 include(GNUInstallDirs)
 
 #sample is off by default
-option(ENABLE_UM_SAMPLES "Build samples." OFF)
-option(ENABLE_UM_TESTS "Build tests." ON)
+option(ENABLE_TLSUV_SAMPLES "Build samples." OFF)
+option(ENABLE_TLSUV_TESTS "Build tests." ON)
 
 option(USE_OPENSSL "use OpenSSL engine" OFF)
 
@@ -42,7 +42,7 @@ set(tls_engine_files
         src/engine_openssl.c)
 endif()
 
-set(uv_mbed_sources
+set(tlsuv_sources
         src/uv_mbed.c
         src/bio.c
         src/http.c
@@ -59,22 +59,21 @@ set(uv_mbed_sources
         )
 
 
-add_library(uv_mbed STATIC
-        ${uv_mbed_sources}
+add_library(tlsuv STATIC
+        ${tlsuv_sources}
         ${tls_engine_files}
         ${p11_sources}
         )
 
-set_property(TARGET uv_mbed PROPERTY C_STANDARD 99)
+set_property(TARGET tlsuv PROPERTY C_STANDARD 99)
 
-target_include_directories(uv_mbed
+target_include_directories(tlsuv
         PUBLIC
         $<INSTALL_INTERFACE:include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/p11
-        ${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv/src
         )
 
 if(HAVE_LIBUV)
@@ -83,41 +82,44 @@ else()
     set(LIBUV_NAME uv_a)
 endif()
 
-target_link_libraries(uv_mbed
+target_link_libraries(tlsuv
         PUBLIC http-parser
         PUBLIC ${LIBUV_NAME}
         PUBLIC uv_link
         )
-TARGET_COMPILE_DEFINITIONS(uv_mbed PRIVATE UV_MBED_VERSION=v${PROJECT_VERSION})
+TARGET_COMPILE_DEFINITIONS(tlsuv PRIVATE TLSUV_VERSION=v${PROJECT_VERSION})
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    TARGET_COMPILE_DEFINITIONS(tlsuv PRIVATE _POSIX_C_SOURCE=200112 _GNU_SOURCE)
+endif()
 
 if (USE_MBEDTLS)
-    target_compile_definitions(uv_mbed PRIVATE USE_MBEDTLS)
-    target_link_libraries(uv_mbed
+    target_compile_definitions(tlsuv PRIVATE USE_MBEDTLS)
+    target_link_libraries(tlsuv
             PRIVATE mbedtls
             )
 elseif(USE_OPENSSL)
     find_package(OpenSSL REQUIRED)
-    target_compile_definitions(uv_mbed PRIVATE USE_OPENSSL)
-    target_link_libraries(uv_mbed PRIVATE OpenSSL::SSL)
+    target_compile_definitions(tlsuv PRIVATE USE_OPENSSL)
+    target_link_libraries(tlsuv PRIVATE OpenSSL::SSL)
 endif()
 
 if (WIN32)
-    target_link_libraries(uv_mbed
+    target_link_libraries(tlsuv
             PUBLIC crypt32
             PUBLIC zlibstatic)
 
 
 endif()
 
-install(DIRECTORY include/uv_mbed DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(TARGETS uv_mbed
+install(DIRECTORY include/tlsuv DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(TARGETS tlsuv
         ARCHIVE DESTINATION lib)
 
 if(ENABLE_UM_SAMPLES)
 add_subdirectory(sample)
 endif()
 
-if(ENABLE_UM_TESTS)
+if(ENABLE_TLSUV_TESTS)
 ENABLE_TESTING()
 set(MEMORYCHECK_SUPPRESSIONS_FILE "${CMAKE_CURRENT_LIST_DIR}/.valgrind.suppressions")
 add_subdirectory(tests)

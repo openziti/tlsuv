@@ -16,7 +16,7 @@ limitations under the License.
 
 #define CATCH_CONFIG_RUNNER
 
-#include <uv_mbed/uv_mbed.h>
+#include <tlsuv/uv_mbed.h>
 #include "um_debug.h"
 #include "catch.hpp"
 

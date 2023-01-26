@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <uv_mbed/um_http.h>
+#include <tlsuv/um_http.h>
 #include <string.h>
-#include <uv_mbed/uv_mbed.h>
+#include <tlsuv/uv_mbed.h>
 #include <getopt.h>
 #include "common.h"
 

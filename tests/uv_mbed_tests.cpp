@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 #include <uv.h>
-#include <uv_mbed/uv_mbed.h>
+#include <tlsuv/uv_mbed.h>
 #include <cstring>
 
 #include "fixtures.h"

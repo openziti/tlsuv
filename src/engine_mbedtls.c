@@ -33,7 +33,7 @@ limitations under the License.
 #include "bio.h"
 #include "p11_mbedtls/mbed_p11.h"
 #include "um_debug.h"
-#include <uv_mbed/uv_mbed.h>
+#include <tlsuv/uv_mbed.h>
 
 #if _WIN32
 #include <wincrypt.h>

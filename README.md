@@ -1,9 +1,10 @@
-UV-MBED
+TLSUV = TLS + libUV
 ----
 
 ## Overview
-UV-MBED is a cross-platform library allowing asynchronous TLS communication. 
-This is done by combinining [libuv](https://github.com/libuv/libuv) with [mbedTLS](https://github.com/ARMmbed/mbedtls.git)
+TLSUV is a cross-platform library allowing asynchronous TLS communication. 
+This is done by combinining [libuv](https://github.com/libuv/libuv) with [mbedTLS](https://github.com/ARMmbed/mbedtls.git) 
+or [OpenSSL](https://www.openssl.org/)
 (see below for using other TLS implementations)
 
 ## Features
@@ -22,7 +23,7 @@ API is attempted to be consistent with [libuv API](http://docs.libuv.org/en/v1.x
 ## TLS engine support (BYFE - Bring Your Favorite Engine)
 If using mbedTLS does not work for you,
 for example you're already using another TLS library for your project, there is a way to use it inside _uv-mbed_.
-Two API [interfaces are defined](include/uv_mbed/tls_engine.h) for that purpose:
+Two API [interfaces are defined](include/tlsuv/tls_engine.h) for that purpose:
 
 - `tls_context` is roughly equivalent to `mbedtls_ssl_config` or `SSL_CTX`in OpenSSL and is used to create instances
 of `tls_engine` for individual connections

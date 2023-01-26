@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <uv_mbed/um_websocket.h>
-#include <uv_mbed/uv_mbed.h>
+#include <tlsuv/um_websocket.h>
+#include <tlsuv/uv_mbed.h>
 #include "../src/um_debug.h"
 
 

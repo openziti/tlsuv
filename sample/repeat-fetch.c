@@ -19,7 +19,7 @@ limitations under the License.
  * \brief demonstrates re-connecting usage of HTTP client
  */
 
-#include <uv_mbed/um_http.h>
+#include <tlsuv/um_http.h>
 #include "common.h"
 
 int count = 5;

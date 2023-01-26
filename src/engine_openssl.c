@@ -24,7 +24,7 @@ limitations under the License.
 
 #include "bio.h"
 #include "um_debug.h"
-#include <uv_mbed/uv_mbed.h>
+#include <tlsuv/uv_mbed.h>
 
 #include <openssl/x509.h>
 

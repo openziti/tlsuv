@@ -16,7 +16,7 @@ limitations under the License.
 
 #include <stdlib.h>
 #include <string.h>
-#include "uv_mbed/uv_mbed.h"
+#include "tlsuv/uv_mbed.h"
 #include <uv.h>
 #include "um_debug.h"
 

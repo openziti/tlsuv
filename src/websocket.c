@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include "uv_mbed/um_websocket.h"
+#include "tlsuv/um_websocket.h"
 #include "um_debug.h"
 #include "http_req.h"
 #include "portable_endian.h"
 #include "win32_compat.h"
 
 #include <string.h>
-#include <uv_mbed/um_http.h>
+#include <tlsuv/um_http.h>
 static const char *DEFAULT_PATH = "/";
 
 #define WS_FIN 0x80U

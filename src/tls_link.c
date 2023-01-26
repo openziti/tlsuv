@@ -16,8 +16,8 @@ limitations under the License.
 
 
 #include <uv_link_t.h>
-#include <uv_mbed/tls_engine.h>
-#include "uv_mbed/tls_link.h"
+#include <tlsuv/tls_engine.h>
+#include "tlsuv/tls_link.h"
 #include "um_debug.h"
 
 static int tls_read_start(uv_link_t *l);

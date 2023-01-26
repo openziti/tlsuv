@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include "uv_mbed/um_http.h"
-#include "uv_mbed/tcp_src.h"
+#include "tlsuv/um_http.h"
+#include "tlsuv/tcp_src.h"
 #include "um_debug.h"
 
 // connect and release method for um_http custom source link
