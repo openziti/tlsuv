@@ -1,15 +1,11 @@
 add_executable(sample sample.c common.c)
-
 target_link_libraries(sample PUBLIC tlsuv)
-target_include_directories(sample PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
 add_executable(engine_test engine_test.c)
 target_link_libraries(engine_test PUBLIC tlsuv)
-target_include_directories(engine_test PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
 add_executable(sample-cf sample-cf.c)
 target_link_libraries(sample-cf PUBLIC tlsuv)
-target_include_directories(sample-cf PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
 add_executable(um-curl um-curl.c common.c)
 target_link_libraries(um-curl PUBLIC tlsuv)
@@ -19,7 +15,6 @@ target_link_libraries(repeat-fetch PUBLIC tlsuv)
 
 add_executable(ws-client ws-client.c)
 target_link_libraries(ws-client PUBLIC tlsuv)
-
 
 add_executable(http-ping http-ping.c)
 target_link_libraries(http-ping PUBLIC tlsuv)
