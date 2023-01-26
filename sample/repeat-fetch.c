@@ -19,8 +19,8 @@ limitations under the License.
  * \brief demonstrates re-connecting usage of HTTP client
  */
 
-#include <tlsuv/um_http.h>
 #include "common.h"
+#include <tlsuv/http.h>
 
 int count = 5;
 um_http_t time_clt;

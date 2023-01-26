@@ -20,10 +20,10 @@ limitations under the License.
  *
  */
 
-#ifndef UV_MBED_TCP_SRC_H
-#define UV_MBED_TCP_SRC_H
+#ifndef TLSUV_TCP_SRC_H
+#define TLSUV_TCP_SRC_H
 
-#include "um_http_src_t.h"
+#include "http_src_t.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,4 +59,4 @@ void tcp_src_free(tcp_src_t *ts);
 }
 #endif
 
-#endif //UV_MBED_TCP_SRC_H
+#endif//TLSUV_TCP_SRC_H

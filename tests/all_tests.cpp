@@ -16,9 +16,9 @@ limitations under the License.
 
 #define CATCH_CONFIG_RUNNER
 
-#include <tlsuv/uv_mbed.h>
-#include "um_debug.h"
 #include "catch.hpp"
+#include "um_debug.h"
+#include <tlsuv/tlsuv.h>
 
 
 static uv_timeval64_t start;

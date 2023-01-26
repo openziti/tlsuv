@@ -14,11 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#ifndef UV_MBED_UM_WEBSOCKET_H
-#define UV_MBED_UM_WEBSOCKET_H
+#ifndef TLSUV_WEBSOCKET_H
+#define TLSUV_WEBSOCKET_H
 
+#include "http.h"
 #include <uv.h>
-#include "um_http.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -108,4 +108,4 @@ int um_websocket_close(um_websocket_t *ws, uv_close_cb cb);
 }
 #endif
 
-#endif //UV_MBED_UM_WEBSOCKET_H
+#endif//TLSUV_WEBSOCKET_H

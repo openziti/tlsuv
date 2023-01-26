@@ -21,8 +21,8 @@ limitations under the License.
  * @see sample/um-curl.c
  */
 
-#ifndef UV_MBED_UM_HTTP_H
-#define UV_MBED_UM_HTTP_H
+#ifndef TLSUV_HTTP_H
+#define TLSUV_HTTP_H
 
 #include <http_parser.h>
 #include <uv_link_t.h>
@@ -324,4 +324,4 @@ const char *um_http_resp_header(um_http_resp_t *resp, const char *name);
 }
 #endif
 
-#endif //UV_MBED_UM_HTTP_H
+#endif//TLSUV_HTTP_H

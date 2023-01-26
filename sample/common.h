@@ -18,7 +18,7 @@ limitations under the License.
 #ifndef UV_MBED_COMMON_H
 #define UV_MBED_COMMON_H
 
-#include <tlsuv/um_http.h>
+#include <tlsuv/http.h>
 
 void resp_cb(um_http_resp_t *resp, void *data);
 void body_cb(um_http_req_t *req, const char *body, ssize_t len);

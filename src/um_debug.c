@@ -18,8 +18,8 @@ limitations under the License.
 #include <stdio.h>
 #include <stdarg.h>
 
-#include <tlsuv/uv_mbed.h>
 #include "um_debug.h"
+#include <tlsuv/tlsuv.h>
 
 int um_log_level = ERR;
 static um_log_func log_func = NULL;

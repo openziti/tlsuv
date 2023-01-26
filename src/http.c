@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include "tlsuv/um_http.h"
+#include "tlsuv/http.h"
 #include "tlsuv/tcp_src.h"
 
 #include <stdlib.h>

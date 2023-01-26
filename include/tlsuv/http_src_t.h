@@ -20,8 +20,8 @@ limitations under the License.
  *
  */
 
-#ifndef UM_HTTP_SRC_T_H
-#define UM_HTTP_SRC_T_H
+#ifndef TLSUV_HTTP_SRC_T_H
+#define TLSUV_HTTP_SRC_T_H
 
 #include <uv_link_t.h>
 
@@ -60,4 +60,4 @@ typedef struct um_src_s {
 }
 #endif
 
-#endif //UM_HTTP_SRC_T_H
+#endif//TLSUV_HTTP_SRC_T_H

@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <uv.h>
 #include <stdlib.h>
-#include <tlsuv/uv_mbed.h>
+#include <tlsuv/tlsuv.h>
+#include <uv.h>
 
 #define HOST "162.159.132.53"
 #define PORT 443

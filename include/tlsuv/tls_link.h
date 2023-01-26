@@ -15,8 +15,8 @@ limitations under the License.
 */
 
 
-#ifndef UV_MBED_TLS_LINK_H
-#define UV_MBED_TLS_LINK_H
+#ifndef TLSUV_TLS_LINK_H
+#define TLSUV_TLS_LINK_H
 
 typedef struct tls_link_s tls_link_t;
 typedef void (*tls_handshake_cb)(tls_link_t *l, int status);
@@ -31,4 +31,4 @@ struct tls_link_s {
 
 int um_tls_init(tls_link_t *tls, tls_engine *engine, tls_handshake_cb cb);
 
-#endif //UV_MBED_TLS_LINK_H
+#endif//TLSUV_TLS_LINK_H

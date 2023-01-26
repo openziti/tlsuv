@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <tlsuv/um_websocket.h>
-#include <tlsuv/uv_mbed.h>
 #include "../src/um_debug.h"
+#include <tlsuv/tlsuv.h>
+#include <tlsuv/websocket.h>
 
 
 static void alloc_cb(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {

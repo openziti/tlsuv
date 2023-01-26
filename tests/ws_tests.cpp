@@ -14,12 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <uv.h>
-#include <tlsuv/um_websocket.h>
-#include <cstring>
-#include <tlsuv/uv_mbed.h>
 #include "catch.hpp"
 #include "fixtures.h"
+#include <cstring>
+#include <tlsuv/tlsuv.h>
+#include <tlsuv/websocket.h>
+#include <uv.h>
 
 static void test_timeout(uv_timer_t *t) {
     printf("timeout stopping loop\n");

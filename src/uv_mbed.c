@@ -14,11 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "tlsuv/tlsuv.h"
+#include "um_debug.h"
 #include <stdlib.h>
 #include <string.h>
-#include "tlsuv/uv_mbed.h"
 #include <uv.h>
-#include "um_debug.h"
 
 #define to_str1(s) #s
 #define to_str(s) to_str1(s)

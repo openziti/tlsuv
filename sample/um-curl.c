@@ -14,11 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <tlsuv/um_http.h>
-#include <string.h>
-#include <tlsuv/uv_mbed.h>
-#include <getopt.h>
 #include "common.h"
+#include <getopt.h>
+#include <string.h>
+#include <tlsuv/http.h>
+#include <tlsuv/tlsuv.h>
 
 struct app_ctx {
     um_http_t clt;

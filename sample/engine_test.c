@@ -24,10 +24,10 @@ limitations under the License.
 #define SOCKET int //differences tween windows and posix
 #endif
 
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <tlsuv/uv_mbed.h>
+#include <stdlib.h>
+#include <string.h>
+#include <tlsuv/tlsuv.h>
 
 #define HOST "wttr.in"
 

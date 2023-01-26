@@ -17,14 +17,14 @@ limitations under the License.
 #include "catch.hpp"
 #include "fixtures.h"
 
-#include <tlsuv/um_http.h>
-#include <tlsuv/tls_engine.h>
+#include <compression.h>
+#include <cstring>
+#include <iostream>
 #include <map>
 #include <string>
-#include <cstring>
-#include <tlsuv/uv_mbed.h>
-#include <iostream>
-#include <compression.h>
+#include <tlsuv/http.h>
+#include <tlsuv/tls_engine.h>
+#include <tlsuv/tlsuv.h>
 
 extern um_log_func test_log;
 using namespace std;

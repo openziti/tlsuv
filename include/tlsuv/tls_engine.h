@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#ifndef UV_MBED_TLS_ENGINE_H
-#define UV_MBED_TLS_ENGINE_H
+#ifndef TLSUV_ENGINE_H
+#define TLSUV_ENGINE_H
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -260,4 +260,4 @@ tls_context *default_tls_context(const char *ca, size_t ca_len);
 #ifdef __cplusplus
 }
 #endif
-#endif //UV_MBED_TLS_ENGINE_H
+#endif//TLSUV_ENGINE_H

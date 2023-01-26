@@ -14,10 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <uv.h>
-#include <stdlib.h>
-#include <tlsuv/uv_mbed.h>
 #include "common.h"
+#include <stdlib.h>
+#include <tlsuv/tlsuv.h>
+#include <uv.h>
 
 #define HOST "www.wttr.in"
 
