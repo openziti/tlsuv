@@ -17,7 +17,7 @@ limitations under the License.
 #ifndef UV_MBED_HTTP_REQ_H
 #define UV_MBED_HTTP_REQ_H
 
-#include <uv_mbed/um_http.h>
+#include <tlsuv/um_http.h>
 
 void http_req_init(um_http_req_t *req, const char *method, const char *path);
 void http_req_free(um_http_req_t *r);

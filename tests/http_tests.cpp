@@ -17,12 +17,12 @@ limitations under the License.
 #include "catch.hpp"
 #include "fixtures.h"
 
-#include <uv_mbed/um_http.h>
-#include <uv_mbed/tls_engine.h>
+#include <tlsuv/um_http.h>
+#include <tlsuv/tls_engine.h>
 #include <map>
 #include <string>
 #include <cstring>
-#include <uv_mbed/uv_mbed.h>
+#include <tlsuv/uv_mbed.h>
 #include <iostream>
 #include <compression.h>
 

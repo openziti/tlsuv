@@ -16,7 +16,7 @@ limitations under the License.
 
 #include "catch.hpp"
 
-#include <uv_mbed/tls_engine.h>
+#include <tlsuv/tls_engine.h>
 #include <cstring>
 #include <uv.h>
 

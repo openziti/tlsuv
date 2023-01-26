@@ -15,9 +15,9 @@ limitations under the License.
 */
 
 #include <uv.h>
-#include <uv_mbed/um_websocket.h>
+#include <tlsuv/um_websocket.h>
 #include <cstring>
-#include <uv_mbed/uv_mbed.h>
+#include <tlsuv/uv_mbed.h>
 #include "catch.hpp"
 #include "fixtures.h"
 

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <uv_mbed/tls_engine.h>
+#include <tlsuv/tls_engine.h>
 #include "um_debug.h"
 
 #ifdef USE_MBEDTLS
