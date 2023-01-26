@@ -86,8 +86,8 @@ static void on_mbed_close(uv_link_t *l) {
         cr->cb(cr, UV_ECANCELED);
     }
     if (mbed->socket) {
-        mbed->socket->cancel((um_src_t *) mbed->socket);
-        mbed->socket->release((um_src_t *) mbed->socket);
+        mbed->socket->cancel((tlsuv_src_t *) mbed->socket);
+        mbed->socket->release((tlsuv_src_t *) mbed->socket);
         tcp_src_free(mbed->socket);
         free(mbed->socket);
         mbed->socket = NULL;
@@ -128,7 +128,7 @@ static void on_tls_hs(tls_link_t *tls_link, int status) {
     mbed->conn_req = NULL;
 }
 
-static void on_src_connect(um_src_t *src, int status, void *ctx) {
+static void on_src_connect(tlsuv_src_t *src, int status, void *ctx) {
     uv_mbed_t *mbed = ctx;
 
     if (status == 0) {
@@ -174,7 +174,7 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
         tcp_src_init(mbed->loop, mbed->socket);
     }
 
-    return mbed->socket->connect((um_src_t *) mbed->socket, host, portstr, on_src_connect, mbed);
+    return mbed->socket->connect((tlsuv_src_t *) mbed->socket, host, portstr, on_src_connect, mbed);
 }
 
 int uv_mbed_read(uv_mbed_t *mbed, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {

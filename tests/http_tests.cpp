@@ -49,10 +49,9 @@ struct ci_less : std::binary_function<string, string, bool>
 
 class resp_capture {
 public:
+    tlsuv_http_body_cb body_cb;
 
-    um_http_body_cb body_cb;
-
-    explicit resp_capture(um_http_body_cb cb) : body_cb(cb), status("not set"), code(-666) {}
+    explicit resp_capture(tlsuv_http_body_cb cb) : body_cb(cb), status("not set"), code(-666) {}
 
     resp_capture() : resp_capture(nullptr) {}
 
@@ -71,13 +70,13 @@ public:
     uv_timeval64_t resp_endtime{};
 };
 
-void req_body_cb(um_http_req_t *req, const char *chunk, ssize_t status) {
+void req_body_cb(tlsuv_http_req_t *req, const char *chunk, ssize_t status) {
     auto rc = static_cast<resp_capture *>(req->data);
     rc->req_body.append(chunk);
     rc->req_body_cb_called = true;
 }
 
-void resp_body_cb(um_http_req_t *req, const char *chunk, ssize_t len) {
+void resp_body_cb(tlsuv_http_req_t *req, const char *chunk, ssize_t len) {
     auto rc = static_cast<resp_capture *>(req->data);
 
     if (len > 0) {
@@ -88,13 +87,13 @@ void resp_body_cb(um_http_req_t *req, const char *chunk, ssize_t len) {
     }
 }
 
-void resp_capture_cb(um_http_resp_t *resp, void *data) {
+void resp_capture_cb(tlsuv_http_resp_t *resp, void *data) {
     auto rc = static_cast<resp_capture *>(data);
     rc->code = resp->code;
     rc->status = resp->status ? resp->status : "no status";
     rc->http_version = resp->http_version;
 
-    um_http_hdr *h;
+    tlsuv_http_hdr *h;
     LIST_FOREACH(h, &resp->headers, _next) {
         rc->headers[h->name] = h->value;
     }
@@ -110,9 +109,9 @@ void test_timeout(uv_timer_t *t) {
 
 static const char* part2 = "this is part 2";
 void send_part2(uv_timer_t *t) {
-    auto req = static_cast<um_http_req_t *>(t->data);
-    um_http_req_data(req, part2, strlen(part2), req_body_cb);
-    um_http_req_end(req);
+    auto req = static_cast<tlsuv_http_req_t *>(t->data);
+    tlsuv_http_req_data(req, part2, strlen(part2), req_body_cb);
+    tlsuv_http_req_end(req);
 
     uv_close((uv_handle_t *) (t), nullptr);
 }
@@ -121,21 +120,21 @@ TEST_CASE("conn failures", "[http]") {
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
 
     string url = scheme + "://localhost:1222";
     INFO(url);
-    um_http_init(test.loop, &clt, url.c_str());
-    um_http_req_t *req = um_http_req(&clt, "POST", "/", resp_capture_cb, &resp);
+    tlsuv_http_init(test.loop, &clt, url.c_str());
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/", resp_capture_cb, &resp);
     const char *msg = "this is a message";
-    um_http_req_data(req, msg, strlen(msg), nullptr);
+    tlsuv_http_req_data(req, msg, strlen(msg), nullptr);
 
     test.run();
 
     REQUIRE(resp.code == UV_ECONNREFUSED);
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 }
 
 
@@ -144,17 +143,17 @@ TEST_CASE("resolve failures", "[http]") {
 
     UvLoopTest test;
 
-    auto clt = t_alloc<um_http_t>();
+    auto clt = t_alloc<tlsuv_http_t>();
     resp_capture resp(resp_body_cb);
 
-    um_http_init(test.loop, clt, (scheme + "://not.a.real.host").c_str());
-    um_http_req_t *req = um_http_req(clt, "GET", "/", resp_capture_cb, &resp);
+    tlsuv_http_init(test.loop, clt, (scheme + "://not.a.real.host").c_str());
+    tlsuv_http_req_t *req = tlsuv_http_req(clt, "GET", "/", resp_capture_cb, &resp);
 
     test.run();
 
     REQUIRE(resp.code == UV_EAI_NONAME);
 
-    um_http_close(clt, (um_http_close_cb)free);
+    tlsuv_http_close(clt, (tlsuv_http_close_cb) free);
 }
 
 TEST_CASE("http_tests", "[http]") {
@@ -162,13 +161,13 @@ TEST_CASE("http_tests", "[http]") {
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
     UvLoopTest test;
-    um_http_t clt;
+    tlsuv_http_t clt;
 
     resp_capture resp(resp_body_cb);
 
     WHEN(scheme << " redirect google.com ") {
-        um_http_init(test.loop, &clt, (scheme + "://google.com").c_str());
-        um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
+        tlsuv_http_init(test.loop, &clt, (scheme + "://google.com").c_str());
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
         test.run();
 
@@ -178,8 +177,8 @@ TEST_CASE("http_tests", "[http]") {
     }
 
     WHEN(scheme << " redirect") {
-        um_http_init(test.loop, &clt, "http://httpbin.org");
-        um_http_req_t *req = um_http_req(&clt, "GET", "/redirect/2", resp_capture_cb, &resp);
+        tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/redirect/2", resp_capture_cb, &resp);
 
         test.run();
 
@@ -190,8 +189,8 @@ TEST_CASE("http_tests", "[http]") {
     }
 
     WHEN(scheme << " body GET") {
-        um_http_init(test.loop, &clt, "http://httpbin.org");
-        um_http_req_t *req = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
+        tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
 
         test.run();
 
@@ -205,14 +204,14 @@ TEST_CASE("http_tests", "[http]") {
     }
 
     WHEN(scheme << " send headers") {
-        um_http_init(test.loop, &clt, "http://httpbin.org");
-        um_http_header(&clt, "Client-Header", "This is client header");
+        tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
+        tlsuv_http_header(&clt, "Client-Header", "This is client header");
 
-        um_http_req_t *req = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
-        um_http_req_header(req, "Request-Header", "this is request header");
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
+        tlsuv_http_req_header(req, "Request-Header", "this is request header");
 
         resp_capture resp2(resp_body_cb);
-        um_http_req_t *req2 = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp2);
+        tlsuv_http_req_t *req2 = tlsuv_http_req(&clt, "GET", "/get", resp_capture_cb, &resp2);
 
         test.run();
 
@@ -226,10 +225,10 @@ TEST_CASE("http_tests", "[http]") {
     }
 
     WHEN(scheme << " POST body") {
-        um_http_init(test.loop, &clt, (scheme + "://httpbin.org").c_str());
-        um_http_req_t *req = um_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+        tlsuv_http_init(test.loop, &clt, (scheme + "://httpbin.org").c_str());
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
         string req_body("this is a test message");
-        um_http_req_data(req, req_body.c_str(), req_body.length(), req_body_cb);
+        tlsuv_http_req_data(req, req_body.c_str(), req_body.length(), req_body_cb);
 
         test.run();
 
@@ -248,12 +247,12 @@ TEST_CASE("http_tests", "[http]") {
 
 
     WHEN(scheme << " posting chunked") {
-        um_http_init(test.loop, &clt, (scheme + "://httpbin.org").c_str());
-        um_http_req_t *req = um_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
-        um_http_req_header(req, "Transfer-Encoding", "chunked");
+        tlsuv_http_init(test.loop, &clt, (scheme + "://httpbin.org").c_str());
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+        tlsuv_http_req_header(req, "Transfer-Encoding", "chunked");
 
         string part1("this is part1");
-        um_http_req_data(req, part1.c_str(), part1.length(), req_body_cb);
+        tlsuv_http_req_data(req, part1.c_str(), part1.length(), req_body_cb);
 
         uv_timer_t p2_timer;
         uv_timer_init(test.loop, &p2_timer);
@@ -280,21 +279,21 @@ TEST_CASE("http_tests", "[http]") {
             REQUIRE(resp.req_body_cb_called);
         }
     }
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 }
 
 TEST_CASE("client_cert_test","[http]") {
     UvLoopTest test;
     tls_context *tls = default_tls_context(nullptr, 0);
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
 
     const char *test_site = "https://client.badssl.com";
 
     WHEN("client cert NOT set") {
-        um_http_init(test.loop, &clt, test_site);
-        um_http_req_t *req = um_http_req(&clt, "GET", "/secure/", resp_capture_cb, &resp);
+        tlsuv_http_init(test.loop, &clt, test_site);
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/secure/", resp_capture_cb, &resp);
 
         test.run();
 
@@ -311,8 +310,8 @@ TEST_CASE("client_cert_test","[http]") {
     }
 
     WHEN("client cert set") {
-        um_http_init(test.loop, &clt, test_site);
-        um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
+        tlsuv_http_init(test.loop, &clt, test_site);
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
         // client cert downloaded from https://badssl.com/download/
         const char *cert = "-----BEGIN CERTIFICATE-----\n"
@@ -371,7 +370,7 @@ TEST_CASE("client_cert_test","[http]") {
                       "GTH3fhaM/pZZGdIC75x/69Y=\n"
                       "-----END PRIVATE KEY-----";
         tls->api->set_own_cert(tls->ctx, cert, strlen(cert) + 1, key, strlen(key) + 1);
-        um_http_set_ssl(&clt, tls);
+        tlsuv_http_set_ssl(&clt, tls);
 
         test.run();
 
@@ -380,7 +379,7 @@ TEST_CASE("client_cert_test","[http]") {
         CHECK(resp.resp_body_end_called);
     }
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
     tls->api->free_ctx(tls);
 }
 
@@ -393,9 +392,9 @@ static long duration(uv_timeval64_t &start, uv_timeval64_t &stop) {
 TEST_CASE("client_idle_test","[http]") {
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
 
-    um_http_body_cb bodyCb = [](um_http_req_t *req, const char *b, ssize_t len) {
+    tlsuv_http_body_cb bodyCb = [](tlsuv_http_req_t *req, const char *b, ssize_t len) {
         auto r = static_cast<resp_capture *>(req->data);
 
         if (len == UV_EOF) {
@@ -403,9 +402,9 @@ TEST_CASE("client_idle_test","[http]") {
         }
     };
     resp_capture resp(bodyCb);
-    um_http_init(test.loop, &clt, "https://httpbin.org");
-    um_http_idle_keepalive(&clt, 5000);
-    um_http_req_t *req = um_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
+    tlsuv_http_init(test.loop, &clt, "https://httpbin.org");
+    tlsuv_http_idle_keepalive(&clt, 5000);
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
 
     WHEN("client idle timeout is set to 5 seconds") {
         uv_timeval64_t start;
@@ -420,7 +419,7 @@ TEST_CASE("client_idle_test","[http]") {
             CHECK(duration(resp.resp_endtime, stop) >= 5 * ONE_SECOND);
         }
 
-        um_http_close(&clt, nullptr);
+        tlsuv_http_close(&clt, nullptr);
     }
 }
 
@@ -429,9 +428,9 @@ TEST_CASE("client_idle_test","[http]") {
 TEST_CASE("server_idle_close","[.]") {
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
 
-    um_http_body_cb body_cb = [](um_http_req_t *req, const char *b, ssize_t len) {
+    tlsuv_http_body_cb body_cb = [](tlsuv_http_req_t *req, const char *b, ssize_t len) {
         auto r = static_cast<resp_capture *>(req->data);
 
         if (len == UV_EOF) {
@@ -440,9 +439,9 @@ TEST_CASE("server_idle_close","[.]") {
     };
     resp_capture resp(body_cb);
 
-    um_http_init(test.loop, &clt, "http://www.aptivate.org");
-    um_http_idle_keepalive(&clt, -1);
-    um_http_req_t *req = um_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
+    tlsuv_http_init(test.loop, &clt, "http://www.aptivate.org");
+    tlsuv_http_idle_keepalive(&clt, -1);
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
     WHEN("client timeout is set to -1") {
         uv_timeval64_t start;
@@ -461,7 +460,7 @@ TEST_CASE("server_idle_close","[.]") {
             REQUIRE(test_duration < 30 * ONE_SECOND);
         }
 
-        um_http_close(&clt, nullptr);
+        tlsuv_http_close(&clt, nullptr);
     }
 }
 
@@ -469,10 +468,10 @@ TEST_CASE("server_idle_close","[.]") {
 TEST_CASE("basic_test", "[http]") {
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(test.loop, &clt, "https://httpbin.org");
-    um_http_req_t *req = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
+    tlsuv_http_init(test.loop, &clt, "https://httpbin.org");
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
 
     test.run();
 
@@ -484,92 +483,92 @@ TEST_CASE("basic_test", "[http]") {
         CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
     }
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 }
 
 TEST_CASE("http_prefix", "[http]") {
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(test.loop, &clt, "http://httpbin.org/bytes");
-    um_http_req_t *req = um_http_req(&clt, "GET", "/256", resp_capture_cb, &resp);
+    tlsuv_http_init(test.loop, &clt, "http://httpbin.org/bytes");
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/256", resp_capture_cb, &resp);
 
     test.run();
 
     REQUIRE(resp.code == HTTP_STATUS_OK);
     CHECK_THAT(resp.headers["Content-Length"], Equals("256"));
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 }
 
 TEST_CASE("http_prefix_after", "[http]") {
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(test.loop, &clt, "http://httpbin.org");
-    um_http_req_t *req = um_http_req(&clt, "GET", "/256", resp_capture_cb, &resp);
-    um_http_set_path_prefix(&clt, "/bytes");
+    tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/256", resp_capture_cb, &resp);
+    tlsuv_http_set_path_prefix(&clt, "/bytes");
 
     test.run();
 
     REQUIRE(resp.code == HTTP_STATUS_OK);
     CHECK_THAT(resp.headers["Content-Length"], Equals("256"));
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 }
 
 TEST_CASE("content_length_test", "[http]") {
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(test.loop, &clt, "http://httpbin.org");
-    um_http_req_t *req = um_http_req(&clt, "POST", "/json", resp_capture_cb, &resp);
+    tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/json", resp_capture_cb, &resp);
 
     WHEN("set Content-Length first") {
-        int rc = um_http_req_header(req, "Content-Length", "20");
+        int rc = tlsuv_http_req_header(req, "Content-Length", "20");
         CHECK(rc == 0);
         CHECK(req->req_body_size == 20);
         CHECK(!req->req_chunked);
 
-        rc = um_http_req_header(req, "Transfer-Encoding", "chunked");
+        rc = tlsuv_http_req_header(req, "Transfer-Encoding", "chunked");
         CHECK(rc == UV_EINVAL);
         CHECK(req->req_body_size == 20);
         CHECK(!req->req_chunked);
     }
 
     WHEN("set Chunked first") {
-        int rc = um_http_req_header(req, "Transfer-Encoding", "chunked");
+        int rc = tlsuv_http_req_header(req, "Transfer-Encoding", "chunked");
         CHECK(rc == 0);
         CHECK(req->req_body_size == -1);
         CHECK(req->req_chunked);
 
-        rc = um_http_req_header(req, "Content-Length", "20");
+        rc = tlsuv_http_req_header(req, "Content-Length", "20");
         CHECK(rc == UV_EINVAL);
         CHECK(req->req_body_size == -1);
         CHECK(req->req_chunked);
     }
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 }
 
 TEST_CASE("multiple requests", "[http]") {
     UvLoopTest test;
 
-    um_http_t clt;
-    um_http_init(test.loop, &clt, "http://httpbin.org");
+    tlsuv_http_t clt;
+    tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
 
     resp_capture resp1(resp_body_cb);
-    um_http_req_t *req1 = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp1);
+    tlsuv_http_req_t *req1 = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp1);
 
     resp_capture resp2(resp_body_cb);
-    um_http_req_t *req2 = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp2);
+    tlsuv_http_req_t *req2 = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp2);
 
     WHEN("two non-keepalive requests") {
-        um_http_req_header(req1, "Connection", "close");
-        um_http_req_header(req2, "Connection", "close");
+        tlsuv_http_req_header(req1, "Connection", "close");
+        tlsuv_http_req_header(req2, "Connection", "close");
         test.run();
 
         THEN("both requests should succeed") {
@@ -588,8 +587,8 @@ TEST_CASE("multiple requests", "[http]") {
     }
 
     WHEN("two keep-alive requests") {
-        um_http_req_header(req1, "Connection", "keep-alive");
-        um_http_req_header(req2, "Connection", "keep-alive");
+        tlsuv_http_req_header(req1, "Connection", "keep-alive");
+        tlsuv_http_req_header(req2, "Connection", "keep-alive");
         test.run();
 
         THEN("both requests should succeed") {
@@ -606,31 +605,31 @@ TEST_CASE("multiple requests", "[http]") {
         }
     }
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 }
 
 // test proper client->engine cleanup between requests
 // run in valgrind to see any leaks
 TEST_CASE("TLS reconnect", "[http]") {
     UvLoopTest test;
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
     resp_capture resp2(resp_body_cb);
 
     tls_context *tls = default_tls_context(nullptr, 0);
-    um_http_init(test.loop, &clt, "https://httpbin.org");
-    um_http_set_ssl(&clt, tls);
-    um_http_header(&clt, "Connection", "close");
+    tlsuv_http_init(test.loop, &clt, "https://httpbin.org");
+    tlsuv_http_set_ssl(&clt, tls);
+    tlsuv_http_header(&clt, "Connection", "close");
 
-    um_http_req_t *req = um_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
-    um_http_req_t *req2 = um_http_req(&clt, "GET", "/anything", resp_capture_cb, &resp2);
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
+    tlsuv_http_req_t *req2 = tlsuv_http_req(&clt, "GET", "/anything", resp_capture_cb, &resp2);
 
     test.run();
 
     CHECK(resp.code == 200);
     CHECK(resp2.code == 200);
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 
     tls->api->free_ctx(tls);
 }
@@ -653,29 +652,29 @@ int cert_verify(tls_cert crt, void *ctx) {
 TEST_CASE("large POST(GH-87)", "[http][gh-87]") {
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
 
     tls_context *tls = default_tls_context(nullptr, 0);
-    um_http_init(test.loop, &clt, "https://httpbin.org");
-    um_http_set_ssl(&clt, tls);
+    tlsuv_http_init(test.loop, &clt, "https://httpbin.org");
+    tlsuv_http_set_ssl(&clt, tls);
 
-    um_http_req_t *req = um_http_req(&clt, "POST", "/anything", resp_capture_cb, &resp);
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/anything", resp_capture_cb, &resp);
     int buf_size = 64 * 1024;
     char *buf = (char*)calloc(1,buf_size);
     memset(buf, 'Z', buf_size - 1);
     char length[16];
     snprintf(length, sizeof(length), "%d", buf_size);
-    um_http_req_header(req, "Content-Type", "application/octet-stream");
-    um_http_req_header(req, "Content-Length", length);
-    um_http_req_header(req, "Connection", "Close");
-    um_http_req_data(req, buf, 64*1024, req_body_cb);
+    tlsuv_http_req_header(req, "Content-Type", "application/octet-stream");
+    tlsuv_http_req_header(req, "Content-Length", length);
+    tlsuv_http_req_header(req, "Connection", "Close");
+    tlsuv_http_req_data(req, buf, 64 * 1024, req_body_cb);
 
     test.run();
 
     CHECK(resp.code == 200);
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
     free(buf);
 
     tls->api->free_ctx(tls);
@@ -687,7 +686,7 @@ TEST_CASE("TLS verify with JWT", "[http]") {
 
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
     const char *jwt = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9."
                       "eyJlbSI6Im90dCIsImV4cCI6MTU5MTE4NzM1MSwiaXNzIjoiaHR0cHM6Ly9kZW1vNC56aXRpLm"
@@ -715,18 +714,18 @@ TEST_CASE("TLS verify with JWT", "[http]") {
     um_base64url_decode(dot + 1, &vtx.sig, &vtx.siglen);
 
     tls->api->set_cert_verify(tls, cert_verify, &vtx);
-    um_http_init(test.loop, &clt, "https://demo4.ziti.netfoundry.io");
-    um_http_set_ssl(&clt, tls);
+    tlsuv_http_init(test.loop, &clt, "https://demo4.ziti.netfoundry.io");
+    tlsuv_http_set_ssl(&clt, tls);
 
-    um_http_header(&clt, "Connection", "close");
+    tlsuv_http_header(&clt, "Connection", "close");
 
-    um_http_req_t *req = um_http_req(&clt, "GET", "/version", resp_capture_cb, &resp);
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/version", resp_capture_cb, &resp);
 
     test.run();
 
     CHECK(resp.code == 200);
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 
     free(vtx.sig);
     tls->api->free_ctx(tls);
@@ -735,47 +734,47 @@ TEST_CASE("TLS verify with JWT", "[http]") {
 TEST_CASE("TLS to IP address", "[http]") {
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
 
-    um_http_init(test.loop, &clt, "https://1.1.1.1");
-    um_http_header(&clt, "Connection", "close");
+    tlsuv_http_init(test.loop, &clt, "https://1.1.1.1");
+    tlsuv_http_header(&clt, "Connection", "close");
 
-    um_http_req_t *req = um_http_req(&clt, "GET", "/dns-query?name=google.com&type=AAAA", resp_capture_cb, &resp);
-    um_http_req_header(req, "Accept", "application/dns-json");
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/dns-query?name=google.com&type=AAAA", resp_capture_cb, &resp);
+    tlsuv_http_req_header(req, "Accept", "application/dns-json");
 
     test.run();
 
     CHECK(resp.code == 200);
     CHECK(resp.headers["Content-Type"] == "application/dns-json");
     CHECK_THAT(resp.body, Contains("\"Answer\":[{\"name\":\"google.com\""));
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 }
 
 TEST_CASE("connect timeout", "[http]") {
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
     resp_capture resp2(resp_body_cb);
 
     uv_gettimeofday(&resp.resp_start);
 
-    um_http_init(test.loop, &clt, "https://10.1.1.1"); // not reachable
-    um_http_connect_timeout(&clt, 10); // should be short enough
-    um_http_header(&clt, "Connection", "close");
+    tlsuv_http_init(test.loop, &clt, "https://10.1.1.1"); // not reachable
+    tlsuv_http_connect_timeout(&clt, 10); // should be short enough
+    tlsuv_http_header(&clt, "Connection", "close");
 
-    um_http_req_t *req = um_http_req(&clt, "GET", "/dns-query?name=google.com&type=AAAA", resp_capture_cb, &resp);
-    um_http_req_t *req2 = um_http_req(&clt, "GET", "/dns-query?name=yahoo.com&type=AAAA", resp_capture_cb, &resp2);
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/dns-query?name=google.com&type=AAAA", resp_capture_cb, &resp);
+    tlsuv_http_req_t *req2 = tlsuv_http_req(&clt, "GET", "/dns-query?name=yahoo.com&type=AAAA", resp_capture_cb, &resp2);
 
-    um_http_req_header(req, "Accept", "application/dns-json");
-    um_http_req_header(req2, "Accept", "application/dns-json");
+    tlsuv_http_req_header(req, "Accept", "application/dns-json");
+    tlsuv_http_req_header(req2, "Accept", "application/dns-json");
 
     test.run();
 
     CHECK(resp.code == UV_ETIMEDOUT);
     CHECK(resp2.code == UV_ETIMEDOUT);
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 }
 
 
@@ -783,10 +782,10 @@ TEST_CASE("connect timeout", "[http]") {
 TEST_CASE("HTTP gzip", "[http]") {
     UvLoopTest test;
 
-    auto clt = new um_http_t;
+    auto clt = new tlsuv_http_t;
     resp_capture resp(resp_body_cb);
-    um_http_init(test.loop, clt, "https://httpbin.org");
-    um_http_req_t *req = um_http_req(clt, "GET", "/gzip", resp_capture_cb, &resp);
+    tlsuv_http_init(test.loop, clt, "https://httpbin.org");
+    tlsuv_http_req_t *req = tlsuv_http_req(clt, "GET", "/gzip", resp_capture_cb, &resp);
 
     test.run();
 
@@ -800,7 +799,7 @@ TEST_CASE("HTTP gzip", "[http]") {
 
     std::cout << resp.req_body << std::endl;
 
-    um_http_close(clt, [](um_http_t *c){
+    tlsuv_http_close(clt, [](tlsuv_http_t *c) {
         delete c;
     });
 }
@@ -808,10 +807,10 @@ TEST_CASE("HTTP gzip", "[http]") {
 TEST_CASE("HTTP deflate", "[http]") {
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
-    um_http_init(test.loop, &clt, "https://httpbin.org");
-    um_http_req_t *req = um_http_req(&clt, "GET", "/deflate", resp_capture_cb, &resp);
+    tlsuv_http_init(test.loop, &clt, "https://httpbin.org");
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/deflate", resp_capture_cb, &resp);
 
     test.run();
 
@@ -826,17 +825,17 @@ TEST_CASE("HTTP deflate", "[http]") {
 
     std::cout << resp.req_body << std::endl;
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 }
 
 TEST_CASE("URL encode", "[http]") {
     UvLoopTest test;
 
-    um_http_t clt;
+    tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
 
-    um_http_init(test.loop, &clt, "https://www.google.com/search");
-    um_http_req_t *req = um_http_req(&clt, "GET", R"(?query=this is a <test>!)", resp_capture_cb, &resp);
+    tlsuv_http_init(test.loop, &clt, "https://www.google.com/search");
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", R"(?query=this is a <test>!)", resp_capture_cb, &resp);
 
     test.run();
 
@@ -848,7 +847,7 @@ TEST_CASE("URL encode", "[http]") {
 
     std::cout << resp.req_body << std::endl;
 
-    um_http_close(&clt, nullptr);
+    tlsuv_http_close(&clt, nullptr);
 }
 
 class testdata {
@@ -856,9 +855,9 @@ public:
     testdata(): resp1(nullptr), resp2(nullptr), r1(nullptr), r2(nullptr)
     {}
 
-    um_http_t clt;
-    um_http_req_t *r1;
-    um_http_req_t *r2;
+    tlsuv_http_t clt;
+    tlsuv_http_req_t *r1;
+    tlsuv_http_req_t *r2;
 
     resp_capture resp1;
     resp_capture resp2;
@@ -870,27 +869,27 @@ TEST_CASE("test request cancel", "[http]") {
 
     testdata td;
 
-    um_http_init(test.loop, &td.clt, "https://www.google.com/search");
+    tlsuv_http_init(test.loop, &td.clt, "https://www.google.com/search");
 
-    auto r1_cb = [](um_http_resp_t *resp, void *p) {
+    auto r1_cb = [](tlsuv_http_resp_t *resp, void *p) {
         auto t = (testdata*)p;
-        um_http_req_cancel(&t->clt, t->r2);
+        tlsuv_http_req_cancel(&t->clt, t->r2);
         resp_capture_cb(resp, &t->resp1);
     };
 
-    auto r2_cb = [](um_http_resp_t *resp, void *t) {
+    auto r2_cb = [](tlsuv_http_resp_t *resp, void *t) {
         auto _td = (testdata*)t;
         resp_capture_cb(resp, &_td->resp2);
     };
 
-    td.r1 = um_http_req(&td.clt, "GET", R"(?query=this is a <test>!)", r1_cb, &td);
+    td.r1 = tlsuv_http_req(&td.clt, "GET", R"(?query=this is a <test>!)", r1_cb, &td);
 
-    td.r2 = um_http_req(&td.clt, "GET", R"(?query=this is NOT a <test2>!)", r2_cb, &td);
+    td.r2 = tlsuv_http_req(&td.clt, "GET", R"(?query=this is NOT a <test2>!)", r2_cb, &td);
 
     test.run();
 
     CHECK(td.resp1.code == HTTP_STATUS_OK);
     CHECK(td.resp2.code == UV_ECANCELED);
 
-    um_http_close(&td.clt, nullptr);
+    tlsuv_http_close(&td.clt, nullptr);
 }

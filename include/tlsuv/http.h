@@ -40,33 +40,33 @@ extern "C" {
 /**
  * HTTP Header struct.
  */
-typedef struct um_http_hdr_s {
+typedef struct tlsuv_http_hdr_s {
     char *name;
     char *value;
 
-    LIST_ENTRY(um_http_hdr_s) _next;
-} um_http_hdr;
+    LIST_ENTRY(tlsuv_http_hdr_s) _next;
+} tlsuv_http_hdr;
 
 /**
  * List of HTTP headers
  */
-typedef LIST_HEAD(hdr_list, um_http_hdr_s) um_header_list;
+typedef LIST_HEAD(hdr_list, tlsuv_http_hdr_s) um_header_list;
 
-typedef struct um_http_resp_s um_http_resp_t;
-typedef struct um_http_req_s um_http_req_t;
-typedef struct um_http_s um_http_t;
-typedef struct um_http_inflater_s um_http_inflater_t;
+typedef struct tlsuv_http_resp_s tlsuv_http_resp_t;
+typedef struct tlsuv_http_req_s tlsuv_http_req_t;
+typedef struct tlsuv_http_s tlsuv_http_t;
+typedef struct tlsuv_http_inflater_s tlsuv_http_inflater_t;
 /**
  * HTTP response callback type.
  */
-typedef void (*um_http_resp_cb)(um_http_resp_t *resp, void *ctx);
+typedef void (*tlsuv_http_resp_cb)(tlsuv_http_resp_t *resp, void *ctx);
 
 /**
  * HTTP body callback type.
  */
-typedef void (*um_http_body_cb)(um_http_req_t *req, const char *body, ssize_t len);
+typedef void (*tlsuv_http_body_cb)(tlsuv_http_req_t *req, const char *body, ssize_t len);
 
-typedef void (*um_http_close_cb)(um_http_t *);
+typedef void (*tlsuv_http_close_cb)(tlsuv_http_t *);
 /**
  * @brief State of HTTP request.
  */
@@ -81,8 +81,8 @@ typedef enum http_request_state {
 /**
  * @brief HTTP responce object passed into #um_http_resp_cb.
  */
-typedef struct um_http_resp_s {
-    um_http_req_t *req;
+typedef struct tlsuv_http_resp_s {
+    tlsuv_http_req_t *req;
 
     char http_version[4];
     int code;
@@ -92,16 +92,16 @@ typedef struct um_http_resp_s {
     um_header_list headers;
 
     /** @brief callback called with response body data. May be called multiple times, last one with `len` of `UV_EOF` */
-    um_http_body_cb body_cb;
-} um_http_resp_t;
+    tlsuv_http_body_cb body_cb;
+} tlsuv_http_resp_t;
 
 /**
  * HTTP request object.
  *
  */
-typedef struct um_http_req_s {
+typedef struct tlsuv_http_req_s {
 
-    struct um_http_s *client;
+    struct tlsuv_http_s *client;
     char *method;
     char *path;
     http_parser parser;
@@ -114,21 +114,21 @@ typedef struct um_http_req_s {
     um_header_list req_headers;
 
     /** @brief callback called after server has sent response headers. Called before #body_cb */
-    um_http_resp_cb resp_cb;
-    um_http_inflater_t *inflater;
+    tlsuv_http_resp_cb resp_cb;
+    tlsuv_http_inflater_t *inflater;
 
     /*! request context */
     void *data;
 
-    um_http_resp_t resp;
+    tlsuv_http_resp_t resp;
 
-    STAILQ_ENTRY(um_http_req_s) _next;
-} um_http_req_t;
+    STAILQ_ENTRY(tlsuv_http_req_s) _next;
+} tlsuv_http_req_t;
 
 /**
  * @brief HTTP client struct
  */
-typedef struct um_http_s {
+typedef struct tlsuv_http_s {
     char *host;
     char port[6];
     char *prefix;
@@ -141,7 +141,7 @@ typedef struct um_http_s {
     um_header_list headers;
 
     int connected;
-    um_src_t *src;
+    tlsuv_src_t *src;
     bool own_src;
 
     uv_link_t http_link;
@@ -152,21 +152,21 @@ typedef struct um_http_s {
     uv_timer_t *conn_timer;
 
     uv_async_t proc;
-    um_http_req_t *active;
-    STAILQ_HEAD(req_q, um_http_req_s) requests;
+    tlsuv_http_req_t *active;
+    STAILQ_HEAD(req_q, tlsuv_http_req_s) requests;
 
     void *data;
-    um_http_close_cb close_cb;
-} um_http_t;
+    tlsuv_http_close_cb close_cb;
+} tlsuv_http_t;
 
 /**
  * Initialize HTTP client
  * @param l libuv loop to execute
  * @param clt client struct
- * @param url url to initialize client with. Only scheme, host, port(optional), path(@see um_http_set_path_prefix) are used.
+ * @param url url to initialize client with. Only scheme, host, port(optional), path(@see tlsuv_http_set_path_prefix) are used.
  * @return 0 or error code
  */
-int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url);
+int tlsuv_http_init(uv_loop_t *l, tlsuv_http_t *clt, const char *url);
 
 /**
  * @brief Initialize HTTP client with source link
@@ -175,12 +175,12 @@ int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url);
  * 
  * @param l libuv loop to execute
  * @param clt client struct
- * @param url url to initialize client with. Only scheme, host, port(optional), path(@see um_http_set_path_prefix) are used.
+ * @param url url to initialize client with. Only scheme, host, port(optional), path(@see tlsuv_http_set_path_prefix) are used.
  * @param src source link to be used in place of TCP
  * 
  * @return 0 or error code
  */
-int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_t *src);
+int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, tlsuv_src_t *src);
 
 
 /**
@@ -192,7 +192,7 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
  * @param clt client struct
  * @param url new base URL
  */
- int um_http_set_url(um_http_t *clt, const char *url);
+ int tlsuv_http_set_url(tlsuv_http_t *clt, const char *url);
 
 /**
  * @brief Set path prefix on the client.
@@ -202,7 +202,7 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
  * @param prefix path prefix, NULL to clear it
  */
 
-void um_http_set_path_prefix(um_http_t *clt, const char *prefix);
+void tlsuv_http_set_path_prefix(tlsuv_http_t *clt, const char *prefix);
 
 /**
  * \brief Set idle timeout.
@@ -215,7 +215,7 @@ void um_http_set_path_prefix(um_http_t *clt, const char *prefix);
  * @param millis timeout in milliseconds, use -1 to defer to server side closing connection, default is 0
  * @return 0 or error code
  */
-int um_http_idle_keepalive(um_http_t *clt, long millis);
+int tlsuv_http_idle_keepalive(tlsuv_http_t *clt, long millis);
 
 /**
  * \brief Set connect timeout.
@@ -227,7 +227,7 @@ int um_http_idle_keepalive(um_http_t *clt, long millis);
  * @param millis timeout in milliseconds, use 0 to use system level TCP timeout, default is 0
  * @return 0 or error code
  */
-int um_http_connect_timeout(um_http_t *clt, long millis);
+int tlsuv_http_connect_timeout(tlsuv_http_t *clt, long millis);
 
 /**
  * @brief Set #tls_context on the client.
@@ -235,10 +235,10 @@ int um_http_connect_timeout(um_http_t *clt, long millis);
  * Useful if you have custom TLS context (different implementation)
  * or default TLS context configured with custom CA or client certificate.
  * This operation only makes sense if client was initialized with `https` URL.
- * @see um_http_init()
+ * @see tlsuv_http_init()
  * @see tls_context
  */
-void um_http_set_ssl(um_http_t *clt, tls_context *tls);
+void tlsuv_http_set_ssl(tlsuv_http_t *clt, tls_context *tls);
 
 /**
  * @brief Set header on the client.
@@ -248,14 +248,14 @@ void um_http_set_ssl(um_http_t *clt, tls_context *tls);
  * @param name name of the header
  * @param value value
  */
-void um_http_header(um_http_t *clt, const char *name, const char *value);
+void tlsuv_http_header(tlsuv_http_t *clt, const char *name, const char *value);
 
 /**
  * close client and release all resources associate with it
  * @param clt
  * @return 0 or error code
  */
-int um_http_close(um_http_t *clt, um_http_close_cb close_cb);
+int tlsuv_http_close(tlsuv_http_t *clt, tlsuv_http_close_cb close_cb);
 
 /**
  * Create HTTP request with givan client and queue it for execution.
@@ -267,7 +267,7 @@ int um_http_close(um_http_t *clt, um_http_close_cb close_cb);
  * @param ctx arbitrary data passed back in #resp_cb
  * @return request that should be modified by setting callbacks, headers, etc
  */
-um_http_req_t *um_http_req(um_http_t *clt, const char *method, const char *path, um_http_resp_cb resp_cb, void *ctx);
+tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const char *path, tlsuv_http_resp_cb resp_cb, void *ctx);
 
 /**
  * Set request header
@@ -276,23 +276,23 @@ um_http_req_t *um_http_req(um_http_t *clt, const char *method, const char *path,
  * @param value
  * @return o or error code
  */
-int um_http_req_header(um_http_req_t *req, const char *name, const char *value);
+int tlsuv_http_req_header(tlsuv_http_req_t *req, const char *name, const char *value);
 
 /**
- * Write request body. Could be called multiple times. @see um_http_req_end
+ * Write request body. Could be called multiple times. @see tlsuv_http_req_end
  * @param req
  * @param body
  * @param bodylen
  * @param cb
  * @return
  */
-int um_http_req_data(um_http_req_t *req, const char *body, size_t bodylen, um_http_body_cb cb);
+int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen, tlsuv_http_body_cb cb);
 
 /**
  * Indicate the end of the request body. Only needed if `Transfer-Encoding` header was set to `chunked`
  * @param req
  */
-void um_http_req_end(um_http_req_t *req);
+void tlsuv_http_req_end(tlsuv_http_req_t *req);
 
 /**
  * Cancels provided request
@@ -300,7 +300,7 @@ void um_http_req_end(um_http_req_t *req);
  * @param req request to be cancelled
  * @return 0, or error code
  */
-int um_http_req_cancel(um_http_t *clt, um_http_req_t *req);
+int tlsuv_http_req_cancel(tlsuv_http_t *clt, tlsuv_http_req_t *req);
 
 /**
  * Cancels all (active and queued) requests for the given client.
@@ -310,7 +310,7 @@ int um_http_req_cancel(um_http_t *clt, um_http_req_t *req);
  * @param clt client
  * @return
  */
-int um_http_cancel_all(um_http_t *clt);
+int tlsuv_http_cancel_all(tlsuv_http_t *clt);
 
 /**
  * @brief return response header
@@ -318,7 +318,7 @@ int um_http_cancel_all(um_http_t *clt);
  * @param name header name
  * @return value of the header or NULL
  */
-const char *um_http_resp_header(um_http_resp_t *resp, const char *name);
+const char *tlsuv_http_resp_header(tlsuv_http_resp_t *resp, const char *name);
 
 #ifdef __cplusplus
 }

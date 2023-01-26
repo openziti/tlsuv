@@ -19,12 +19,12 @@ limitations under the License.
 
 #include <tlsuv/http.h>
 
-void http_req_init(um_http_req_t *req, const char *method, const char *path);
-void http_req_free(um_http_req_t *r);
-size_t http_req_process(um_http_req_t *req, const char* buf, ssize_t len);
+void http_req_init(tlsuv_http_req_t *req, const char *method, const char *path);
+void http_req_free(tlsuv_http_req_t *r);
+size_t http_req_process(tlsuv_http_req_t *req, const char* buf, ssize_t len);
 
 // write request header
-size_t http_req_write(um_http_req_t *req, char *buf, size_t maxlen);
+size_t http_req_write(tlsuv_http_req_t *req, char *buf, size_t maxlen);
 
 void free_hdr_list(um_header_list *l);
 void set_http_header(um_header_list *hl, const char* name, const char *value);
@@ -33,9 +33,9 @@ void set_http_headern(um_header_list *hl, const char* name, const char *value, s
 struct body_chunk_s {
     char *chunk;
     size_t len;
-    um_http_body_cb cb;
+    tlsuv_http_body_cb cb;
 
-    um_http_req_t *req;
+    tlsuv_http_req_t *req;
 
     struct body_chunk_s *next;
 };

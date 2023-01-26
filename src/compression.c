@@ -22,7 +22,7 @@ static const char * (*zError_f) (int);
 static const char *ZLibVersion;
 static char *encodings;
 
-struct um_http_inflater_s {
+struct tlsuv_http_inflater_s {
     z_stream s;
     int complete;
 

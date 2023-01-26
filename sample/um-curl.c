@@ -21,7 +21,7 @@ limitations under the License.
 #include <tlsuv/tlsuv.h>
 
 struct app_ctx {
-    um_http_t clt;
+    tlsuv_http_t clt;
     char *path;
     int count;
     int cycle;
@@ -30,14 +30,14 @@ struct app_ctx {
 static void do_request(uv_timer_t *t) {
     struct app_ctx *app = t->data;
 
-    um_http_req_t *r = um_http_req(&app->clt, "GET", app->path, resp_cb, NULL);
+    tlsuv_http_req_t *r = tlsuv_http_req(&app->clt, "GET", app->path, resp_cb, NULL);
     r->resp.body_cb = body_cb;
 
     if (app->count-- > 0) {
         uv_timer_start(t, do_request, app->cycle * 1000, 0);
     } else {
         uv_close((uv_handle_t *) t, NULL);
-        um_http_close(&app->clt, NULL);
+        tlsuv_http_close(&app->clt, NULL);
     }
 }
 
@@ -92,8 +92,8 @@ int main(int argc, char **argv) {
 
     uv_loop_t *loop = uv_default_loop();
     char *host_url = strndup(url, path - url);
-    um_http_init(loop, &app.clt, host_url);
-    um_http_idle_keepalive(&app.clt, -1);
+    tlsuv_http_init(loop, &app.clt, host_url);
+    tlsuv_http_idle_keepalive(&app.clt, -1);
 
     if (CA || (cert && key)) {
         tls = default_tls_context(CA, CA ? strlen(CA) + 1 : 0);
@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
         if (cert && key) {
             tls->api->set_own_cert(tls->ctx, cert, strlen(cert), key, strlen(key));
         }
-        um_http_set_ssl(&app.clt, tls);
+        tlsuv_http_set_ssl(&app.clt, tls);
     }
 
     uv_timer_t timer;

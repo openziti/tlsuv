@@ -15,7 +15,7 @@ typedef intptr_t ssize_t;
 #endif
 #endif
 
-typedef struct um_http_inflater_s http_inflater_t;
+typedef struct tlsuv_http_inflater_s http_inflater_t;
 
 #if __cplusplus
 extern "C" {

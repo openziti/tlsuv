@@ -46,7 +46,7 @@ typedef struct ws_write_s {
 
 extern tls_context *get_default_tls();
 
-static void src_connect_cb(um_src_t *sl, int status, void *connect_ctx);
+static void src_connect_cb(tlsuv_src_t *sl, int status, void *connect_ctx);
 static void ws_read_cb(uv_link_t* link,
                                 ssize_t nread,
                                 const uv_buf_t* buf);
@@ -65,11 +65,11 @@ static const uv_link_methods_t ws_methods = {
 };
 
 
-int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, um_src_t *src) {
+int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_src_t *src) {
     ws->loop = loop;
     ws->type = UV_IDLE;
     ws->src = src;
-    ws->req = calloc(1, sizeof(um_http_req_t));
+    ws->req = calloc(1, sizeof(tlsuv_http_req_t));
 
     time_t t;
     srand(time(&t));
@@ -102,7 +102,7 @@ int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, um_src
 int tlsuv_websocket_init(uv_loop_t *loop, tlsuv_websocket_t *ws) {
     memset(ws, 0, sizeof(tlsuv_websocket_t));
     tcp_src_init(loop, &ws->default_src);
-    return tlsuv_websocket_init_with_src(loop, ws, (um_src_t *) &ws->default_src);
+    return tlsuv_websocket_init_with_src(loop, ws, (tlsuv_src_t *) &ws->default_src);
 }
 
 void tlsuv_websocket_set_header(tlsuv_websocket_t *ws, const char *name, const char *value) {
@@ -241,7 +241,7 @@ int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf,
 }
 
 
-static void src_connect_cb(um_src_t *sl, int status, void *connect_ctx) {
+static void src_connect_cb(tlsuv_src_t *sl, int status, void *connect_ctx) {
     UM_LOG(DEBG, "connect rc = %d", status);
     uv_connect_t *req = connect_ctx;
     tlsuv_websocket_t *ws = (tlsuv_websocket_t *) req->handle;

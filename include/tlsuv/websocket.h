@@ -34,13 +34,13 @@ struct tlsuv_websocket_s {
 
     uv_read_cb read_cb;
 
-    um_http_req_t *req;
+    tlsuv_http_req_t *req;
 
     char *host;
 
     uv_connect_t *conn_req;
 
-    um_src_t *src;
+    tlsuv_src_t *src;
     tcp_src_t default_src;
 
     uv_link_t ws_link;
@@ -58,7 +58,7 @@ struct tlsuv_websocket_s {
  */
 int tlsuv_websocket_init(uv_loop_t *loop, tlsuv_websocket_t *ws);
 
-int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, um_src_t *src);
+int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_src_t *src);
 
 /**
  * @brief set #tls_context on the client.

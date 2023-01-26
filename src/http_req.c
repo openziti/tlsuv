@@ -21,7 +21,7 @@ limitations under the License.
 #include <ctype.h>
 #include "compression.h"
 
-static void free_hdr(um_http_hdr *hdr);
+static void free_hdr(tlsuv_http_hdr *hdr);
 
 static int http_headers_complete_cb(http_parser *p);
 static int http_header_field_cb(http_parser *parser, const char *f, size_t len);
@@ -39,7 +39,7 @@ static http_parser_settings HTTP_PROC = {
         .on_body = http_body_cb
 };
 
-void http_req_init(um_http_req_t *r, const char *method, const char *path) {
+void http_req_init(tlsuv_http_req_t *r, const char *method, const char *path) {
     r->parser.data = r;
     r->method = strdup(method);
     r->path = strdup(path);
@@ -53,7 +53,7 @@ void http_req_init(um_http_req_t *r, const char *method, const char *path) {
     http_parser_init(&r->parser, HTTP_RESPONSE);
 }
 
-void http_req_free(um_http_req_t *req) {
+void http_req_free(tlsuv_http_req_t *req) {
     if (req == NULL) return;
 
     free_hdr_list(&req->req_headers);
@@ -74,20 +74,20 @@ static int printable_len(const unsigned char* buf, size_t len) {
     return (int)(p - buf);
 }
 
-size_t http_req_process(um_http_req_t *req, const char* buf, ssize_t len) {
+size_t http_req_process(tlsuv_http_req_t *req, const char* buf, ssize_t len) {
     UM_LOG(TRACE, "processing %zd bytes\n%.*s", len, printable_len((const unsigned char*)buf, len), buf);
     size_t processed = http_parser_execute(&req->parser, &HTTP_PROC, buf, len);
     UM_LOG(VERB, "processed %zd out of %zd", processed, len);
     return processed;
 }
 
-static void free_hdr(um_http_hdr *hdr) {
+static void free_hdr(tlsuv_http_hdr *hdr) {
     free(hdr->name);
     free(hdr->value);
 }
 
 void free_hdr_list(um_header_list *l) {
-    um_http_hdr *h;
+    tlsuv_http_hdr *h;
     while (!LIST_EMPTY(l)) {
         h = LIST_FIRST(l);
         LIST_REMOVE(h, _next);
@@ -114,7 +114,7 @@ static size_t write_url_encoded(char *buf, const char *url) {
     return p - buf;
 }
 
-size_t http_req_write(um_http_req_t *req, char *buf, size_t maxlen) {
+size_t http_req_write(tlsuv_http_req_t *req, char *buf, size_t maxlen) {
     const char *pfx = "";
     if (req->client && req->client->prefix) {
         pfx = req->client->prefix;
@@ -144,7 +144,7 @@ size_t http_req_write(um_http_req_t *req, char *buf, size_t maxlen) {
         }
     }
 
-    um_http_hdr *h;
+    tlsuv_http_hdr *h;
     LIST_FOREACH(h, &req->req_headers, _next) {
         len += snprintf(buf + len, maxlen - len, "%s: %s\r\n", h->name, h->value);
     }
@@ -154,9 +154,9 @@ size_t http_req_write(um_http_req_t *req, char *buf, size_t maxlen) {
 }
 
 void add_http_header(um_header_list *hl, const char* name, const char *value, size_t vallen) {
-    um_http_hdr *h;
+    tlsuv_http_hdr *h;
 
-    h = malloc(sizeof(um_http_hdr));
+    h = malloc(sizeof(tlsuv_http_hdr));
     h->name = strdup(name);
     LIST_INSERT_HEAD(hl, h, _next);
 
@@ -164,7 +164,7 @@ void add_http_header(um_header_list *hl, const char* name, const char *value, si
 }
 
 void set_http_header(um_header_list *hl, const char* name, const char *value) {
-    um_http_hdr *h;
+    tlsuv_http_hdr *h;
     LIST_FOREACH(h, hl, _next) {
         if (strcasecmp(h->name, name) == 0) {
             break;
@@ -182,7 +182,7 @@ void set_http_header(um_header_list *hl, const char* name, const char *value) {
     }
 
     if (h == NULL) {
-        h = malloc(sizeof(um_http_hdr));
+        h = malloc(sizeof(tlsuv_http_hdr));
         h->name = strdup(name);
         LIST_INSERT_HEAD(hl, h, _next);
     } else {
@@ -192,8 +192,8 @@ void set_http_header(um_header_list *hl, const char* name, const char *value) {
     h->value = strdup(value);
 }
 
-const char* um_http_resp_header(um_http_resp_t *resp, const char *name) {
-    um_http_hdr *h;
+const char*tlsuv_http_resp_header(tlsuv_http_resp_t *resp, const char *name) {
+    tlsuv_http_hdr *h;
     LIST_FOREACH(h, &resp->headers, _next) {
         if (strcasecmp(h->name, name) == 0) {
             return h->value;
@@ -203,10 +203,10 @@ const char* um_http_resp_header(um_http_resp_t *resp, const char *name) {
 }
 
 static int http_headers_complete_cb(http_parser *p) {
-    um_http_req_t *req = p->data;
+    tlsuv_http_req_t *req = p->data;
     req->state = headers_received;
 
-    const char *compression = um_http_resp_header(&req->resp, "content-encoding");
+    const char *compression = tlsuv_http_resp_header(&req->resp, "content-encoding");
     if (compression) {
         set_http_header(&req->resp.headers, "content-length", NULL);
         set_http_header(&req->resp.headers, "transfer-encoding", "chunked");
@@ -221,13 +221,13 @@ static int http_headers_complete_cb(http_parser *p) {
 }
 
 static int http_header_field_cb(http_parser *parser, const char *f, size_t len) {
-    um_http_req_t *req = parser->data;
+    tlsuv_http_req_t *req = parser->data;
     req->resp.curr_header = strndup(f, len);
     return 0;
 }
 
 static int http_header_value_cb(http_parser *parser, const char *v, size_t len) {
-    um_http_req_t *req = parser->data;
+    tlsuv_http_req_t *req = parser->data;
 
     if (len > 0) {
         if (req->resp.curr_header) {
@@ -243,7 +243,7 @@ static int http_header_value_cb(http_parser *parser, const char *v, size_t len) 
 
 static int http_status_cb(http_parser *parser, const char *status, size_t len) {
     UM_LOG(VERB, "status = %d %.*s", parser->status_code, (int) len, status);
-    um_http_req_t *r = parser->data;
+    tlsuv_http_req_t *r = parser->data;
     r->resp.code = (int) parser->status_code;
     snprintf(r->resp.http_version, sizeof(r->resp.http_version), "%d.%d", parser->http_major, parser->http_minor);
     r->resp.status = calloc(1, len+1);
@@ -253,7 +253,7 @@ static int http_status_cb(http_parser *parser, const char *status, size_t len) {
 
 static int http_message_cb(http_parser *parser) {
     UM_LOG(VERB, "message complete");
-    um_http_req_t *r = parser->data;
+    tlsuv_http_req_t *r = parser->data;
     r->state = completed;
     if (r->resp.body_cb) {
         if (r->inflater == NULL || um_inflate_state(r->inflater) == 1) {
@@ -268,7 +268,7 @@ static int http_message_cb(http_parser *parser) {
 }
 
 static int http_body_cb(http_parser *parser, const char *body, size_t len) {
-    um_http_req_t *r = parser->data;
+    tlsuv_http_req_t *r = parser->data;
     if (r->inflater) {
         um_inflate(r->inflater, body, len);
     } else {

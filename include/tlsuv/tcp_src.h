@@ -33,8 +33,8 @@ extern "C" {
  * Inherits from um_http_source_t and is used to register source link for `um_http`.
  */
 typedef struct tcp_src_s {
-    UM_SRC_FIELDS
-    uv_getaddrinfo_t *resolve_req;
+    tlsuv_SRC_FIELDS
+            uv_getaddrinfo_t *resolve_req;
     uv_connect_t *conn_req;
     uv_tcp_t *conn;
     unsigned int keepalive;

@@ -25,7 +25,7 @@ void logger(int level, const char *file, unsigned int line, const char *msg) {
     fprintf(stderr, "[%9ld.%03ld] %s:%d %s\n", spec.tv_sec, spec.tv_nsec/1000000, file, line, msg);
 }
 
-void resp_cb(um_http_resp_t *resp, void *data) {
+void resp_cb(tlsuv_http_resp_t *resp, void *data) {
     if (resp->req->client->tls) {
             printf("Using %s\n", resp->req->client->tls->api->version());
     }
@@ -33,7 +33,7 @@ void resp_cb(um_http_resp_t *resp, void *data) {
         fprintf(stderr, "ERROR: %d(%s)", resp->code, uv_strerror(resp->code));
         return;
     }
-    um_http_hdr *h;
+    tlsuv_http_hdr *h;
     printf("Response (%d) >>>\nHeaders >>>\n", resp->code);
     LIST_FOREACH(h, &resp->headers, _next) {
         printf("\t%s: %s\n", h->name, h->value);
@@ -41,7 +41,7 @@ void resp_cb(um_http_resp_t *resp, void *data) {
     printf("\n");
 }
 
-void body_cb(um_http_req_t *req, const char *body, ssize_t len) {
+void body_cb(tlsuv_http_req_t *req, const char *body, ssize_t len) {
     if (len == UV_EOF) {
         printf("\n\n====================\nRequest completed\n");
     }

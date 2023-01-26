@@ -23,24 +23,24 @@ limitations under the License.
 #include <tlsuv/http.h>
 
 int count = 5;
-um_http_t time_clt;
+tlsuv_http_t time_clt;
 uv_timer_t time_timer;
 
 static void timer_cb(uv_timer_t *timer) {
     if (count-- > 0) {
         printf(">>> calling time service count left = %d\n\n", count);
-        um_http_req_t *req = um_http_req(&time_clt, "GET", "/api/timezone/EST", resp_cb, NULL);
+        tlsuv_http_req_t *req = tlsuv_http_req(&time_clt, "GET", "/api/timezone/EST", resp_cb, NULL);
         req->resp.body_cb = body_cb;
     } else {
         uv_timer_stop(timer);
-        um_http_close(&time_clt, NULL);
+        tlsuv_http_close(&time_clt, NULL);
     }
 }
 
 int main(int argc, char **argv) {
     uv_loop_t *loop = uv_default_loop();
 
-    um_http_init(loop, &time_clt, "https://worldtimeapi.org");
+    tlsuv_http_init(loop, &time_clt, "https://worldtimeapi.org");
     uv_timer_init(loop, &time_timer);
     uv_timer_start(&time_timer, timer_cb, 1000, 5000);
 
