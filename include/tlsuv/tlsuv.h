@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#ifndef UV_MBED_H
-#define UV_MBED_H
+#ifndef TLSUV_H
+#define TLSUV_H
 
 #include <uv.h>
 #include <stdbool.h>
@@ -29,30 +29,30 @@ limitations under the License.
 extern "C" {
 #endif
 
-const char* uv_mbed_version();
+const char* tlsuv_version();
 
-typedef struct uv_mbed_s uv_mbed_t;
+typedef struct tlsuv_stream_s tlsuv_stream_t;
 
-typedef void(*um_log_func)(int level, const char *file, unsigned int line, const char *msg);
-void uv_mbed_set_debug(int level, um_log_func output_f);
+typedef void(*tlsuv_log_func)(int level, const char *file, unsigned int line, const char *msg);
+void tlsuv_set_debug(int level, tlsuv_log_func output_f);
 
-int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls);
-int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, unsigned int delay);
-int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay);
+int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *mbed, tls_context *tls);
+int tlsuv_stream_keepalive(tlsuv_stream_t *mbed, int keepalive, unsigned int delay);
+int tlsuv_stream_nodelay(tlsuv_stream_t *mbed, int nodelay);
 
-int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int port, uv_connect_cb cb);
+int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *mbed, const char *host, int port, uv_connect_cb cb);
 
-int uv_mbed_connect_addr(uv_connect_t *req, uv_mbed_t *mbed, const struct addrinfo *addr, uv_connect_cb cb);
+int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *mbed, const struct addrinfo *addr, uv_connect_cb cb);
 
-int uv_mbed_read(uv_mbed_t *client, uv_alloc_cb, uv_read_cb);
+int tlsuv_stream_read(tlsuv_stream_t *client, uv_alloc_cb, uv_read_cb);
 
-int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb cb);
+int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *mbed, uv_buf_t *buf, uv_write_cb cb);
 
-int uv_mbed_close(uv_mbed_t *session, uv_close_cb close_cb);
+int tlsuv_stream_close(tlsuv_stream_t *session, uv_close_cb close_cb);
 
-int uv_mbed_free(uv_mbed_t *session);
+int tlsuv_stream_free(tlsuv_stream_t *session);
 
-struct uv_mbed_s {
+struct tlsuv_stream_s {
     UV_LINK_FIELDS
 
     uv_loop_t *loop;
@@ -67,9 +67,9 @@ struct uv_mbed_s {
     uv_close_cb close_cb;
 };
 
-size_t um_base64url_decode(const char *in, char **out, size_t *out_len);
+size_t tlsuv_base64url_decode(const char *in, char **out, size_t *out_len);
 #ifdef __cplusplus
 }
 #endif
 
-#endif //UV_MBED_H
+#endif//TLSUV_H

@@ -77,7 +77,7 @@ int main(int argc, char **argv) {
             case 'd':
                 if (optarg) {
                     int level = atoi(optarg);
-                    uv_mbed_set_debug(level, logger);
+                    tlsuv_set_debug(level, logger);
                 }
                 break;
         }

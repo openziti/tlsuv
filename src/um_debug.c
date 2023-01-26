@@ -22,7 +22,7 @@ limitations under the License.
 #include <tlsuv/tlsuv.h>
 
 int um_log_level = ERR;
-static um_log_func log_func = NULL;
+static tlsuv_log_func log_func = NULL;
 
 void um_log(int lvl, const char* file, unsigned int line, const char *fmt,  ...) {
     static char logbuf[1024];
@@ -34,7 +34,7 @@ void um_log(int lvl, const char* file, unsigned int line, const char *fmt,  ...)
     }
 }
 
-void uv_mbed_set_debug(int level, um_log_func log_f) {
+void tlsuv_set_debug(int level, tlsuv_log_func output_f) {
     um_log_level = level;
-    log_func = log_f;
+    log_func = output_f;
 }

@@ -41,7 +41,7 @@ void logger(int level, const char *file, unsigned int line, const char *msg) {
 }
 
 int main(int argc, char *argv[]) {
-    uv_mbed_set_debug(6, logger);
+    tlsuv_set_debug(6, logger);
     uv_loop_t *l = uv_default_loop();
     tlsuv_http_t http;
     tlsuv_http_init(l, &http, "https://httpbin.org");

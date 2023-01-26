@@ -51,21 +51,21 @@ static size_t base64url_decode_len(const char *bufcoded) {
     return nbytesdecoded;
 }
 
-size_t um_base64url_decode(const char *bufcoded, char **plainout, size_t *lenout) {
+size_t tlsuv_base64url_decode(const char *in, char **out, size_t *out_len) {
 
-    *lenout = base64url_decode_len(bufcoded);
-    unsigned char *buf = malloc(*lenout);
+    *out_len = base64url_decode_len(in);
+    unsigned char *buf = malloc(*out_len);
 
     register const unsigned char *bufin;
     register unsigned char *bufout;
     register size_t nprbytes;
 
-    bufin = (const unsigned char *) bufcoded;
+    bufin = (const unsigned char *) in;
     while (pr2six[*(bufin++)] <= 63);
-    nprbytes = (bufin - (const unsigned char *) bufcoded) - 1;
+    nprbytes = (bufin - (const unsigned char *) in) - 1;
 
     bufout = (unsigned char *) buf;
-    bufin = (const unsigned char *) bufcoded;
+    bufin = (const unsigned char *) in;
 
     while (nprbytes > 4) {
         *(bufout++) = (unsigned char) (pr2six[*bufin] << 2 | pr2six[bufin[1]] >> 4);
@@ -83,8 +83,8 @@ size_t um_base64url_decode(const char *bufcoded, char **plainout, size_t *lenout
         *(bufout++) = (unsigned char) (pr2six[bufin[2]] << 6 | pr2six[bufin[3]]);
 
     size_t len = (bufout - buf);
-    *lenout = len;
-    *plainout = buf;
+    *out_len = len;
+    *out = buf;
 
     UM_LOG(DEBG, "base64url_decode len is: %zu", len);
 

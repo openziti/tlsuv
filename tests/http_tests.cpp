@@ -26,7 +26,7 @@ limitations under the License.
 #include <tlsuv/tls_engine.h>
 #include <tlsuv/tlsuv.h>
 
-extern um_log_func test_log;
+extern tlsuv_log_func test_log;
 using namespace std;
 using namespace Catch::Matchers;
 
@@ -711,7 +711,7 @@ TEST_CASE("TLS verify with JWT", "[http]") {
     vtx.tls = tls;
     vtx.data = jwt;
     vtx.datalen = dot - jwt;
-    um_base64url_decode(dot + 1, &vtx.sig, &vtx.siglen);
+    tlsuv_base64url_decode(dot + 1, &vtx.sig, &vtx.siglen);
 
     tls->api->set_cert_verify(tls, cert_verify, &vtx);
     tlsuv_http_init(test.loop, &clt, "https://demo4.ziti.netfoundry.io");
