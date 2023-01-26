@@ -137,7 +137,7 @@ static void on_src_connect(um_src_t *src, int status, void *ctx) {
         }
         void *data = mbed->data;
         mbed->tls_engine = mbed->tls->api->new_engine(mbed->tls->ctx, mbed->host);
-        um_tls_init(&mbed->tls_link, mbed->tls_engine, on_tls_hs);
+        tlsuv_tls_link_init(&mbed->tls_link, mbed->tls_engine, on_tls_hs);
         uv_link_init((uv_link_t *) mbed, &mbed_methods);
         mbed->data = data;
 

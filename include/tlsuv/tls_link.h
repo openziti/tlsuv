@@ -29,6 +29,6 @@ struct tls_link_s {
 };
 
 
-int um_tls_init(tls_link_t *tls, tls_engine *engine, tls_handshake_cb cb);
+int tlsuv_tls_link_init(tls_link_t *tls, tls_engine *engine, tls_handshake_cb cb);
 
 #endif//TLSUV_TLS_LINK_H

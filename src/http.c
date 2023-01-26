@@ -206,7 +206,7 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
             clt->engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
         }
 
-        um_tls_init(&clt->tls_link, clt->engine, on_tls_handshake);
+        tlsuv_tls_link_init(&clt->tls_link, clt->engine, on_tls_handshake);
         clt->tls_link.data = clt;
 
         uv_link_chain(conn_src, (uv_link_t *) &clt->tls_link);

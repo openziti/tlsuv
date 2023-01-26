@@ -272,7 +272,7 @@ static void tls_close(uv_link_t *l, uv_link_t *source, uv_link_close_cb close_cb
     close_cb(source);
 }
 
-int um_tls_init(tls_link_t *tls, tls_engine *engine, tls_handshake_cb cb) {
+int tlsuv_tls_link_init(tls_link_t *tls, tls_engine *engine, tls_handshake_cb cb) {
     uv_link_init((uv_link_t *) tls, &tls_methods);
     tls->engine = engine;
     tls->hs_cb = cb;

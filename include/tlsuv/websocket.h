@@ -24,12 +24,12 @@ limitations under the License.
 extern "C" {
 #endif
 
-typedef struct um_websocket_s um_websocket_t;
+typedef struct tlsuv_websocket_s tlsuv_websocket_t;
 
 /**
  * @brief Websocket object.
  */
-struct um_websocket_s {
+struct tlsuv_websocket_s {
     UV_HANDLE_FIELDS
 
     uv_read_cb read_cb;
@@ -56,16 +56,16 @@ struct um_websocket_s {
  * @param ws websocket object
  * @return error code
  */
-int um_websocket_init(uv_loop_t *loop, um_websocket_t *ws);
+int tlsuv_websocket_init(uv_loop_t *loop, tlsuv_websocket_t *ws);
 
-int um_websocket_init_with_src (uv_loop_t *loop, um_websocket_t *ws, um_src_t *src);
+int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, um_src_t *src);
 
 /**
  * @brief set #tls_context on the client.
  * @param ws websocket
  * @param ctx TLS context to use for `wss://` connection
  */
-void um_websocket_set_tls(um_websocket_t *ws, tls_context *ctx);
+void tlsuv_websocket_set_tls(tlsuv_websocket_t *ws, tls_context *ctx);
 
 /**
  * @brief set additional headers for initial websocket request
@@ -73,7 +73,7 @@ void um_websocket_set_tls(um_websocket_t *ws, tls_context *ctx);
  * @param name header name
  * @param value header value
  */
-void um_websocket_set_header(um_websocket_t *ws, const char *name, const char *value);
+void tlsuv_websocket_set_header(tlsuv_websocket_t *ws, const char *name, const char *value);
 
 /**
  * @brief Connect websocket to a service with given URL
@@ -84,7 +84,7 @@ void um_websocket_set_header(um_websocket_t *ws, const char *name, const char *v
  * @param data_cb callback called when data is received from the server
  * @return error code
  */
-int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url, uv_connect_cb conn_cb, uv_read_cb data_cb);
+int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char *url, uv_connect_cb conn_cb, uv_read_cb data_cb);
 
 /**
  * @brief write data to websocket
@@ -94,7 +94,7 @@ int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url,
  * @param cb callback called after write operation is completed or failed
  * @return error code
  */
-int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_write_cb cb);
+int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf, uv_write_cb cb);
 
 /**
  * @brief close websocket
@@ -102,7 +102,7 @@ int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_wr
  * @param cb callback called after close operation completes
  * @return error code
  */
-int um_websocket_close(um_websocket_t *ws, uv_close_cb cb);
+int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb);
 
 #ifdef __cplusplus
 }
