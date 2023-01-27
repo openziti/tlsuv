@@ -1,22 +1,20 @@
-/*
-Copyright 2019-2020 NetFoundry, Inc.
+// Copyright (c) 2018-2023 NetFoundry Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
-#include <uv.h>
 #include <stdlib.h>
-#include <tlsuv/uv_mbed.h>
+#include <tlsuv/tlsuv.h>
+#include <uv.h>
 
 #define HOST "162.159.132.53"
 #define PORT 443
@@ -33,7 +31,7 @@ static void alloc(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
 
 static void on_close(uv_handle_t* h) {
     printf("mbed is closed\n");
-    uv_mbed_free((uv_mbed_t *) h);
+    tlsuv_stream_free((tlsuv_stream_t *) h);
 }
 
 void on_data(uv_stream_t *h, ssize_t nread, const uv_buf_t* buf) {
@@ -42,11 +40,11 @@ void on_data(uv_stream_t *h, ssize_t nread, const uv_buf_t* buf) {
         fflush(stdout);
     } else if (nread == UV_EOF) {
         printf("\n\n=====================\nconnection closed\n");
-        uv_mbed_close((uv_mbed_t *) h, on_close);
+        tlsuv_stream_close((tlsuv_stream_t *) h, on_close);
     }
     else if (nread < 0) {
         fprintf(stderr, "read error %ld: %s\n", nread, uv_strerror((int) nread));
-        uv_mbed_close((uv_mbed_t *) h, on_close);
+        tlsuv_stream_close((tlsuv_stream_t *) h, on_close);
     }
 
     free(buf->base);
@@ -55,7 +53,7 @@ void on_data(uv_stream_t *h, ssize_t nread, const uv_buf_t* buf) {
 void write_cb(uv_write_t *wr, int status) {
     if (status < 0) {
         fprintf(stderr, "write failed: %d: %s\n", status, uv_strerror(status));
-        uv_mbed_close((uv_mbed_t *) wr->handle, on_close);
+        tlsuv_stream_close((tlsuv_stream_t *) wr->handle, on_close);
     }
     printf("request sent %d\n", status);
     free(wr);
@@ -64,12 +62,12 @@ void write_cb(uv_write_t *wr, int status) {
 void on_connect(uv_connect_t *cr, int status) {
     if (status < 0) {
         fprintf(stderr, "connect failed: %d: %s\n", status, uv_strerror(status));
-        uv_mbed_close((uv_mbed_t *) cr->handle, on_close);
+        tlsuv_stream_close((tlsuv_stream_t *) cr->handle, on_close);
         return;
     }
 
-    uv_mbed_t *mbed = (uv_mbed_t *) cr->handle;
-    uv_mbed_read(mbed, alloc, on_data);
+    tlsuv_stream_t *mbed = (tlsuv_stream_t *) cr->handle;
+    tlsuv_stream_read(mbed, alloc, on_data);
 
     uv_write_t *wr = malloc(sizeof(uv_write_t));
     char req[] = "GET " PATH " HTTP/1.1\r\n"
@@ -77,7 +75,7 @@ void on_connect(uv_connect_t *cr, int status) {
                  "\r\n";
 
     uv_buf_t buf = uv_buf_init(req, sizeof(req));
-    uv_mbed_write(wr, mbed, &buf, write_cb);
+    tlsuv_stream_write(wr, mbed, &buf, write_cb);
 }
 
 int main() {
@@ -87,11 +85,11 @@ int main() {
 #endif
     uv_loop_t* l = uv_default_loop();
 
-    uv_mbed_t mbed;
-    uv_mbed_init(l, &mbed, NULL);
+    tlsuv_stream_t mbed;
+    tlsuv_stream_init(l, &mbed, NULL);
 
     uv_connect_t* req = calloc(1, sizeof(uv_connect_t));
-    uv_mbed_connect(req, &mbed, HOST, PORT, on_connect);
+    tlsuv_stream_connect(req, &mbed, HOST, PORT, on_connect);
 
     uv_run(l, UV_RUN_DEFAULT);
     free(req);

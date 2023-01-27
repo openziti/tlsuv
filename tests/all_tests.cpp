@@ -16,9 +16,9 @@ limitations under the License.
 
 #define CATCH_CONFIG_RUNNER
 
-#include <tlsuv/uv_mbed.h>
-#include "um_debug.h"
 #include "catch.hpp"
+#include "um_debug.h"
+#include <tlsuv/tlsuv.h>
 
 
 static uv_timeval64_t start;
@@ -37,7 +37,7 @@ static void test_log_f(int lvl, const char *file, unsigned int line, const char*
             err_labels[lvl], file, line, msg);
 }
 
-um_log_func test_log = test_log_f;
+tlsuv_log_func test_log = test_log_f;
 
 int main( int argc, char* argv[] ) {
     uv_gettimeofday(&start);
@@ -45,7 +45,7 @@ int main( int argc, char* argv[] ) {
     if (debug) {
         // enable logging during tests
         long level = strtol(debug, nullptr, 10);
-        uv_mbed_set_debug((int)level, test_log);
+        tlsuv_set_debug((int) level, test_log);
 
     }
     int result = Catch::Session().run( argc, argv );

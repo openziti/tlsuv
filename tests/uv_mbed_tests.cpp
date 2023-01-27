@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <uv.h>
-#include <tlsuv/uv_mbed.h>
 #include <cstring>
+#include <tlsuv/tlsuv.h>
+#include <uv.h>
 
 #include "fixtures.h"
 #include "catch.hpp"
@@ -24,9 +24,9 @@ limitations under the License.
 TEST_CASE("uv-mbed connect fail", "[uv-mbed]") {
     UvLoopTest test;
 
-    uv_mbed_t mbed;
+    tlsuv_stream_t mbed;
     tls_context *tls = default_tls_context(nullptr, 0);
-    uv_mbed_init(test.loop, &mbed, tls);
+    tlsuv_stream_init(test.loop, &mbed, tls);
 
     uv_connect_t cr;
     int conn_cb_called = 0;
@@ -41,26 +41,26 @@ TEST_CASE("uv-mbed connect fail", "[uv-mbed]") {
     int rc = 0;
 
     WHEN("connect fail") {
-        rc = uv_mbed_connect(&cr, &mbed, "127.0.0.1", 62443, cb);
+        rc = tlsuv_stream_connect(&cr, &mbed, "127.0.0.1", 62443, cb);
         test.run();
         CHECK(((rc == 0 && conn_cb_called == 1) || (rc != 0 && conn_cb_called == 0)));
     }
     WHEN("resolve fail") {
-        rc = uv_mbed_connect(&cr, &mbed, "foo.bar.baz", 443, cb);
+        rc = tlsuv_stream_connect(&cr, &mbed, "foo.bar.baz", 443, cb);
         test.run();
         CHECK(((rc == 0 && conn_cb_called == 1) || (rc != 0 && conn_cb_called == 0)));
     }
 
-    uv_mbed_free(&mbed);
+    tlsuv_stream_free(&mbed);
     tls->api->free_ctx(tls);
 }
 
 TEST_CASE("cancel connect", "[uv-mbed]") {
     UvLoopTest test;
 
-    uv_mbed_t mbed;
+    tlsuv_stream_t mbed;
     tls_context *tls = default_tls_context(nullptr, 0);
-    uv_mbed_init(test.loop, &mbed, tls);
+    tlsuv_stream_init(test.loop, &mbed, tls);
 
     struct test_ctx {
         int connect_result;
@@ -74,8 +74,8 @@ TEST_CASE("cancel connect", "[uv-mbed]") {
 
     uv_connect_t cr;
     cr.data = &test_ctx;
-    int rc = uv_mbed_connect(&cr, &mbed, "1.1.1.1", 5555, [](uv_connect_t *r, int status){
-        auto ctx = (struct test_ctx*)r->data;
+    int rc = tlsuv_stream_connect(&cr, &mbed, "1.1.1.1", 5555, [](uv_connect_t *r, int status) {
+        auto ctx = (struct test_ctx *) r->data;
         ctx->connect_result = status;
     });
 
@@ -83,13 +83,13 @@ TEST_CASE("cancel connect", "[uv-mbed]") {
     uv_timer_init(test.loop, &t);
     t.data = &mbed;
     auto timer_cb = [](uv_timer_t* t){
-        auto *c = static_cast<uv_mbed_t *>(t->data);
+        auto *c = static_cast<tlsuv_stream_t *>(t->data);
         uv_close_cb closeCb = [](uv_handle_t *h) {
-            auto mbed = (uv_mbed_t*) h;
+            auto mbed = (tlsuv_stream_t *) h;
             auto ctx = (struct test_ctx*)mbed->data;
             ctx->close_called = true;
         };
-        uv_mbed_close(c, closeCb);
+        tlsuv_stream_close(c, closeCb);
         uv_close(reinterpret_cast<uv_handle_t *>(t), nullptr);
     };
     uv_timer_start(&t, timer_cb, 1000, 0);
@@ -100,7 +100,7 @@ TEST_CASE("cancel connect", "[uv-mbed]") {
     CHECK(test_ctx.close_called);
     CHECK(test_ctx.connect_result == UV_ECANCELED);
 
-    uv_mbed_free(&mbed);
+    tlsuv_stream_free(&mbed);
     tls->api->free_ctx(tls);
 }
 
@@ -112,9 +112,9 @@ static void test_alloc(uv_handle_t *s, size_t req, uv_buf_t* b) {
 TEST_CASE("read/write","[uv-mbed]") {
     UvLoopTest test;
 
-    uv_mbed_t mbed;
+    tlsuv_stream_t mbed;
     tls_context *tls = default_tls_context(nullptr, 0);
-    uv_mbed_init(test.loop, &mbed, tls);
+    tlsuv_stream_init(test.loop, &mbed, tls);
 
     struct test_ctx {
         int connect_result;
@@ -128,19 +128,19 @@ TEST_CASE("read/write","[uv-mbed]") {
 
     uv_connect_t cr;
     cr.data = &test_ctx;
-    int rc = uv_mbed_connect(&cr, &mbed, "1.1.1.1", 443, [](uv_connect_t *r, int status){
+    int rc = tlsuv_stream_connect(&cr, &mbed, "1.1.1.1", 443, [](uv_connect_t *r, int status) {
         REQUIRE(status == 0);
-        auto c = (uv_mbed_t*)r->handle;
+        auto c = (tlsuv_stream_t *) r->handle;
 
-        uv_mbed_read(c, test_alloc, [](uv_stream_t *s, ssize_t status, const uv_buf_t*b){
-            auto c = (uv_mbed_t*)s;
-            auto ctx = (struct test_ctx*)c->data;
+        tlsuv_stream_read(c, test_alloc, [](uv_stream_t *s, ssize_t status, const uv_buf_t *b) {
+            auto c = (tlsuv_stream_t *) s;
+            auto ctx = (struct test_ctx *) c->data;
             if (status == UV_EOF) {
-                uv_mbed_close(c, nullptr);
-            } else  {
+                tlsuv_stream_close(c, nullptr);
+            } else {
                 REQUIRE(status > 0);
                 REQUIRE_THAT(b->base, Catch::StartsWith("HTTP/1.1 200 OK"));
-                fprintf(stderr, "%.*s\n", (int)status, b->base);
+                fprintf(stderr, "%.*s\n", (int) status, b->base);
             }
             free(b->base);
         });
@@ -155,7 +155,7 @@ accept: application/dns-json
 
 )";
         uv_buf_t buf = uv_buf_init((char *) msg, strlen(msg));
-        uv_mbed_write(wr, c, &buf, [](uv_write_t *wr, int rc){
+        tlsuv_stream_write(wr, c, &buf, [](uv_write_t *wr, int rc) {
             REQUIRE(rc == 0);
             free(wr);
         });
@@ -165,7 +165,7 @@ accept: application/dns-json
 
     CHECK(rc == 0);
 
-    uv_mbed_free(&mbed);
+    tlsuv_stream_free(&mbed);
 
     tls->api->free_ctx(tls);
 }

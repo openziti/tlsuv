@@ -1,20 +1,18 @@
-/*
-Copyright 2019-2020 NetFoundry, Inc.
+// Copyright (c) NetFoundry Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
-#include "tlsuv/um_http.h"
+#include "tlsuv/http.h"
 #include "tlsuv/tcp_src.h"
 
 #include <stdlib.h>
@@ -45,11 +43,11 @@ static int http_header_value_cb(http_parser *parser, const char *v, size_t len);
 
 static int http_headers_complete_cb(http_parser *p);
 
-static void fail_active_request(um_http_t *c, int code, const char *msg);
+static void fail_active_request(tlsuv_http_t *c, int code, const char *msg);
 
-static void close_connection(um_http_t *c);
+static void close_connection(tlsuv_http_t *c);
 
-static void free_http(um_http_t *clt);
+static void free_http(tlsuv_http_t *clt);
 
 enum status {
     Disconnected,
@@ -67,7 +65,7 @@ static const uv_link_methods_t http_methods = {
 };
 
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
-    um_http_t *c = link->data;
+    tlsuv_http_t *c = link->data;
 
     if (nread < 0) {
         if (c->active) {
@@ -91,11 +89,11 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
         }
 
 		if (c->active->state == completed) {
-            um_http_req_t *hr = c->active;
+            tlsuv_http_req_t *hr = c->active;
             c->active = NULL;
 
             bool keep_alive = true;
-            const char *keep_alive_hdr = um_http_resp_header(&hr->resp, "Connection");
+            const char *keep_alive_hdr = tlsuv_http_resp_header(&hr->resp, "Connection");
             if (strcmp(hr->resp.http_version, "1.1") == 0) {
                 if (keep_alive_hdr && strcasecmp("close", keep_alive_hdr) == 0)
                     keep_alive = false;
@@ -125,7 +123,7 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     }
 }
 
-static void clear_req_body(um_http_req_t *req, int code) {
+static void clear_req_body(tlsuv_http_req_t *req, int code) {
     struct body_chunk_s *chunk = req->req_body, *next;
     while(chunk) {
         next = chunk->next;
@@ -139,7 +137,7 @@ static void clear_req_body(um_http_req_t *req, int code) {
     req->req_body = NULL;
 }
 
-static void fail_active_request(um_http_t *c, int code, const char *msg) {
+static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
     if (c->active != NULL && c->active->resp_cb != NULL) {
         c->active->resp.code = code;
         c->active->resp.status = strdup(msg);
@@ -150,7 +148,7 @@ static void fail_active_request(um_http_t *c, int code, const char *msg) {
         c->active = NULL;
     }
 
-    um_http_req_t *r;
+    tlsuv_http_req_t *r;
     while (!STAILQ_EMPTY(&c->requests)) {
         r = STAILQ_FIRST(&c->requests);
         STAILQ_REMOVE_HEAD(&c->requests, _next);
@@ -167,7 +165,7 @@ static void fail_active_request(um_http_t *c, int code, const char *msg) {
 }
 
 static void on_tls_handshake(tls_link_t *tls, int status) {
-    um_http_t *clt = tls->data;
+    tlsuv_http_t *clt = tls->data;
 
     switch (status) {
         case TLS_HS_COMPLETE:
@@ -187,7 +185,7 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
     }
 }
 
-static void make_links(um_http_t *clt, uv_link_t *conn_src) {
+static void make_links(tlsuv_http_t *clt, uv_link_t *conn_src) {
     uv_link_init(&clt->http_link, &http_methods);
     clt->http_link.data = clt;
 
@@ -206,7 +204,7 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
             clt->engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
         }
 
-        um_tls_init(&clt->tls_link, clt->engine, on_tls_handshake);
+        tlsuv_tls_link_init(&clt->tls_link, clt->engine, on_tls_handshake);
         clt->tls_link.data = clt;
 
         uv_link_chain(conn_src, (uv_link_t *) &clt->tls_link);
@@ -226,16 +224,16 @@ static void make_links(um_http_t *clt, uv_link_t *conn_src) {
 }
 
 static void link_close_cb(uv_link_t *l) {
-    um_http_t *clt = l->data;
+    tlsuv_http_t *clt = l->data;
     if (clt) {
         clt->src->release(clt->src);
         uv_async_send(&clt->proc);
     }
 }
 
-static void src_connect_cb(um_src_t *src, int status, void *ctx) {
+static void src_connect_cb(tlsuv_src_t *src, int status, void *ctx) {
     UM_LOG(VERB, "src connected status = %d", status);
-    um_http_t *clt = ctx;
+    tlsuv_http_t *clt = ctx;
     uv_timer_stop(clt->conn_timer);
     if (status == 0) {
         switch (clt->connected) {
@@ -261,7 +259,7 @@ static void src_connect_cb(um_src_t *src, int status, void *ctx) {
 }
 
 static void src_connect_timeout(uv_timer_t *t) {
-    um_http_t *clt = t->data;
+    tlsuv_http_t *clt = t->data;
 
     src_connect_cb(clt->src, UV_ETIMEDOUT, clt);
     clt->src->cancel(clt->src);
@@ -287,8 +285,8 @@ static void chunk_hdr_wcb(uv_link_t *l, int status, void *arg) {
     }
 }
 
-static void send_body(um_http_req_t *req) {
-    um_http_t *clt = req->client;
+static void send_body(tlsuv_http_req_t *req) {
+    tlsuv_http_t *clt = req->client;
     if (clt->active != req) {
         UM_LOG(ERR, "attempt to send body for inactive request");
     }
@@ -336,7 +334,7 @@ static void send_body(um_http_req_t *req) {
     }
 }
 
-static void close_connection(um_http_t *c) {
+static void close_connection(tlsuv_http_t *c) {
     uv_timer_stop(c->conn_timer);
     switch (c->connected) {
         case Handshaking:
@@ -351,12 +349,12 @@ static void close_connection(um_http_t *c) {
 
 static void idle_timeout(uv_timer_t *t) {
     UM_LOG(VERB, "idle timeout triggered");
-    um_http_t *clt = t->data;
+    tlsuv_http_t *clt = t->data;
     close_connection(clt);
 }
 
 static void process_requests(uv_async_t *ar) {
-    um_http_t *c = ar->data;
+    tlsuv_http_t *c = ar->data;
 
     if (c->active == NULL && !STAILQ_EMPTY(&c->requests)) {
         c->active = STAILQ_FIRST(&c->requests);
@@ -404,14 +402,14 @@ static void process_requests(uv_async_t *ar) {
 }
 
 static void on_clt_close(uv_handle_t *h) {
-    um_http_t *clt = h->data;
+    tlsuv_http_t *clt = h->data;
     free_http(clt);
     if (clt->close_cb) {
         clt->close_cb(clt);
     }
 }
 
-int um_http_close(um_http_t *clt, um_http_close_cb close_cb) {
+int tlsuv_http_close(tlsuv_http_t *clt, tlsuv_http_close_cb close_cb) {
     uv_close((uv_handle_t *) &clt->proc, on_clt_close);
 
     fail_active_request(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
@@ -428,7 +426,7 @@ int um_http_close(um_http_t *clt, um_http_close_cb close_cb) {
     return 0;
 }
 
-static void http_set_prefix(um_http_t *clt, const char *pfx, size_t pfx_len) {
+static void http_set_prefix(tlsuv_http_t *clt, const char *pfx, size_t pfx_len) {
     if (clt->prefix) {
         free(clt->prefix);
         clt->prefix = NULL;
@@ -440,7 +438,7 @@ static void http_set_prefix(um_http_t *clt, const char *pfx, size_t pfx_len) {
     }
 }
 
-int um_http_set_url(um_http_t *clt, const char *url) {
+int tlsuv_http_set_url(tlsuv_http_t *clt, const char *url) {
     struct http_parser_url url_parse = {0};
     if (http_parser_parse_url(url, strlen(url), false, &url_parse)) {
         UM_LOG(ERR, "invalid URL[%s]", url);
@@ -463,7 +461,7 @@ int um_http_set_url(um_http_t *clt, const char *url) {
         return UV_EINVAL;
     }
 
-    um_http_header(clt, "Host", clt->host);
+    tlsuv_http_header(clt, "Host", clt->host);
 
     uint16_t port = -1;
     if (url_parse.field_set & (U1 << (unsigned int) UF_SCHEMA)) {
@@ -496,7 +494,7 @@ int um_http_set_url(um_http_t *clt, const char *url) {
     return 0;
 }
 
-int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_t *src) {
+int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, tlsuv_src_t *src) {
     STAILQ_INIT(&clt->requests);
     LIST_INIT(&clt->headers);
 
@@ -511,7 +509,7 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
     clt->host = NULL;
     clt->prefix = NULL;
 
-    int rc = um_http_set_url(clt, url);
+    int rc = tlsuv_http_set_url(clt, url);
     if (rc != 0) {
         return rc;
     }
@@ -523,9 +521,9 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
     uv_unref((uv_handle_t *) clt->conn_timer);
     clt->conn_timer->data = clt;
 
-    um_http_header(clt, "Connection", "keep-alive");
+    tlsuv_http_header(clt, "Connection", "keep-alive");
     if (um_available_encoding() != NULL) {
-        um_http_header(clt, "Accept-Encoding", um_available_encoding());
+        tlsuv_http_header(clt, "Accept-Encoding", um_available_encoding());
     }
 
     uv_async_init(l, &clt->proc, process_requests);
@@ -535,63 +533,63 @@ int um_http_init_with_src(uv_loop_t *l, um_http_t *clt, const char *url, um_src_
     return 0;
 }
 
-void um_http_set_path_prefix(um_http_t *clt, const char *prefix) {
+void tlsuv_http_set_path_prefix(tlsuv_http_t *clt, const char *prefix) {
     http_set_prefix(clt, prefix, strlen(prefix));
 }
 
-int um_http_init(uv_loop_t *l, um_http_t *clt, const char *url) {
+int tlsuv_http_init(uv_loop_t *l, tlsuv_http_t *clt, const char *url) {
     tcp_src_t *src = calloc(1, sizeof(tcp_src_t));
     tcp_src_init(l, src);
     tcp_src_nodelay(src, 1);
     tcp_src_keepalive(src, 1, 3);
-    int rc = um_http_init_with_src(l, clt, url, (um_src_t *)src);
+    int rc = tlsuv_http_init_with_src(l, clt, url, (tlsuv_src_t *) src);
     clt->own_src = true;
     return rc;
 }
 
-int um_http_connect_timeout(um_http_t *clt, long millis) {
+int tlsuv_http_connect_timeout(tlsuv_http_t *clt, long millis) {
     clt->connect_timeout = millis;
     return 0;
 }
 
-int um_http_idle_keepalive(um_http_t *clt, long millis) {
+int tlsuv_http_idle_keepalive(tlsuv_http_t *clt, long millis) {
     clt->idle_time = millis;
     return 0;
 }
 
-void um_http_set_ssl(um_http_t *clt, tls_context *tls) {
+void tlsuv_http_set_ssl(tlsuv_http_t *clt, tls_context *tls) {
     clt->tls = tls;
 }
 
-um_http_req_t *um_http_req(um_http_t *c, const char *method, const char *path, um_http_resp_cb resp_cb, void *ctx) {
-    um_http_req_t *r = calloc(1, sizeof(um_http_req_t));
+tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const char *path, tlsuv_http_resp_cb resp_cb, void *ctx) {
+    tlsuv_http_req_t *r = calloc(1, sizeof(tlsuv_http_req_t));
     http_req_init(r, method, path);
 
-    r->client = c;
+    r->client = clt;
     r->resp_cb = resp_cb;
     r->data = ctx;
 
     // copy client headers
-    um_http_hdr *h;
-    LIST_FOREACH(h, &c->headers, _next) {
+    tlsuv_http_hdr *h;
+    LIST_FOREACH(h, &clt->headers, _next) {
         set_http_header(&r->req_headers, h->name, h->value);
     }
 
-    STAILQ_INSERT_TAIL(&c->requests, r, _next);
-    uv_timer_stop(c->conn_timer);
-    uv_ref((uv_handle_t *) &c->proc);
-    uv_async_send(&c->proc);
+    STAILQ_INSERT_TAIL(&clt->requests, r, _next);
+    uv_timer_stop(clt->conn_timer);
+    uv_ref((uv_handle_t *) &clt->proc);
+    uv_async_send(&clt->proc);
 
     return r;
 }
 
-int um_http_cancel_all(um_http_t *clt) {
+int tlsuv_http_cancel_all(tlsuv_http_t *clt) {
     fail_active_request(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
     close_connection(clt);
 }
 
-int um_http_req_cancel(um_http_t *clt, um_http_req_t *req) {
-    um_http_req_t *r = NULL;
+int tlsuv_http_req_cancel(tlsuv_http_t *clt, tlsuv_http_req_t *req) {
+    tlsuv_http_req_t *r = NULL;
     STAILQ_FOREACH(r, &clt->requests, _next) {
         if (r == req) break;
     }
@@ -603,7 +601,7 @@ int um_http_req_cancel(um_http_t *clt, um_http_req_t *req) {
             // and need to close connection
             close_connection(clt);
         } else {
-            STAILQ_REMOVE(&clt->requests, req, um_http_req_s, _next);
+            STAILQ_REMOVE(&clt->requests, req, tlsuv_http_req_s, _next);
         }
 
         req->resp.code = UV_ECANCELED;
@@ -625,11 +623,11 @@ int um_http_req_cancel(um_http_t *clt, um_http_req_t *req) {
 }
 
 
-void um_http_header(um_http_t *clt, const char *name, const char *value) {
+void tlsuv_http_header(tlsuv_http_t *clt, const char *name, const char *value) {
     set_http_header(&clt->headers, name, value);
 }
 
-int um_http_req_header(um_http_req_t *req, const char *name, const char *value) {
+int tlsuv_http_req_header(tlsuv_http_req_t *req, const char *name, const char *value) {
     if (strcasecmp(name, "transfer-encoding") == 0 &&
         strcmp(value, "chunked") == 0) {
 
@@ -654,7 +652,7 @@ int um_http_req_header(um_http_req_t *req, const char *name, const char *value) 
     return 0;
 }
 
-void um_http_req_end(um_http_req_t *req) {
+void tlsuv_http_req_end(tlsuv_http_req_t *req) {
     if (req->req_chunked) {
         struct body_chunk_s *chunk = calloc(1, sizeof(struct body_chunk_s));
 
@@ -678,7 +676,7 @@ void um_http_req_end(um_http_req_t *req) {
     }
 }
 
-int um_http_req_data(um_http_req_t *req, const char *body, size_t body_len, um_http_body_cb cb) {
+int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen, tlsuv_http_body_cb cb) {
     if (strcmp(req->method, "POST") != 0 && strcmp(req->method, "PUT") != 0) {
         return UV_EINVAL;
     }
@@ -689,7 +687,7 @@ int um_http_req_data(um_http_req_t *req, const char *body, size_t body_len, um_h
 
     struct body_chunk_s *chunk = calloc(1, sizeof(struct body_chunk_s));
     chunk->chunk = body;
-    chunk->len = body_len;
+    chunk->len = bodylen;
     chunk->cb = cb;
     chunk->next = NULL;
     chunk->req = req;
@@ -710,7 +708,7 @@ int um_http_req_data(um_http_req_t *req, const char *body, size_t body_len, um_h
     return 0;
 }
 
-static void free_http(um_http_t *clt) {
+static void free_http(tlsuv_http_t *clt) {
     free_hdr_list(&clt->headers);
     free(clt->host);
     if (clt->prefix) free(clt->prefix);
@@ -722,7 +720,7 @@ static void free_http(um_http_t *clt) {
     }
 
     while (!STAILQ_EMPTY(&clt->requests)) {
-        um_http_req_t *req = STAILQ_FIRST(&clt->requests);
+        tlsuv_http_req_t *req = STAILQ_FIRST(&clt->requests);
         STAILQ_REMOVE_HEAD(&clt->requests, _next);
         http_req_free(req);
         free(req);

@@ -1,27 +1,25 @@
-/*
-Copyright 2019-2020 NetFoundry, Inc.
+// Copyright (c) NetFoundry Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
-#include "tlsuv/um_http.h"
 #include "tlsuv/tcp_src.h"
+#include "tlsuv/http.h"
 #include "um_debug.h"
 
 // connect and release method for um_http custom source link
-static int tcp_src_connect(um_src_t *sl, const char *host, const char *service, um_src_connect_cb cb, void *ctx);
-static void tcp_src_release(um_src_t *sl);
-static void tcp_src_cancel(um_src_t *sl);
+static int tcp_src_connect(tlsuv_src_t *sl, const char *host, const char *service, tlsuv_src_connect_cb cb, void *ctx);
+static void tcp_src_release(tlsuv_src_t *sl);
+static void tcp_src_cancel(tlsuv_src_t *sl);
 
 static void free_handle(uv_handle_t *h);
 
@@ -89,7 +87,7 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
         uv_close((uv_handle_t *) req->handle, free_handle);
     }
 
-    sl->connect_cb((um_src_t *)sl, status, sl->connect_ctx);
+    sl->connect_cb((tlsuv_src_t *)sl, status, sl->connect_ctx);
     free(req);
 }
 
@@ -112,7 +110,7 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
 
         if (status != 0) {
             UM_LOG(ERR, "connect failed: %d(%s)", status, uv_strerror(status));
-            sl->connect_cb((um_src_t *) sl, status, sl->connect_ctx);
+            sl->connect_cb((tlsuv_src_t *) sl, status, sl->connect_ctx);
             if (sl->conn_req) {
                 free(sl->conn_req);
                 sl->conn_req = NULL;
@@ -141,7 +139,7 @@ static void link_close_cb(uv_link_t *l) {
     }
 }
 
-static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, um_src_connect_cb cb, void *ctx) {
+static int tcp_src_connect(tlsuv_src_t *sl, const char* host, const char *service, tlsuv_src_connect_cb cb, void *ctx) {
     tcp_src_t *tcp = (tcp_src_t *) sl;
 
     sl->connect_cb = cb;
@@ -168,7 +166,7 @@ static int tcp_src_connect(um_src_t *sl, const char* host, const char *service, 
     return rc;
 }
 
-static void tcp_src_cancel(um_src_t *sl) {
+static void tcp_src_cancel(tlsuv_src_t *sl) {
     tcp_src_t *tl = (tcp_src_t*)sl;
     uv_link_source_t *ts = (uv_link_source_t *) tl->link;
 
@@ -188,7 +186,7 @@ static void tcp_src_cancel(um_src_t *sl) {
     }
 }
 
-static void tcp_src_release(um_src_t *sl) {
+static void tcp_src_release(tlsuv_src_t *sl) {
     tcp_src_t *tcp = (tcp_src_t *) sl;
 
     free(tcp->conn);

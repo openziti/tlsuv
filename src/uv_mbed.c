@@ -1,24 +1,22 @@
-/*
-Copyright 2019-2020 NetFoundry, Inc.
+// Copyright (c) NetFoundry Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
+#include "tlsuv/tlsuv.h"
+#include "um_debug.h"
 #include <stdlib.h>
 #include <string.h>
-#include "tlsuv/uv_mbed.h"
 #include <uv.h>
-#include "um_debug.h"
 
 #define to_str1(s) #s
 #define to_str(s) to_str1(s)
@@ -58,11 +56,11 @@ tls_context *get_default_tls() {
     return DEFAULT_TLS;
 }
 
-const char* uv_mbed_version() {
+const char* tlsuv_version() {
     return UM_VERS;
 }
 
-int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls) {
+int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *mbed, tls_context *tls) {
     mbed->loop = l;
 
     mbed->socket = calloc(1, sizeof(*mbed->socket));
@@ -79,15 +77,15 @@ int uv_mbed_init(uv_loop_t *l, uv_mbed_t *mbed, tls_context *tls) {
 }
 
 static void on_mbed_close(uv_link_t *l) {
-    uv_mbed_t *mbed = (uv_mbed_t *) l;
+    tlsuv_stream_t *mbed = (tlsuv_stream_t *) l;
     if (mbed->conn_req) {
         uv_connect_t *cr = mbed->conn_req;
         mbed->conn_req = NULL;
         cr->cb(cr, UV_ECANCELED);
     }
     if (mbed->socket) {
-        mbed->socket->cancel((um_src_t *) mbed->socket);
-        mbed->socket->release((um_src_t *) mbed->socket);
+        mbed->socket->cancel((tlsuv_src_t *) mbed->socket);
+        mbed->socket->release((tlsuv_src_t *) mbed->socket);
         tcp_src_free(mbed->socket);
         free(mbed->socket);
         mbed->socket = NULL;
@@ -95,22 +93,22 @@ static void on_mbed_close(uv_link_t *l) {
     if(mbed->close_cb) mbed->close_cb((uv_handle_t *) mbed);
 }
 
-int uv_mbed_close(uv_mbed_t *mbed, uv_close_cb close_cb) {
-    mbed->close_cb = close_cb;
-    uv_link_propagate_close((uv_link_t *) mbed, (uv_link_t *) mbed, on_mbed_close);
+int tlsuv_stream_close(tlsuv_stream_t *session, uv_close_cb close_cb) {
+    session->close_cb = close_cb;
+    uv_link_propagate_close((uv_link_t *) session, (uv_link_t *) session, on_mbed_close);
     return 0;
 }
 
-int uv_mbed_keepalive(uv_mbed_t *mbed, int keepalive, unsigned int delay) {
+int tlsuv_stream_keepalive(tlsuv_stream_t *mbed, int keepalive, unsigned int delay) {
     return tcp_src_keepalive(mbed->socket, keepalive, delay);
 }
 
-int uv_mbed_nodelay(uv_mbed_t *mbed, int nodelay) {
+int tlsuv_stream_nodelay(tlsuv_stream_t *mbed, int nodelay) {
     return tcp_src_nodelay(mbed->socket, nodelay);
 }
 
 static void on_tls_hs(tls_link_t *tls_link, int status) {
-    uv_mbed_t *mbed = tls_link->data;
+    tlsuv_stream_t *mbed = tls_link->data;
 
     uv_connect_t *req = mbed->conn_req;
     if (req == NULL) {
@@ -128,8 +126,8 @@ static void on_tls_hs(tls_link_t *tls_link, int status) {
     mbed->conn_req = NULL;
 }
 
-static void on_src_connect(um_src_t *src, int status, void *ctx) {
-    uv_mbed_t *mbed = ctx;
+static void on_src_connect(tlsuv_src_t *src, int status, void *ctx) {
+    tlsuv_stream_t *mbed = ctx;
 
     if (status == 0) {
         if (mbed->tls_engine != NULL) {
@@ -137,7 +135,7 @@ static void on_src_connect(um_src_t *src, int status, void *ctx) {
         }
         void *data = mbed->data;
         mbed->tls_engine = mbed->tls->api->new_engine(mbed->tls->ctx, mbed->host);
-        um_tls_init(&mbed->tls_link, mbed->tls_engine, on_tls_hs);
+        tlsuv_tls_link_init(&mbed->tls_link, mbed->tls_engine, on_tls_hs);
         uv_link_init((uv_link_t *) mbed, &mbed_methods);
         mbed->data = data;
 
@@ -152,7 +150,7 @@ static void on_src_connect(um_src_t *src, int status, void *ctx) {
     }
 }
 
-int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int port, uv_connect_cb cb) {
+int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *mbed, const char *host, int port, uv_connect_cb cb) {
     if (!req) {
         return UV_EINVAL;
     }
@@ -174,12 +172,12 @@ int uv_mbed_connect(uv_connect_t *req, uv_mbed_t *mbed, const char *host, int po
         tcp_src_init(mbed->loop, mbed->socket);
     }
 
-    return mbed->socket->connect((um_src_t *) mbed->socket, host, portstr, on_src_connect, mbed);
+    return mbed->socket->connect((tlsuv_src_t *) mbed->socket, host, portstr, on_src_connect, mbed);
 }
 
-int uv_mbed_read(uv_mbed_t *mbed, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
-    mbed->alloc_cb = (uv_link_alloc_cb) alloc_cb;
-    mbed->read_cb = (uv_link_read_cb) read_cb;
+int tlsuv_stream_read(tlsuv_stream_t *client, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
+    client->alloc_cb = (uv_link_alloc_cb) alloc_cb;
+    client->read_cb = (uv_link_read_cb) read_cb;
     return 0;
 }
 
@@ -188,25 +186,25 @@ static void on_mbed_link_write(uv_link_t* l, int status, void *ctx) {
     wr->cb(wr, status);
 }
 
-int uv_mbed_write(uv_write_t *req, uv_mbed_t *mbed, uv_buf_t *buf, uv_write_cb cb) {
+int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *mbed, uv_buf_t *buf, uv_write_cb cb) {
     req->handle = (uv_stream_t *) mbed;
     req->cb = cb;
     return uv_link_write((uv_link_t *) mbed, buf, 1, NULL, on_mbed_link_write, req);
 }
 
-int uv_mbed_free(uv_mbed_t *mbed) {
-    if (mbed->host) {
-        free(mbed->host);
-        mbed->host = NULL;
+int tlsuv_stream_free(tlsuv_stream_t *session) {
+    if (session->host) {
+        free(session->host);
+        session->host = NULL;
     }
-    if (mbed->tls_engine) {
-        mbed->tls->api->free_engine(mbed->tls_engine);
-        mbed->tls_engine = NULL;
+    if (session->tls_engine) {
+        session->tls->api->free_engine(session->tls_engine);
+        session->tls_engine = NULL;
     }
-    if (mbed->socket) {
-        tcp_src_free(mbed->socket);
-        free(mbed->socket);
-        mbed->socket = NULL;
+    if (session->socket) {
+        tcp_src_free(session->socket);
+        free(session->socket);
+        session->socket = NULL;
     }
     return 0;
 }

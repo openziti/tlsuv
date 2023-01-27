@@ -1,27 +1,25 @@
-/*
-Copyright 2020 NetFoundry, Inc.
+// Copyright (c) NetFoundry Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
-#include "tlsuv/um_websocket.h"
-#include "um_debug.h"
+#include "tlsuv/websocket.h"
 #include "http_req.h"
 #include "portable_endian.h"
+#include "um_debug.h"
 #include "win32_compat.h"
 
 #include <string.h>
-#include <tlsuv/um_http.h>
+#include <tlsuv/http.h>
 static const char *DEFAULT_PATH = "/";
 
 #define WS_FIN 0x80U
@@ -46,12 +44,12 @@ typedef struct ws_write_s {
 
 extern tls_context *get_default_tls();
 
-static void src_connect_cb(um_src_t *sl, int status, void *connect_ctx);
+static void src_connect_cb(tlsuv_src_t *sl, int status, void *connect_ctx);
 static void ws_read_cb(uv_link_t* link,
                                 ssize_t nread,
                                 const uv_buf_t* buf);
 static void ws_write_cb(uv_link_t *l, int nwrote, void *data);
-static void send_pong(um_websocket_t *ws, const char* ping_data, int len);
+static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len);
 static void tls_hs_cb(tls_link_t *tls, int status);
 
 static int ws_read_start(uv_link_t *l);
@@ -65,11 +63,11 @@ static const uv_link_methods_t ws_methods = {
 };
 
 
-int um_websocket_init_with_src (uv_loop_t *loop, um_websocket_t *ws, um_src_t *src) {
+int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_src_t *src) {
     ws->loop = loop;
     ws->type = UV_IDLE;
     ws->src = src;
-    ws->req = calloc(1, sizeof(um_http_req_t));
+    ws->req = calloc(1, sizeof(tlsuv_http_req_t));
 
     time_t t;
     srand(time(&t));
@@ -99,17 +97,17 @@ int um_websocket_init_with_src (uv_loop_t *loop, um_websocket_t *ws, um_src_t *s
     return 0;
 }
 
-int um_websocket_init(uv_loop_t *loop, um_websocket_t *ws) {
-    memset(ws, 0, sizeof(um_websocket_t));
+int tlsuv_websocket_init(uv_loop_t *loop, tlsuv_websocket_t *ws) {
+    memset(ws, 0, sizeof(tlsuv_websocket_t));
     tcp_src_init(loop, &ws->default_src);
-    return um_websocket_init_with_src(loop, ws, (um_src_t *) &ws->default_src);
+    return tlsuv_websocket_init_with_src(loop, ws, (tlsuv_src_t *) &ws->default_src);
 }
 
-void um_websocket_set_header(um_websocket_t *ws, const char *header, const char *value) {
-    set_http_header(&ws->req->req_headers, header, value);
+void tlsuv_websocket_set_header(tlsuv_websocket_t *ws, const char *name, const char *value) {
+    set_http_header(&ws->req->req_headers, name, value);
 }
 
-int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url, uv_connect_cb connect_cb, uv_read_cb read_cb) {
+int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char *url, uv_connect_cb conn_cb, uv_read_cb data_cb) {
 
     struct http_parser_url _url;
     if (http_parser_parse_url(url, strlen(url), false, &_url) !=0) {
@@ -142,7 +140,7 @@ int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url,
     }
 
     if (ssl && ws->tls == NULL) {
-        um_websocket_set_tls(ws, get_default_tls());
+        tlsuv_websocket_set_tls(ws, get_default_tls());
     }
 
     if (_url.field_set & (1U << (unsigned int) UF_HOST)) {
@@ -162,10 +160,10 @@ int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url,
     char portstr[6];
     snprintf(portstr, sizeof(portstr), "%d", port);
     req->handle = (uv_stream_t *) ws;
-    req->cb = connect_cb;
+    req->cb = conn_cb;
 
     if (ws->tls != NULL) {
-        um_tls_init(&ws->tls_link, ws->tls->api->new_engine(ws->tls->ctx, host), tls_hs_cb);
+        tlsuv_tls_link_init(&ws->tls_link, ws->tls->api->new_engine(ws->tls->ctx, host), tls_hs_cb);
     }
 
     const char *path = DEFAULT_PATH;
@@ -182,12 +180,12 @@ int um_websocket_connect(uv_connect_t *req, um_websocket_t *ws, const char *url,
     set_http_header(&ws->req->req_headers, "host", host);
 
     ws->host = host;
-    ws->read_cb = read_cb;
+    ws->read_cb = data_cb;
     UM_LOG(DEBG, "connecting to '%s:%s'", host, portstr);
     return ws->src->connect(ws->src, host, portstr, src_connect_cb, req);
 }
 
-int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_write_cb cb) {
+int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf, uv_write_cb cb) {
     if (ws->closed) {
         cb(req, UV_ECONNRESET);
         return UV_ECONNRESET;
@@ -241,10 +239,10 @@ int um_websocket_write(uv_write_t *req, um_websocket_t *ws, uv_buf_t *buf, uv_wr
 }
 
 
-static void src_connect_cb(um_src_t *sl, int status, void *connect_ctx) {
+static void src_connect_cb(tlsuv_src_t *sl, int status, void *connect_ctx) {
     UM_LOG(DEBG, "connect rc = %d", status);
     uv_connect_t *req = connect_ctx;
-    um_websocket_t *ws = (um_websocket_t *) req->handle;
+    tlsuv_websocket_t *ws = (tlsuv_websocket_t *) req->handle;
 
     if (status < 0) {
         ws->closed = true;
@@ -272,7 +270,7 @@ static void ws_write_cb(uv_link_t *l, int nwrote, void *data) {
     UM_LOG(VERB, "write complete rc = %d", nwrote);
 
     if (nwrote < 0) {
-        um_websocket_t *ws = l->data;
+        tlsuv_websocket_t *ws = l->data;
         ws->closed = true;
     }
 
@@ -291,7 +289,7 @@ int ws_read_start(uv_link_t *l) {
     UM_LOG(VERB, "starting ws");
     uv_link_default_read_start(l);
 
-    um_websocket_t *ws = l->data;
+    tlsuv_websocket_t *ws = l->data;
     uv_buf_t buf;
     buf.base = malloc(8196);
     buf.len = http_req_write(ws->req, buf.base, 8196);
@@ -307,7 +305,7 @@ int ws_read_start(uv_link_t *l) {
 }
 
 void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
-    um_websocket_t *ws = l->data;
+    tlsuv_websocket_t *ws = l->data;
     if (nread < 0) {
         ws->closed = true;
         // still connecting
@@ -393,7 +391,7 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
     free(buf->base);
 }
 
-static void send_pong(um_websocket_t *ws, const char* ping_data, int len) {
+static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
     UM_LOG(TRACE, "send_pong len=%d", len);
     uint8_t mask[4];
     uv_buf_t buf;
@@ -422,7 +420,7 @@ static void send_pong(um_websocket_t *ws, const char* ping_data, int len) {
     uv_link_write(&ws->ws_link, &buf, 1, NULL, ws_write_cb, ws_wreq);
 }
 
-static void on_ws_close(um_websocket_t *ws) {
+static void on_ws_close(tlsuv_websocket_t *ws) {
     if (ws == NULL) return;
 
     if (!ws->closed && ws->close_cb) {
@@ -450,12 +448,12 @@ static void on_ws_close(um_websocket_t *ws) {
     ws->closed = true;
 }
 static void ws_close_cb(uv_link_t *l) {
-    um_websocket_t *ws = l->data;
+    tlsuv_websocket_t *ws = l->data;
     on_ws_close(ws);
     l->data = NULL;
 }
 
-int um_websocket_close(um_websocket_t *ws, uv_close_cb cb) {
+int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
     ws->close_cb = cb;
     if (ws->ws_link.data != NULL) {
         uv_link_close(&ws->ws_link, ws_close_cb);
@@ -466,12 +464,12 @@ int um_websocket_close(um_websocket_t *ws, uv_close_cb cb) {
     return 0;
 }
 
-void um_websocket_set_tls(um_websocket_t *ws, tls_context *ctx) {
+void tlsuv_websocket_set_tls(tlsuv_websocket_t *ws, tls_context *ctx) {
     ws->tls = ctx;
 }
 
 static void tls_hs_cb(tls_link_t *tls, int status) {
-    um_websocket_t *ws = tls->data;
+    tlsuv_websocket_t *ws = tls->data;
     UM_LOG(DEBG, "tls HS complete %d", status);
     if (status == TLS_HS_COMPLETE) {
         uv_link_read_start(&ws->ws_link);
