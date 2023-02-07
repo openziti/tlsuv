@@ -1,3 +1,7 @@
+if (WIN32)
+    find_package(unofficial-getopt-win32 REQUIRED)
+endif()
+
 add_executable(sample sample.c common.c)
 target_link_libraries(sample PUBLIC tlsuv)
 
@@ -8,6 +12,9 @@ add_executable(sample-cf sample-cf.c common.c)
 target_link_libraries(sample-cf PUBLIC tlsuv)
 
 add_executable(um-curl um-curl.c common.c)
+if (WIN32)
+target_link_libraries(um-curl PRIVATE unofficial::getopt-win32::getopt)
+endif()
 target_link_libraries(um-curl PUBLIC tlsuv)
 
 add_executable(repeat-fetch repeat-fetch.c common.c)

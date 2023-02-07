@@ -13,6 +13,15 @@
           "version>=": "2.13.9#1"
         }
       ]
+    },
+    "samples": {
+      "description": "Dependencies for samples",
+      "dependencies": [
+        {
+          "name": "getopt-win32",
+          "platform": "windows"
+        }
+      ]
     }
   },
   "overrides": [
