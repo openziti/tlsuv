@@ -16,6 +16,8 @@
 #include <tlsuv/tlsuv.h>
 #include <uv.h>
 
+#include "common.h"
+
 static struct opts {
     int keepalive;
     int timeout;
@@ -46,13 +48,6 @@ static void do_request(uv_timer_t *t) {
     }
 }
 
-void logger(int level, const char *file, unsigned int line, const char *msg) {
-
-    struct timespec spec;
-    clock_gettime(CLOCK_REALTIME, &spec);
-
-    fprintf(stderr, "[%9ld.%03ld] %s:%d %s\n", spec.tv_sec, spec.tv_nsec/1000000, file, line, msg);
-}
 
 int main(int argc, char *argv[]) {
     tlsuv_set_debug(6, logger);

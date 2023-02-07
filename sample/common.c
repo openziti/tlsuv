@@ -16,11 +16,14 @@
 #include "common.h"
 
 void logger(int level, const char *file, unsigned int line, const char *msg) {
-
+#if _WIN32
+        fprintf(stderr, "%s:%d %s\n", file, line, msg);
+#else
     struct timespec spec;
     clock_gettime(CLOCK_REALTIME, &spec);
 
     fprintf(stderr, "[%9ld.%03ld] %s:%d %s\n", spec.tv_sec, spec.tv_nsec/1000000, file, line, msg);
+#endif
 }
 
 void resp_cb(tlsuv_http_resp_t *resp, void *data) {
