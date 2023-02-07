@@ -43,9 +43,6 @@ jobs:
         testPreset: ci-${{ matrix.os }}
         testPresetAdditionalArgs: "[ `--output-on-failure`, `--no-compress-output` ]"
 
-    - name: debug
-      run: cat ${{ github.workspace }}/build/DartConfiguration.tcl
-
     - name: Memory Check
       uses: lukka/run-cmake@v10
       if: always() && matrix.os == 'ubuntu'

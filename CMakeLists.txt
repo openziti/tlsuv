@@ -9,6 +9,8 @@ PROJECT("tlsuv"
         )
 
 message("Project: ${PROJECT_NAME}@v${PROJECT_VERSION}")
+include(cmake/project-is-top-level.cmake)
+include(cmake/variables.cmake)
 
 include(GNUInstallDirs)
 
@@ -115,11 +117,15 @@ install(DIRECTORY include/tlsuv DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(TARGETS tlsuv
         ARCHIVE DESTINATION lib)
 
-if(ENABLE_UM_SAMPLES)
-add_subdirectory(sample)
+
+if(PROJECT_IS_TOP_LEVEL)
+  option(BUILD_EXAMPLES "Build examples tree." "${tlsuv_DEVELOPER_MODE}")
+  if(BUILD_EXAMPLES)
+    add_subdirectory(sample)
+  endif()
 endif()
 
-if(ENABLE_TLSUV_TESTS)
+if(tlsuv_DEVELOPER_MODE)
 ENABLE_TESTING()
 set(MEMORYCHECK_SUPPRESSIONS_FILE "${CMAKE_CURRENT_LIST_DIR}/.valgrind.suppressions")
 add_subdirectory(tests)
