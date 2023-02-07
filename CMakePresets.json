@@ -119,16 +119,26 @@
   ],
   "testPresets": [
     {
+      "name": "test-env",
+      "hidden": true,
+      "environment": {
+        "TLSUV_TEST_LOG": "7"
+      }
+    },
+    {
       "name": "ci-ubuntu",
-      "configurePreset": "ci-ubuntu"
+      "configurePreset": "ci-ubuntu",
+      "inherits": [ "test-env" ]
     },
     {
       "name": "ci-macOS",
-      "configurePreset": "ci-macOS"
+      "configurePreset": "ci-macOS",
+      "inherits": [ "test-env" ]
     },
     {
       "name": "ci-windows",
-      "configurePreset": "ci-windows"
+      "configurePreset": "ci-windows",
+      "inherits": [ "test-env" ]
     }
   ]
 }

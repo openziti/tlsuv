@@ -36,23 +36,28 @@ jobs:
         vcpkgGitCommitId: 'f14984af3738e69f197bf0e647a8dca12de92996'
 
     - uses: lukka/run-cmake@v10
+      name: Build and Test
       with:
         configurePreset: ci-${{ matrix.os }}
         buildPreset: ci-${{ matrix.os }}
         testPreset: ci-${{ matrix.os }}
-      env:
-        TLSUV_TEST_LOG: 7
+        testPresetAdditionalArgs: "[ `--output-on-failure`, `--no-compress-output` ]"
+
+    - name: debug
+      run: cat ${{ github.workspace }}/build/DartConfiguration.tcl
 
     - name: Memory Check
-      working-directory: ${{runner.workspace}}/build
-      if: always() && matrix.os == 'ubuntu-latest'
-      run: ctest --no-compress-output --output-on-failure -T MemCheck
-      env:
-        UM_TEST_DEBUG: 7
+      uses: lukka/run-cmake@v10
+      if: always() && matrix.os == 'ubuntu'
+      with:
+        configurePreset: ci-${{ matrix.os }}
+        buildPreset: ci-${{ matrix.os }}
+        testPreset: ci-${{ matrix.os }}
+        testPresetAdditionalArgs: "[ `--test-dir`, `${{ github.workspace }}/build`,  `--output-on-failure`, `--no-compress-output`, `-T`, `MemCheck` ]"
 
     - name: upload test report
       if: always()
       uses: actions/upload-artifact@v3
       with:
         name: ${{ matrix.os }}-${{ matrix.openssl }}-TestReport
-        path: ${{runner.workspace}}/build/Testing/
+        path: ${{ github.workspace }}/build/Testing/
