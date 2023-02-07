@@ -9,22 +9,19 @@ on:
 jobs:
   build:
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}-latest
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macOS-11
-          - windows-latest
+        os: [ubuntu, macOS, windows]
         openssl: [off]
         include:
-          - os: ubuntu-latest
+          - os: ubuntu
             openssl: on
 
     steps:
     - name: Install tools
-      if: matrix.os == 'ubuntu-latest'
+      if: matrix.os == 'ubuntu'
       run: |
         sudo apt install -y valgrind
 
@@ -38,18 +35,13 @@ jobs:
       with:
         vcpkgGitCommitId: 'f14984af3738e69f197bf0e647a8dca12de92996'
 
-    - name: make build dir
-      run: cmake -E make_directory ${{runner.workspace}}/build
-    - name: configure cmake
-      run: cmake -S ${{ github.workspace }} -B ${{runner.workspace}}/build -DUSE_OPENSSL=${{ matrix.openssl }}
-    - name: build 
-      run: cmake --build ${{runner.workspace}}/build
-
-    - name: test
-      working-directory: ${{runner.workspace}}/build
-      run: cmake --build . --target run-tests
+    - uses: lukka/run-cmake@v10
+      with:
+        configurePreset: ci-${{ matrix.os }}
+        buildPreset: ci-${{ matrix.os }}
+        testPreset: ci-${{ matrix.os }}
       env:
-        UM_TEST_DEBUG: 7
+        TLSUV_TEST_LOG: 7
 
     - name: Memory Check
       working-directory: ${{runner.workspace}}/build
