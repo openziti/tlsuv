@@ -41,7 +41,7 @@ tlsuv_log_func test_log = test_log_f;
 
 int main( int argc, char* argv[] ) {
     uv_gettimeofday(&start);
-    const char* debug = getenv("UM_TEST_DEBUG");
+    const char* debug = getenv("TLSUV_TEST_LOG");
     if (debug) {
         // enable logging during tests
         long level = strtol(debug, nullptr, 10);

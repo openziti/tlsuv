@@ -89,7 +89,8 @@ int main(int argc, char **argv) {
     app.path = path ? path : "/";
 
     uv_loop_t *loop = uv_default_loop();
-    char *host_url = strndup(url, path - url);
+    char *host_url = calloc(1, path - url + 1);
+    strncpy(host_url, url, path - url);
     tlsuv_http_init(loop, &app.clt, host_url);
     tlsuv_http_idle_keepalive(&app.clt, -1);
 
