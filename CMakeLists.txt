@@ -14,13 +14,7 @@ include(cmake/variables.cmake)
 
 include(GNUInstallDirs)
 
-#sample is off by default
-option(ENABLE_TLSUV_SAMPLES "Build samples." OFF)
-option(ENABLE_TLSUV_TESTS "Build tests." ON)
-
 option(USE_OPENSSL "use OpenSSL engine" OFF)
-
-option(HAVE_LIBUV "use installed system-wide libuv" OFF)
 
 if(NOT USE_OPENSSL)
     message("using mbedTLS libraries")
@@ -29,6 +23,20 @@ if(NOT USE_OPENSSL)
 else()
     set(tlsImpl openssl)
 endif()
+
+find_package(libuv CONFIG QUIET)
+if (libuv_FOUND)
+    if (TARGET uv_a)
+        set(TLSUV_LIBUV_LIB uv_a)
+    else()
+        set(TLSUV_LIBUV_LIB uv)
+    endif()
+else()
+    find_path(TLSUV_LIBUV_INCLUDE NAMES uv.h)
+    find_library(TLSUV_LIBUV_LIB uv_a NAMES uv)
+endif()
+message("libuv is ${TLSUV_LIBUV_LIB}")
+message("${libuv_INCLUDE_DIR}")
 
 add_subdirectory(deps)
 
@@ -78,16 +86,13 @@ target_include_directories(tlsuv
         ${CMAKE_CURRENT_SOURCE_DIR}/src/p11
         )
 
-if(HAVE_LIBUV)
-    set(LIBUV_NAME uv)
-else()
-    set(LIBUV_NAME uv_a)
-endif()
+find_package(ZLIB REQUIRED)
 
 target_link_libraries(tlsuv
         PUBLIC http-parser
-        PUBLIC ${LIBUV_NAME}
+        PRIVATE ${TLSUV_LIBUV_LIB}
         PUBLIC uv_link
+        PRIVATE ZLIB::ZLIB
         )
 TARGET_COMPILE_DEFINITIONS(tlsuv PRIVATE TLSUV_VERSION=v${PROJECT_VERSION})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -106,11 +111,7 @@ elseif(USE_OPENSSL)
 endif()
 
 if (WIN32)
-    target_link_libraries(tlsuv
-            PUBLIC crypt32
-            PUBLIC zlibstatic)
-
-
+    target_link_libraries(tlsuv PUBLIC crypt32)
 endif()
 
 install(DIRECTORY include/tlsuv DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
