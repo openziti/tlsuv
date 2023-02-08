@@ -52,7 +52,9 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
 ### CMake template
+CMakeUserPresets.json
 CMakeCache.txt
 CMakeFiles
 CMakeScripts

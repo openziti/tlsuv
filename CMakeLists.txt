@@ -78,16 +78,22 @@ target_include_directories(tlsuv
         ${CMAKE_CURRENT_SOURCE_DIR}/src/p11
         )
 
-if(HAVE_LIBUV)
-    set(LIBUV_NAME uv)
+find_package(libuv CONFIG QUIET)
+if (libuv_FOUND)
+    set(TLSUV_LIBUV_LIB $<IF:$<TARGET_EXISTS:uv_a>,uv_a,uv>)
 else()
-    set(LIBUV_NAME uv_a)
+    find_path(TLSUV_LIBUV_INCLUDE NAMES uv.h)
+    find_library(TLSUV_LIBUV_LIB uv_a NAMES uv)
 endif()
+message("libuv is ${TLSUV_LIBUV_LIB}")
+
+find_package(ZLIB REQUIRED)
 
 target_link_libraries(tlsuv
         PUBLIC http-parser
-        PUBLIC ${LIBUV_NAME}
+        PRIVATE ${TLSUV_LIBUV_LIB}
         PUBLIC uv_link
+        PRIVATE ZLIB::ZLIB
         )
 TARGET_COMPILE_DEFINITIONS(tlsuv PRIVATE TLSUV_VERSION=v${PROJECT_VERSION})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -106,11 +112,7 @@ elseif(USE_OPENSSL)
 endif()
 
 if (WIN32)
-    target_link_libraries(tlsuv
-            PUBLIC crypt32
-            PUBLIC zlibstatic)
-
-
+    target_link_libraries(tlsuv PUBLIC crypt32)
 endif()
 
 install(DIRECTORY include/tlsuv DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

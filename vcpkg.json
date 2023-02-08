@@ -2,6 +2,8 @@
   "name": "tlsuv",
   "version-semver": "1.0.0",
   "dependencies": [
+    "libuv",
+    "zlib"
   ],
   "default-features": [],
   "features": {
