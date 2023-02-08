@@ -14,13 +14,7 @@ include(cmake/variables.cmake)
 
 include(GNUInstallDirs)
 
-#sample is off by default
-option(ENABLE_TLSUV_SAMPLES "Build samples." OFF)
-option(ENABLE_TLSUV_TESTS "Build tests." ON)
-
 option(USE_OPENSSL "use OpenSSL engine" OFF)
-
-option(HAVE_LIBUV "use installed system-wide libuv" OFF)
 
 if(NOT USE_OPENSSL)
     message("using mbedTLS libraries")
@@ -29,6 +23,20 @@ if(NOT USE_OPENSSL)
 else()
     set(tlsImpl openssl)
 endif()
+
+find_package(libuv CONFIG QUIET)
+if (libuv_FOUND)
+    if (TARGET uv_a)
+        set(TLSUV_LIBUV_LIB uv_a)
+    else()
+        set(TLSUV_LIBUV_LIB uv)
+    endif()
+else()
+    find_path(TLSUV_LIBUV_INCLUDE NAMES uv.h)
+    find_library(TLSUV_LIBUV_LIB uv_a NAMES uv)
+endif()
+message("libuv is ${TLSUV_LIBUV_LIB}")
+message("${libuv_INCLUDE_DIR}")
 
 add_subdirectory(deps)
 
@@ -77,15 +85,6 @@ target_include_directories(tlsuv
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/p11
         )
-
-find_package(libuv CONFIG QUIET)
-if (libuv_FOUND)
-    set(TLSUV_LIBUV_LIB $<IF:$<TARGET_EXISTS:uv_a>,uv_a,uv>)
-else()
-    find_path(TLSUV_LIBUV_INCLUDE NAMES uv.h)
-    find_library(TLSUV_LIBUV_LIB uv_a NAMES uv)
-endif()
-message("libuv is ${TLSUV_LIBUV_LIB}")
 
 find_package(ZLIB REQUIRED)
 

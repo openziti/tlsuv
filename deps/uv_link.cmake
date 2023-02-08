@@ -10,4 +10,4 @@ target_include_directories(uv_link
         PRIVATE ${uvl_src}
 )
 
-target_link_libraries(uv_link PRIVATE ${TLSUV_LIBUV_LIB})
+target_link_libraries(uv_link ${TLSUV_LIBUV_LIB})
