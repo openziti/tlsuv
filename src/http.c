@@ -439,9 +439,31 @@ static void http_set_prefix(tlsuv_http_t *clt, const char *pfx, size_t pfx_len) 
 }
 
 int tlsuv_http_set_url(tlsuv_http_t *clt, const char *url) {
-    struct http_parser_url url_parse = {0};
-    if (http_parser_parse_url(url, strlen(url), false, &url_parse)) {
+    struct tlsuv_url_s u;
+
+    if (tlsuv_parse_url(&u, url) != 0) {
         UM_LOG(ERR, "invalid URL[%s]", url);
+        return UV_EINVAL;
+    }
+
+    if (u.scheme == NULL) {
+        UM_LOG(ERR, "invalid URL: no scheme");
+        return UV_EINVAL;
+    }
+
+    if (u.hostname == NULL) {
+        UM_LOG(ERR, "invalid URL: no host");
+        return UV_EINVAL;
+    }
+
+    uint16_t port = -1;
+    if (strncasecmp("http", u.scheme, u.scheme_len) == 0) {
+        port = 80;
+    } else if (strncasecmp("https", u.scheme, u.scheme_len) == 0) {
+        port = 443;
+        clt->ssl = true;
+    } else {
+        UM_LOG(ERR, "scheme(%*.*s) is not supported", u.scheme_len, u.scheme);
         return UV_EINVAL;
     }
 
@@ -451,45 +473,18 @@ int tlsuv_http_set_url(tlsuv_http_t *clt, const char *url) {
     }
     set_http_header(&clt->headers, "Host", NULL);
 
-    if (url_parse.field_set & (U1 << (unsigned int) UF_HOST)) {
-        clt->host = strndup(url +
-                            url_parse.field_data[UF_HOST].off,
-                            url_parse.field_data[UF_HOST].len);
-    }
-    else {
-        UM_LOG(ERR, "invalid URL: no host");
-        return UV_EINVAL;
-    }
-
+    clt->host = strndup(u.hostname, u.hostname_len);
     tlsuv_http_header(clt, "Host", clt->host);
 
-    uint16_t port = -1;
-    if (url_parse.field_set & (U1 << (unsigned int) UF_SCHEMA)) {
-        if (strncasecmp("http", url + url_parse.field_data[UF_SCHEMA].off, url_parse.field_data[UF_SCHEMA].len) == 0) {
-            port = 80;
-        } else if (strncasecmp("https", url + url_parse.field_data[UF_SCHEMA].off, url_parse.field_data[UF_SCHEMA].len) == 0) {
-            port = 443;
-            clt->ssl = true;
-        } else {
-            UM_LOG(ERR, "scheme(%*.*s) is not supported",
-                    url_parse.field_data[UF_SCHEMA].len, url_parse.field_data[UF_SCHEMA].len,
-                    url + url_parse.field_data[UF_SCHEMA].off);
-            return UV_EINVAL;
-        }
-    }
-    else {
-        UM_LOG(ERR, "invalid URL: no scheme");
-        return UV_EINVAL;
-    }
 
-    if (url_parse.field_set & (U1 << (unsigned int) UF_PORT)) {
-        port = url_parse.port;
+    if (u.port != 0) {
+        port = u.port;
     }
 
     sprintf(clt->port, "%d", port);
 
-    if (url_parse.field_set & (U1 << (unsigned int) UF_PATH)) {
-        http_set_prefix(clt, url + url_parse.field_data[UF_PATH].off, url_parse.field_data[UF_PATH].len);
+    if (u.path != NULL) {
+        http_set_prefix(clt, u.path, u.path_len);
     }
     return 0;
 }
@@ -732,4 +727,64 @@ static void free_http(tlsuv_http_t *clt) {
         free(clt->src);
         clt->src = NULL;
     }
+}
+
+int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
+    memset(url, 0, sizeof(*url));
+
+    const char *p = urlstr;
+    int count;
+    int rc = sscanf(p, "%*[^:]%n://", &count);
+    if (rc == 0 &&
+        (p + count)[0] == ':' && (p + count)[1] == '/' && (p + count)[2] == '/'
+        ) {
+        url->scheme = p;
+        url->scheme_len = count;
+        p += (count + 3);
+    }
+
+    count = 0;
+    if (sscanf(p, "%*[^:/]%n", &count) == 0 && count > 0) {
+        url->hostname = p;
+        url->hostname_len = count;
+        p += count;
+    }
+
+    if (*p == ':') {
+        if (url->hostname == NULL)
+            return -1;
+        p += 1;
+        char *pend;
+        long lport = strtol(p, &pend, 10);
+
+        if (pend == p)
+            return -1;
+
+        if (lport > 0 && lport <= UINT16_MAX) {
+            url->port = (uint16_t)lport;
+            p = pend;
+        } else {
+            return -1;
+        }
+    }
+
+    if (*p == '\0')
+        return 0;
+
+    if (*p != '/') {
+        return -1;
+    }
+
+    if (sscanf(p, "%*[^?]%n", &count) == 0) {
+        url->path = p;
+        url->path_len = count;
+        p += count;
+    }
+
+    if (*p == '?') {
+        url->query = p + 1;
+        url->query_len = strlen(url->query);
+    }
+
+    return 0;
 }

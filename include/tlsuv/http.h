@@ -318,6 +318,29 @@ int tlsuv_http_cancel_all(tlsuv_http_t *clt);
  */
 const char *tlsuv_http_resp_header(tlsuv_http_resp_t *resp, const char *name);
 
+/**
+ * parsed URL
+ */
+struct tlsuv_url_s {
+    const char *scheme;
+    size_t scheme_len;
+    const char *hostname;
+    size_t hostname_len;
+    uint16_t port;
+    const char *path;
+    size_t path_len;
+    const char *query;
+    size_t query_len;
+};
+
+/**
+ * Zero-copy URL parser. [url] fields point to the parsed [urlstr].
+ * @param url parsed URL structure
+ * @param urlstr URL in string form
+ * @return 0 on success, -1 on failure
+ */
+int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr);
+
 #ifdef __cplusplus
 }
 #endif
