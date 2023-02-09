@@ -21,14 +21,14 @@
 
 static void free_hdr(tlsuv_http_hdr *hdr);
 
-static int http_headers_complete_cb(http_parser *p);
-static int http_header_field_cb(http_parser *parser, const char *f, size_t len);
-static int http_header_value_cb(http_parser *parser, const char *v, size_t len);
-static int http_status_cb(http_parser *parser, const char *status, size_t len);
-static int http_message_cb(http_parser *parser);
-static int http_body_cb(http_parser *parser, const char *body, size_t len);
+static int http_headers_complete_cb(llhttp_t *p);
+static int http_header_field_cb(llhttp_t *parser, const char *f, size_t len);
+static int http_header_value_cb(llhttp_t *parser, const char *v, size_t len);
+static int http_status_cb(llhttp_t *parser, const char *status, size_t len);
+static int http_message_cb(llhttp_t *parser);
+static int http_body_cb(llhttp_t *parser, const char *body, size_t len);
 
-static http_parser_settings HTTP_PROC = {
+static llhttp_settings_t HTTP_PROC = {
         .on_header_field = http_header_field_cb,
         .on_header_value = http_header_value_cb,
         .on_headers_complete = http_headers_complete_cb,
@@ -38,7 +38,6 @@ static http_parser_settings HTTP_PROC = {
 };
 
 void http_req_init(tlsuv_http_req_t *r, const char *method, const char *path) {
-    r->parser.data = r;
     r->method = strdup(method);
     r->path = strdup(path);
     r->req_body = NULL;
@@ -48,7 +47,8 @@ void http_req_init(tlsuv_http_req_t *r, const char *method, const char *path) {
     r->state = created;
     r->resp.req = r;
 
-    http_parser_init(&r->parser, HTTP_RESPONSE);
+    llhttp_init(&r->parser, HTTP_RESPONSE, &HTTP_PROC);
+    r->parser.data = r;
 }
 
 void http_req_free(tlsuv_http_req_t *req) {
@@ -74,7 +74,7 @@ static int printable_len(const unsigned char* buf, size_t len) {
 
 size_t http_req_process(tlsuv_http_req_t *req, const char* buf, ssize_t len) {
     UM_LOG(TRACE, "processing %zd bytes\n%.*s", len, printable_len((const unsigned char*)buf, len), buf);
-    size_t processed = http_parser_execute(&req->parser, &HTTP_PROC, buf, len);
+    size_t processed = llhttp_execute(&req->parser, buf, len);
     UM_LOG(VERB, "processed %zd out of %zd", processed, len);
     return processed;
 }
@@ -200,7 +200,7 @@ const char*tlsuv_http_resp_header(tlsuv_http_resp_t *resp, const char *name) {
     return NULL;
 }
 
-static int http_headers_complete_cb(http_parser *p) {
+static int http_headers_complete_cb(llhttp_t *p) {
     tlsuv_http_req_t *req = p->data;
     req->state = headers_received;
 
@@ -213,18 +213,18 @@ static int http_headers_complete_cb(http_parser *p) {
         req->resp_cb(&req->resp, req->data);
     }
     if (compression && req->resp.body_cb) {
-        req->inflater = um_get_inflater(compression, req->resp.body_cb, req);
+        req->inflater = um_get_inflater(compression, (data_cb) req->resp.body_cb, req);
     }
     return 0;
 }
 
-static int http_header_field_cb(http_parser *parser, const char *f, size_t len) {
+static int http_header_field_cb(llhttp_t *parser, const char *f, size_t len) {
     tlsuv_http_req_t *req = parser->data;
     req->resp.curr_header = strndup(f, len);
     return 0;
 }
 
-static int http_header_value_cb(http_parser *parser, const char *v, size_t len) {
+static int http_header_value_cb(llhttp_t *parser, const char *v, size_t len) {
     tlsuv_http_req_t *req = parser->data;
 
     if (len > 0) {
@@ -239,7 +239,7 @@ static int http_header_value_cb(http_parser *parser, const char *v, size_t len) 
     return 0;
 }
 
-static int http_status_cb(http_parser *parser, const char *status, size_t len) {
+static int http_status_cb(llhttp_t *parser, const char *status, size_t len) {
     UM_LOG(VERB, "status = %d %.*s", parser->status_code, (int) len, status);
     tlsuv_http_req_t *r = parser->data;
     r->resp.code = (int) parser->status_code;
@@ -249,7 +249,7 @@ static int http_status_cb(http_parser *parser, const char *status, size_t len) {
     return 0;
 }
 
-static int http_message_cb(http_parser *parser) {
+static int http_message_cb(llhttp_t *parser) {
     UM_LOG(VERB, "message complete");
     tlsuv_http_req_t *r = parser->data;
     r->state = completed;
@@ -265,7 +265,7 @@ static int http_message_cb(http_parser *parser) {
     return 0;
 }
 
-static int http_body_cb(http_parser *parser, const char *body, size_t len) {
+static int http_body_cb(llhttp_t *parser, const char *body, size_t len) {
     tlsuv_http_req_t *r = parser->data;
     if (r->inflater) {
         um_inflate(r->inflater, body, len);

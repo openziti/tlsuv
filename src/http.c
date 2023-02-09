@@ -31,17 +31,17 @@ static const unsigned int U1 = 1;
 
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
 
-static int http_status_cb(http_parser *parser, const char *status, size_t len);
+static int http_status_cb(llhttp_t *parser, const char *status, size_t len);
 
-static int http_message_cb(http_parser *parser);
+static int http_message_cb(llhttp_t *parser);
 
-static int http_body_cb(http_parser *parser, const char *body, size_t len);
+static int http_body_cb(llhttp_t *parser, const char *body, size_t len);
 
-static int http_header_field_cb(http_parser *parser, const char *f, size_t len);
+static int http_header_field_cb(llhttp_t *parser, const char *f, size_t len);
 
-static int http_header_value_cb(http_parser *parser, const char *v, size_t len);
+static int http_header_value_cb(llhttp_t *parser, const char *v, size_t len);
 
-static int http_headers_complete_cb(http_parser *p);
+static int http_headers_complete_cb(llhttp_t *p);
 
 static void fail_active_request(tlsuv_http_t *c, int code, const char *msg);
 

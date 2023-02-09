@@ -35,8 +35,8 @@ else()
     find_path(TLSUV_LIBUV_INCLUDE NAMES uv.h)
     find_library(TLSUV_LIBUV_LIB uv_a NAMES uv)
 endif()
-message("libuv is ${TLSUV_LIBUV_LIB}")
-message("${libuv_INCLUDE_DIR}")
+
+find_package(llhttp CONFIG REQUIRED)
 
 add_subdirectory(deps)
 
@@ -89,7 +89,7 @@ target_include_directories(tlsuv
 find_package(ZLIB REQUIRED)
 
 target_link_libraries(tlsuv
-        PUBLIC http-parser
+        PRIVATE llhttp::llhttp_static
         PRIVATE ${TLSUV_LIBUV_LIB}
         PUBLIC uv_link
         PRIVATE ZLIB::ZLIB

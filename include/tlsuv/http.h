@@ -22,7 +22,7 @@
 #ifndef TLSUV_HTTP_H
 #define TLSUV_HTTP_H
 
-#include <http_parser.h>
+#include <llhttp.h>
 #include <uv_link_t.h>
 
 #include <stdbool.h>
@@ -102,7 +102,7 @@ typedef struct tlsuv_http_req_s {
     struct tlsuv_http_s *client;
     char *method;
     char *path;
-    http_parser parser;
+    llhttp_t parser;
     enum http_request_state state;
 
     bool req_chunked;
