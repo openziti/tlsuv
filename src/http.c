@@ -85,7 +85,13 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     if (c->active != NULL) {
 
         if (nread > 0) {
-            http_req_process(c->active, buf->base, nread);
+            if (http_req_process(c->active, buf->base, nread) < 0) {
+                UM_LOG(WARN, "failed to parse HTTP response");
+                fail_active_request(c, UV_EINVAL, "failed to parse HTTP response");
+                close_connection(c);
+                free(buf->base);
+
+            }
         }
 
 		if (c->active->state == completed) {

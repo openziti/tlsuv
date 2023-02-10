@@ -312,26 +312,37 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
         return;
     }
 
-    size_t processed = 0;
+    ssize_t processed = 0;
+    bool failed = false;
     if (ws->conn_req != NULL) {
         processed = http_req_process(ws->req, buf->base, nread);
-        UM_LOG(VERB, "processed %zd out of %zd", processed, nread);
-        if (ws->req->state == completed) {
-            if (ws->req->resp.code == 101) {
-                UM_LOG(VERB, "websocket connected");
-                ws->conn_req->cb(ws->conn_req, 0);
-            } else {
-                UM_LOG(ERR, "failed to connect to websocket: %s(%d)", ws->req->resp.status, ws->req->resp.code);
-                ws->conn_req->cb(ws->conn_req, -1);
-            }
-            ws->conn_req = NULL;
+        if (processed < 0) {
+            UM_LOG(ERR, "failed to parse connect/upgrade response");
+            ws->conn_req->cb(ws->conn_req, -1);
             http_req_free(ws->req);
             free(ws->req);
             ws->req = NULL;
+            failed = true;
+        } else {
+            UM_LOG(VERB, "processed %zd out of %zd", processed, nread);
+            if (ws->req->state == completed) {
+                if (ws->req->resp.code == 101) {
+                    UM_LOG(VERB, "websocket connected");
+                    ws->conn_req->cb(ws->conn_req, 0);
+                } else {
+                    UM_LOG(ERR, "failed to connect to websocket: %s(%d)", ws->req->resp.status, ws->req->resp.code);
+                    ws->conn_req->cb(ws->conn_req, -1);
+                    failed = true;
+                }
+                ws->conn_req = NULL;
+                http_req_free(ws->req);
+                free(ws->req);
+                ws->req = NULL;
+            }
         }
     }
 
-    if (processed == nread) {
+    if (failed || processed == nread) {
         free(buf->base);
         return;
     }
