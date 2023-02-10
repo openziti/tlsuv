@@ -905,7 +905,7 @@ TEST_CASE("test request cancel", "[http]") {
 
 #define URL_TEST(s, RES, SCHEME, HOST, PORT, PATH, QUERY) \
     do {                                                  \
-        tlsuv_url_s url = {0};                            \
+        tlsuv_url_s url;                                  \
         CHECK(tlsuv_parse_url(&url, (s)) == (RES));       \
         if ((RES) == 0) {                                 \
             TEST_FIELD(scheme, SCHEME);                   \
