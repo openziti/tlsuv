@@ -75,15 +75,16 @@ static int printable_len(const unsigned char* buf, size_t len) {
 ssize_t http_req_process(tlsuv_http_req_t *req, const char* buf, ssize_t len) {
     UM_LOG(TRACE, "processing %zd bytes\n%.*s", len, printable_len((const unsigned char*)buf, len), buf);
     llhttp_errno_t err = llhttp_execute(&req->parser, buf, len);
-    ssize_t processed = llhttp_get_error_pos(&req->parser) - buf;
+    ssize_t processed = -1;
     if (err == HPE_OK) {
+        processed = len;
         UM_LOG(VERB, "processed %z of %zd", processed, len);
     } else if (err == HPE_PAUSED_UPGRADE) {
+        processed = llhttp_get_error_pos(&req->parser) - buf;
         UM_LOG(VERB, "websocket upgrade: processed %zd out of %zd", processed, len);
         llhttp_resume_after_upgrade(&req->parser);
     } else {
         UM_LOG(WARN, "failed to process: %d/%s", err, llhttp_errno_name(err));
-        return -1;
     }
     return processed;
 }
