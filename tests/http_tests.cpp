@@ -903,18 +903,17 @@ TEST_CASE("test request cancel", "[http]") {
         CHECK(strncmp(url.f, (VAL), url.f##_len) == 0); \
     }
 
-#define URL_TEST(s, RES, SCHEME, HOST, PORT, PATH, QUERY) \
-    do {                                                  \
-        tlsuv_url_s url;                                  \
-        CHECK(tlsuv_parse_url(&url, (s)) == (RES));       \
-        if ((RES) == 0) {                                 \
-            TEST_FIELD(scheme, SCHEME);                   \
-            TEST_FIELD(hostname, HOST);                   \
-            TEST_FIELD(path, PATH);                       \
-            TEST_FIELD(query, QUERY);                     \
-            CHECK(url.port == (PORT));                    \
-        }                                                 \
-    } while (0)
+static void URL_TEST(const char *s, int RES, const char *SCHEME, const char *HOST, int PORT, const char *PATH, const char *QUERY) {
+    tlsuv_url_s url = {0};
+    CHECK(tlsuv_parse_url(&url, s) == RES);
+    if ((RES) == 0) {
+        TEST_FIELD(scheme, SCHEME);
+        TEST_FIELD(hostname, HOST);
+        TEST_FIELD(path, PATH);
+        TEST_FIELD(query, QUERY);
+        CHECK(url.port == (PORT));
+    }
+}
 
 TEST_CASE("url parse", "[http]") {
     URL_TEST("wss://websocket.org/echo?foo=bar", 0, "wss", "websocket.org", 0, "/echo", "foo=bar");
