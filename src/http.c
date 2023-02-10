@@ -739,7 +739,7 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
     memset(url, 0, sizeof(struct tlsuv_url_s));
 
     const char *p = urlstr;
-    int count;
+    int count = 0;
     int rc = sscanf(p, "%*[^:]%n://", &count);
     if (rc == 0 &&
         (p + count)[0] == ':' && (p + count)[1] == '/' && (p + count)[2] == '/'
