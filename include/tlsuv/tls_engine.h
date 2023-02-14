@@ -116,7 +116,24 @@ typedef struct {
 
 typedef struct tls_context_s tls_context;
 typedef void *tls_cert;
-typedef void *tls_private_key;
+
+#define TLSUV_PUBKEY_API \
+void (*free)(struct tlsuv_public_key_s *pubkey);                        \
+int (*verify)(struct tlsuv_public_key_s *pubkey, const char* signature, size_t siglen);
+
+#define TLSUV_PRIVKEY_API \
+void (*free)(struct tlsuv_private_key_s *privkey);                        \
+int (*sign)(struct tlsuv_private_key_s *privkey, const char* data, size_t datalen); \
+struct tlsuv_public_key_s* (*public)(struct tlsuv_private_key_s *privkey);
+
+typedef struct tlsuv_public_key_s {
+    TLSUV_PUBKEY_API
+} *tlsuv_public_key_t;
+
+
+typedef struct tlsuv_private_key_s {
+    TLSUV_PRIVKEY_API
+} *tlsuv_private_key_t;
 
 typedef struct {
     /* creates new TLS engine for a host */
@@ -125,8 +142,6 @@ typedef struct {
     void (*free_engine)(tls_engine *);
 
     void (*free_ctx)(tls_context *ctx);
-
-    void (*free_key)(tls_private_key *k);
 
     void (*free_cert)(tls_cert *cert);
 
@@ -199,7 +214,7 @@ typedef struct {
      * @param pk (out) address where tls_private_key handle will be stored.
      * @returns 0 on success, or error code
      */
-    int (*generate_key)(tls_private_key *pk);
+    int (*generate_key)(tlsuv_private_key_t *pk);
 
     /**
      * loads private key from file, or PEM/DER buffer.
@@ -209,7 +224,7 @@ typedef struct {
      * @param keydatalen length of keydata
      * @returns 0 on success, or error code
      */
-    int (*load_key)(tls_private_key *pk, const char* keydata, size_t keydatalen);
+    int (*load_key)(tlsuv_private_key_t *pk, const char* keydata, size_t keydatalen);
 
     /**
      * Generate PEM representation of the private key.
@@ -219,7 +234,7 @@ typedef struct {
      * @param pemlen size of produced PEM
      * @returns 0 on success, or error code
      */
-    int (*write_key_to_pem)(tls_private_key pk, char **pem, size_t *pemlen);
+    int (*write_key_to_pem)(tlsuv_private_key_t pk, char **pem, size_t *pemlen);
 
     /**
      * Create x509 signing request in PEM format
@@ -229,7 +244,7 @@ typedef struct {
      * @param ... NULL terminated subject name pairs
      * @returns 0 on success, or error code
      */
-    int (*generate_csr_to_pem)(tls_private_key pk, char **pem, size_t *pemlen, ...);
+    int (*generate_csr_to_pem)(tlsuv_private_key_t pk, char **pem, size_t *pemlen, ...);
 
     /**
      * Get error message for given code
