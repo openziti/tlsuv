@@ -893,3 +893,36 @@ TEST_CASE("test request cancel", "[http]") {
 
     tlsuv_http_close(&td.clt, nullptr);
 }
+
+#define TEST_FIELD(f, VAL)                              \
+    if ((VAL) == nullptr) {                             \
+        CHECK(url.f == nullptr);                        \
+        CHECK(url.f##_len == 0);                        \
+    } else {                                            \
+        CHECK(url.f##_len == strlen(VAL));              \
+        CHECK(strncmp(url.f, (VAL), url.f##_len) == 0); \
+    }
+
+static void URL_TEST(const char *s, int RES, const char *SCHEME, const char *HOST, int PORT, const char *PATH, const char *QUERY) {
+    tlsuv_url_s url = {0};
+    CHECK(tlsuv_parse_url(&url, s) == RES);
+    if ((RES) == 0) {
+        TEST_FIELD(scheme, SCHEME);
+        TEST_FIELD(hostname, HOST);
+        TEST_FIELD(path, PATH);
+        TEST_FIELD(query, QUERY);
+        CHECK(url.port == (PORT));
+    }
+}
+
+TEST_CASE("url parse", "[http]") {
+    URL_TEST("wss://websocket.org/echo?foo=bar", 0, "wss", "websocket.org", 0, "/echo", "foo=bar");
+    URL_TEST("wss://websocket.org:443/echo?foo=bar", 0, "wss", "websocket.org", 443, "/echo", "foo=bar");
+    URL_TEST("wss://websocket.org/echo", 0, "wss", "websocket.org", 0, "/echo", nullptr);
+    URL_TEST("websocket.org:443/echo", 0, nullptr, "websocket.org", 443, "/echo", nullptr);
+    URL_TEST("file:///echo.txt", 0, "file", nullptr, 0, "/echo.txt", nullptr);
+    URL_TEST("/path/only/echo.txt", 0, nullptr, nullptr, 0, "/path/only/echo.txt", nullptr);
+    URL_TEST(":443/echo", -1, nullptr, "websocket.org", 443, "/echo", nullptr);
+    URL_TEST("websocket.org:443echo", -1, nullptr, "websocket.org", 443, "/echo", nullptr);
+    URL_TEST("websocket.org:443443/echo", -1, nullptr, "websocket.org", 443, "/echo", nullptr);
+}

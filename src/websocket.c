@@ -109,8 +109,8 @@ void tlsuv_websocket_set_header(tlsuv_websocket_t *ws, const char *name, const c
 
 int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char *url, uv_connect_cb conn_cb, uv_read_cb data_cb) {
 
-    struct http_parser_url _url;
-    if (http_parser_parse_url(url, strlen(url), false, &_url) !=0) {
+    struct tlsuv_url_s u;
+    if (tlsuv_parse_url(&u, url) != 0) {
         UM_LOG(ERR, "invalid websocket URL: %s", url);
         return UV_EINVAL;
     }
@@ -119,18 +119,16 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
     int port;
     char *host;
 
-    if (_url.field_set & (1U << (unsigned int) UF_SCHEMA)) {
-        if (strncasecmp("ws", url + _url.field_data[UF_SCHEMA].off, _url.field_data[UF_SCHEMA].len) == 0) {
+    if (u.scheme != NULL) {
+        if (strncasecmp("ws", u.scheme, u.scheme_len) == 0) {
             port = 80;
         }
-        else if (strncasecmp("wss", url + _url.field_data[UF_SCHEMA].off, _url.field_data[UF_SCHEMA].len) == 0) {
+        else if (strncasecmp("wss", u.scheme, u.scheme_len) == 0) {
             port = 443;
             ssl = true;
         }
         else {
-            UM_LOG(ERR, "scheme(%.*s) is not supported",
-                    _url.field_data[UF_SCHEMA].len,
-                    url + _url.field_data[UF_SCHEMA].off);
+            UM_LOG(ERR, "scheme(%.*s) is not supported", u.scheme_len, u.scheme);
             return UV_EINVAL;
         }
     }
@@ -143,18 +141,16 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
         tlsuv_websocket_set_tls(ws, get_default_tls());
     }
 
-    if (_url.field_set & (1U << (unsigned int) UF_HOST)) {
-        host = strndup(url +
-                            _url.field_data[UF_HOST].off,
-                            _url.field_data[UF_HOST].len);
+    if (u.hostname != NULL) {
+        host = strndup(u.hostname, u.hostname_len);
     }
     else {
         UM_LOG(ERR, "invalid URL: no host");
         return UV_EINVAL;
     }
 
-    if (_url.field_set & (1U << (unsigned int) UF_PORT)) {
-        port = _url.port;
+    if (u.port != 0) {
+        port = u.port;
     }
 
     char portstr[6];
@@ -167,10 +163,8 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
     }
 
     const char *path = DEFAULT_PATH;
-    if (_url.field_set & (1U << (unsigned int) UF_PATH)) {
-        path = strndup(url +
-                            _url.field_data[UF_PATH].off,
-                            _url.field_data[UF_PATH].len);
+    if (u.path != NULL) {
+        path = strndup(u.path, u.path_len);
     }
 
     http_req_init(ws->req, "GET", path);
@@ -318,26 +312,37 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
         return;
     }
 
-    size_t processed = 0;
+    ssize_t processed = 0;
+    bool failed = false;
     if (ws->conn_req != NULL) {
         processed = http_req_process(ws->req, buf->base, nread);
-        UM_LOG(VERB, "processed %zd out of %zd", processed, nread);
-        if (ws->req->state == completed) {
-            if (ws->req->resp.code == 101) {
-                UM_LOG(VERB, "websocket connected");
-                ws->conn_req->cb(ws->conn_req, 0);
-            } else {
-                UM_LOG(ERR, "failed to connect to websocket: %s(%d)", ws->req->resp.status, ws->req->resp.code);
-                ws->conn_req->cb(ws->conn_req, -1);
-            }
-            ws->conn_req = NULL;
+        if (processed < 0) {
+            UM_LOG(ERR, "failed to parse connect/upgrade response");
+            ws->conn_req->cb(ws->conn_req, -1);
             http_req_free(ws->req);
             free(ws->req);
             ws->req = NULL;
+            failed = true;
+        } else {
+            UM_LOG(VERB, "processed %zd out of %zd", processed, nread);
+            if (ws->req->state == completed) {
+                if (ws->req->resp.code == 101) {
+                    UM_LOG(VERB, "websocket connected");
+                    ws->conn_req->cb(ws->conn_req, 0);
+                } else {
+                    UM_LOG(ERR, "failed to connect to websocket: %s(%d)", ws->req->resp.status, ws->req->resp.code);
+                    ws->conn_req->cb(ws->conn_req, -1);
+                    failed = true;
+                }
+                ws->conn_req = NULL;
+                http_req_free(ws->req);
+                free(ws->req);
+                ws->req = NULL;
+            }
         }
     }
 
-    if (processed == nread) {
+    if (failed || processed == nread) {
         free(buf->base);
         return;
     }

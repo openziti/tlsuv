@@ -3,7 +3,8 @@
   "version-semver": "1.0.0",
   "dependencies": [
     "libuv",
-    "zlib"
+    "zlib",
+    "llhttp"
   ],
   "default-features": [],
   "features": {

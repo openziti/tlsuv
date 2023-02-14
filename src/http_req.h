@@ -19,7 +19,7 @@
 
 void http_req_init(tlsuv_http_req_t *req, const char *method, const char *path);
 void http_req_free(tlsuv_http_req_t *r);
-size_t http_req_process(tlsuv_http_req_t *req, const char* buf, ssize_t len);
+ssize_t http_req_process(tlsuv_http_req_t *req, const char* buf, ssize_t len);
 
 // write request header
 size_t http_req_write(tlsuv_http_req_t *req, char *buf, size_t maxlen);
