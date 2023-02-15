@@ -198,6 +198,7 @@ static void make_links(tlsuv_http_t *clt, uv_link_t *conn_src) {
     if (clt->ssl) {
         if (clt->tls == NULL) {
             clt->tls = get_default_tls();
+            UM_LOG(VERB, "using TLS[%s]", clt->tls->api->version());
         }
 
         if (clt->host_change) {

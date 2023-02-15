@@ -1,4 +1,4 @@
-CMAKE_MINIMUM_REQUIRED(VERSION 3.10)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.22)
 
 include(cmake/version.cmake)
 get_version(${CMAKE_CURRENT_LIST_DIR}/version.txt ver)
@@ -14,14 +14,46 @@ include(cmake/variables.cmake)
 
 include(GNUInstallDirs)
 
-option(USE_OPENSSL "use OpenSSL engine" OFF)
+set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls)")
 
-if(NOT USE_OPENSSL)
-    message("using mbedTLS libraries")
-    set(USE_MBEDTLS true)
-    set(tlsImpl mbedtls)
-else()
+if(NOT (TLSUV_TLSLIB STREQUAL "openssl" OR TLSUV_TLSLIB STREQUAL "mbedtls"))
+    message(FATAL_ERROR "`${TLSUV_TLSLIB}' TLS library is not supported")
+endif()
+
+cmake_dependent_option(USE_OPENSSL "Use OpenSSL" ON "TLSUV_TLSLIB STREQUAL openssl; NOT USE_MBEDTLS" OFF)
+cmake_dependent_option(USE_MBEDTLS "Use mbedTLS" ON "TLSUV_TLSLIB STREQUAL mbedtls" OFF)
+
+set(tlsuv_sources
+        src/uv_mbed.c
+        src/bio.c
+        src/http.c
+        src/tcp_src.c
+        src/um_debug.c
+        src/um_debug.h
+        src/websocket.c
+        src/http_req.c
+        src/tls_link.c
+        src/base64.c
+        src/tls_engine.c
+        src/compression.c
+        src/compression.h
+        )
+
+if(USE_OPENSSL)
     set(tlsImpl openssl)
+    LIST(APPEND tlsuv_sources
+            src/engine_openssl.c
+            )
+endif()
+
+if(USE_MBEDTLS)
+    set(tlsImpl mbedtls)
+    LIST(APPEND tlsuv_sources
+            src/engine_mbedtls.c
+            src/p11/p11_mbedtls/mbed_p11.c
+            src/p11/p11_mbedtls/p11_ecdsa.c
+            src/p11/p11_mbedtls/p11_rsa.c
+            )
 endif()
 
 find_package(libuv CONFIG QUIET)
@@ -40,39 +72,8 @@ find_package(llhttp CONFIG REQUIRED)
 
 add_subdirectory(deps)
 
-if (USE_MBEDTLS)
-set(p11_sources
-        src/p11/p11_mbedtls/mbed_p11.c
-        src/p11/p11_mbedtls/p11_ecdsa.c
-        src/p11/p11_mbedtls/p11_rsa.c)
-set(tls_engine_files
-        src/engine_mbedtls.c)
-elseif(USE_OPENSSL)
-set(tls_engine_files
-        src/engine_openssl.c)
-endif()
-
-set(tlsuv_sources
-        src/uv_mbed.c
-        src/bio.c
-        src/http.c
-        src/tcp_src.c
-        src/um_debug.c
-        src/um_debug.h
-        src/websocket.c
-        src/http_req.c
-        src/tls_link.c
-        src/base64.c
-        src/tls_engine.c
-        src/compression.c
-        src/compression.h
-        )
-
-
 add_library(tlsuv STATIC
         ${tlsuv_sources}
-        ${tls_engine_files}
-        ${p11_sources}
         )
 
 set_property(TARGET tlsuv PROPERTY C_STANDARD 99)
@@ -100,6 +101,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 if (USE_MBEDTLS)
+    include(deps/mbedtls.cmake)
     target_compile_definitions(tlsuv PRIVATE USE_MBEDTLS)
     target_link_libraries(tlsuv
             PRIVATE mbedtls

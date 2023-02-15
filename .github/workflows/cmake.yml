@@ -14,10 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu, macOS, windows]
-        openssl: [off]
-        include:
-          - os: ubuntu
-            openssl: on
+        tls: [ openssl, mbedtls ]
 
     steps:
     - name: Install tools
@@ -48,6 +45,7 @@ jobs:
       if: always() && matrix.os == 'ubuntu'
       with:
         configurePreset: ci-${{ matrix.os }}
+        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}` ]"
         buildPreset: ci-${{ matrix.os }}
         testPreset: ci-${{ matrix.os }}
         testPresetAdditionalArgs: "[ `--test-dir`, `${{ github.workspace }}/build`,  `--output-on-failure`, `--no-compress-output`, `-T`, `MemCheck` ]"
@@ -56,5 +54,5 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ matrix.os }}-${{ matrix.openssl }}-TestReport
+        name: ${{ matrix.os }}-${{ matrix.tls }}-TestReport
         path: ${{ github.workspace }}/build/Testing/

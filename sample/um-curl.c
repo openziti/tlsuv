@@ -42,6 +42,7 @@ static void do_request(uv_timer_t *t) {
 int main(int argc, char **argv) {
     struct app_ctx app = {
             .cycle = 10,
+            .count = 1,
     };
 
     tls_context *tls = NULL;

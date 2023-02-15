@@ -6,8 +6,24 @@
     "zlib",
     "llhttp"
   ],
-  "default-features": [],
+  "default-features": [ "tls" ],
   "features": {
+    "tls": {
+      "description": "default TLS implementation",
+      "dependencies": [
+        {
+          "name": "openssl"
+        }
+      ]
+    },
+    "openssl": {
+      "description": "use OpenSSL",
+      "dependencies": [ "openssl" ]
+    },
+    "mbedtls": {
+      "description": "use mbedTLS",
+      "dependencies": []
+    },
     "test": {
       "description": "Dependencies for testing",
       "dependencies": [
