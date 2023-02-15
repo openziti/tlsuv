@@ -25,16 +25,12 @@
 #include <tlsuv/tlsuv.h>
 
 #include <openssl/x509.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 #if _WIN32
 #include <wincrypt.h>
 #pragma comment (lib, "crypt32.lib")
-#else
-
-#include <unistd.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-
 #endif
 
 // inspired by https://golang.org/src/crypto/x509/root_linux.go
@@ -60,7 +56,6 @@ struct openssl_ctx {
 
 struct openssl_engine {
     SSL *ssl;
-    SSL_SESSION *session;
     char *alpn;
     BIO *in;
     BIO *out;
