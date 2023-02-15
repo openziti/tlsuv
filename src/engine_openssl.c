@@ -674,7 +674,7 @@ static const char* tls_get_alpn(void *engine) {
     SSL_get0_alpn_selected(eng->ssl, &proto, &protolen);
 
     eng->alpn = calloc(1, protolen + 1);
-    strcpy(eng->alpn, proto);
+    strncpy(eng->alpn, (const char*)proto, protolen);
     return eng->alpn;
 }
 
