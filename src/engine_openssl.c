@@ -673,7 +673,8 @@ static const char* tls_get_alpn(void *engine) {
     unsigned int protolen;
     SSL_get0_alpn_selected(eng->ssl, &proto, &protolen);
 
-    eng->alpn = strndup(proto, protolen);
+    eng->alpn = calloc(1, protolen + 1);
+    strcpy(eng->alpn, proto);
     return eng->alpn;
 }
 
