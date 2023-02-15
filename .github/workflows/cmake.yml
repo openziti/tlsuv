@@ -36,6 +36,7 @@ jobs:
       name: Build and Test
       with:
         configurePreset: ci-${{ matrix.os }}
+        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}` ]"
         buildPreset: ci-${{ matrix.os }}
         testPreset: ci-${{ matrix.os }}
         testPresetAdditionalArgs: "[ `--output-on-failure`, `--no-compress-output` ]"
