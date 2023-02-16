@@ -26,50 +26,7 @@ limitations under the License.
 #include <unistd.h>
 #endif
 
-TEST_CASE("key gen", "[engine]") {
-    tls_context *ctx = default_tls_context(nullptr, 0);
 
-    tls_private_key key;
-    REQUIRE(ctx->api->generate_key(&key) == 0);
-
-    char *pem;
-    size_t pemlen;
-    REQUIRE(ctx->api->write_key_to_pem(key, &pem, &pemlen) == 0);
-    printf("priv key:\n%.*s\n", (int)pemlen, pem);
-
-    tls_private_key k1;
-    char *pem2;
-    REQUIRE(ctx->api->load_key(&k1, pem, pemlen) == 0);
-    REQUIRE(ctx->api->write_key_to_pem(key, &pem2, &pemlen) == 0);
-
-    REQUIRE_THAT(pem2, Catch::Matchers::Equals(pem));
-    free(pem);
-    free(pem2);
-    ctx->api->free_key(&key);
-    ctx->api->free_key(&k1);
-    ctx->api->free_ctx(ctx);
-}
-
-TEST_CASE("gen csr", "[engine]") {
-    tls_context *ctx = default_tls_context(nullptr, 0);
-
-    tls_private_key key;
-    REQUIRE(ctx->api->generate_key(&key) == 0);
-
-    char *pem;
-    size_t pemlen;
-    REQUIRE(ctx->api->generate_csr_to_pem(key, &pem, &pemlen,
-                                          "C", "US",
-                                          "O", "OpenZiti",
-                                          "OU", "Developers",
-                                          "CN", "CSR test",
-                                          NULL) == 0);
-    printf("CSR:\n%.*s\n", (int)pemlen, pem);
-
-    ctx->api->free_key(&key);
-    ctx->api->free_ctx(ctx);
-    free(pem);
-}
 
 TEST_CASE("parse pkcs7", "[engine]") {
     const char *pkcs7 = R"(MIIL8QYJKoZIhvcNAQcCoIIL4jCCC94CAQExADALBgkqhkiG9w0BBwGgggvEMIIF

@@ -7,7 +7,10 @@ set(test_srcs
         http_tests.cpp
         ws_tests.cpp
         engine_tests.cpp
-        uv_mbed_tests.cpp compression_tests.cpp)
+        uv_mbed_tests.cpp
+        compression_tests.cpp
+        key_tests.cpp
+        )
 
 
 add_executable(all_tests
@@ -28,6 +31,7 @@ add_custom_target(run-tests
         COMMAND $<TARGET_FILE:all_tests> -r xml -o ${PROJECT_BINARY_DIR}/Testing/results.xml)
 
 include(CTest)
+add_test(key_tests all_tests.cpp [key])
 add_test(engine_tests all_tests [engine])
 add_test(http_tests all_tests [http])
 add_test(ws_tests all_tests [websocket])
