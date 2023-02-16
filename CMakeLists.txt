@@ -41,8 +41,9 @@ set(tlsuv_sources
 
 if(USE_OPENSSL)
     set(tlsImpl openssl)
+    FILE(GLOB ssl_files src/openssl/*)
     LIST(APPEND tlsuv_sources
-            src/engine_openssl.c
+            ${ssl_files}
             )
 endif()
 

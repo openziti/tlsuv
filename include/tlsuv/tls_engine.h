@@ -232,16 +232,6 @@ typedef struct {
     int (*load_key)(tlsuv_private_key_t *pk, const char* keydata, size_t keydatalen);
 
     /**
-     * Generate PEM representation of the private key.
-     *
-     * @param pk private key handle
-     * @param pem (out) address where allocated buffer pointer will be get stored
-     * @param pemlen size of produced PEM
-     * @returns 0 on success, or error code
-     */
-    int (*write_key_to_pem)(tlsuv_private_key_t pk, char **pem, size_t *pemlen);
-
-    /**
      * Create x509 signing request in PEM format
      * @param pk private key used for request
      * @param pem (out) address where allocated buffer pointer will be get stored
