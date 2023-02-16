@@ -28,6 +28,7 @@
 #include <mbedtls/pem.h>
 #include <mbedtls/error.h>
 
+#include "keys.h"
 #include "../bio.h"
 #include "mbed_p11.h"
 #include "../um_debug.h"
@@ -56,7 +57,7 @@ const char *const caFiles[] = {
 
 struct mbedtls_context {
     mbedtls_ssl_config config;
-    mbedtls_pk_context *own_key;
+    struct priv_key_s *own_key;
     mbedtls_x509_crt *own_cert;
     const char **alpn_protocols;
     int (*cert_verify_f)(void *cert, void *v_ctx);
@@ -93,8 +94,6 @@ static int mbedtls_close(void *engine, char *out, size_t *out_bytes, size_t maxo
 
 static int mbedtls_reset(void *engine);
 
-static const char *mbedtls_error(int code);
-
 static const char *mbedtls_version();
 
 static const char *mbedtls_eng_error(void *eng);
@@ -103,7 +102,6 @@ static void mbedtls_free(tls_engine *engine);
 
 static void mbedtls_free_ctx(tls_context *ctx);
 
-static void mbedtls_free_key(tls_private_key *k);
 static void mbedtls_free_cert(tls_cert *cert);
 
 static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx);
@@ -115,12 +113,7 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len
 
 static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
 
-static int write_key_pem(tls_private_key pk, char **pem, size_t *pemlen);
-
-static int gen_key(tls_private_key *key);
-static int load_key(tls_private_key *key, const char* keydata, size_t keydatalen);
-
-static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...);
+static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...);
 
 static tls_context_api mbedtls_context_api = {
         .version = mbedtls_version,
@@ -128,7 +121,6 @@ static tls_context_api mbedtls_context_api = {
         .new_engine = new_mbedtls_engine,
         .free_engine = mbedtls_free,
         .free_ctx = mbedtls_free_ctx,
-        .free_key = mbedtls_free_key,
         .free_cert = mbedtls_free_cert,
         .set_alpn_protocols = mbedtls_set_alpn_protocols,
         .set_own_cert = mbedtls_set_own_cert,
@@ -139,7 +131,6 @@ static tls_context_api mbedtls_context_api = {
         .write_cert_to_pem = write_cert_pem,
         .generate_key = gen_key,
         .load_key = load_key,
-        .write_key_to_pem = write_key_pem,
         .generate_csr_to_pem = generate_csr,
 };
 
@@ -165,7 +156,7 @@ static const char* mbedtls_version() {
     return MBEDTLS_VERSION_STRING_FULL;
 }
 
-static const char *mbedtls_error(int code) {
+const char *mbedtls_error(int code) {
     static char errbuf[1024];
     mbedtls_strerror(code, errbuf, sizeof(errbuf));
     return errbuf;
@@ -399,13 +390,6 @@ static void mbedtls_free(tls_engine *engine) {
     free(engine);
 }
 
-static void mbedtls_free_key(tls_private_key *k) {
-    mbedtls_pk_context *key = *k;
-    mbedtls_pk_free(key);
-    free(key);
-    *k = NULL;
-}
-
 static void mbedtls_free_cert(tls_cert *cert) {
     mbedtls_x509_crt *c = *cert;
     mbedtls_x509_crt_free(c);
@@ -432,7 +416,7 @@ static void mbedtls_set_alpn_protocols(void *ctx, const char** protos, int len) 
 
 static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
     struct mbedtls_context *c = ctx;
-    int rc = load_key((tls_private_key *) &c->own_key, key_buf, key_len);
+    int rc = load_key((tlsuv_private_key_t *) &c->own_key, key_buf, key_len);
     if (rc != 0) return rc;
 
 
@@ -446,14 +430,13 @@ static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len
             free(c->own_cert);
             c->own_cert = NULL;
 
-            mbedtls_pk_free(c->own_key);
-            free(c->own_key);
+            c->own_key->free((tlsuv_private_key_t)c->own_key);
             c->own_key = NULL;
             return rc;
         }
     }
 
-    rc = mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, c->own_key);
+    rc = mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, c->own_key->pkey);
     return rc;
 }
 
@@ -481,14 +464,13 @@ static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert
             free(c->own_cert);
             c->own_cert = NULL;
 
-            mbedtls_pk_free(c->own_key);
-            free(c->own_key);
+            c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
             c->own_key = NULL;
             return TLS_ERR;
         }
     }
 
-    mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, c->own_key);
+    mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, c->own_key->pkey);
     return TLS_OK;
 }
 
@@ -773,100 +755,12 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
     return 0;
 }
 
-static int write_key_pem(tls_private_key pk, char **pem, size_t *pemlen) {
-    mbedtls_pk_context *key = pk;
-    uint8_t keybuf[4096];
-    int ret;
-    if ((ret = mbedtls_pk_write_key_pem(key, keybuf, sizeof(keybuf))) != 0) {
-        UM_LOG(ERR, "mbedtls_pk_write_key_pem returned -0x%04x: %s", -ret, mbedtls_error(ret));
-        return ret;
-    }
 
-    *pemlen = strlen(keybuf) + 1;
-    *pem = strdup(keybuf);
-    return 0;
-}
+static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...) {
+    struct priv_key_s *k = (struct priv_key_s *) key;
 
-static int load_key(tls_private_key *key, const char* keydata, size_t keydatalen) {
-    mbedtls_pk_context *pk = calloc(1, sizeof(mbedtls_pk_context));
-    mbedtls_pk_init(pk);
-
-    mbedtls_ctr_drbg_context ctr_drbg;
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-
-    mbedtls_entropy_context entropy;
-    mbedtls_entropy_init(&entropy);
-
-    // todo move this into engine init?
-    int rc = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
-    if (rc != 0) {
-        mbedtls_pk_free(pk);
-        free(pk);
-        *key = NULL;
-        return rc;
-    }
-
-    rc = mbedtls_pk_parse_key(pk, (const unsigned char *) keydata, keydatalen, NULL, 0, mbedtls_ctr_drbg_random, &ctr_drbg);
-    if (rc < 0) {
-        rc = mbedtls_pk_parse_keyfile(pk, keydata, NULL, mbedtls_ctr_drbg_random, &ctr_drbg);
-        if (rc < 0) {
-            mbedtls_pk_free(pk);
-            free(pk);
-            *key = NULL;
-            return rc;
-        }
-    }
-    *key = pk;
-    return rc;
-}
-
-static int gen_key(tls_private_key *key) {
-
-    int ret;
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-    const char *pers = "gen_key";
-    mbedtls_ecp_group_id ec_curve = MBEDTLS_ECP_DP_SECP256R1;
-    mbedtls_pk_type_t pk_type = MBEDTLS_PK_ECKEY;
-
-    mbedtls_pk_context *pk = malloc(sizeof(mbedtls_pk_context));
-    mbedtls_pk_init(pk);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-
-    mbedtls_entropy_init(&entropy);
-
-    if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *) pers,
-                                     strlen(pers))) != 0) {
-        UM_LOG(ERR, "mbedtls_ctr_drbg_seed returned -0x%04x: %s", -ret, mbedtls_error(ret));
-        goto on_error;
-    }
-
-    // Generate the key
-    if ((ret = mbedtls_pk_setup(pk, mbedtls_pk_info_from_type(pk_type))) != 0) {
-        UM_LOG(ERR, "mbedtls_pk_setup returned -0x%04x: %s", -ret, mbedtls_error(ret));
-        goto on_error;
-    }
-
-    if ((ret = mbedtls_ecp_gen_key(ec_curve, mbedtls_pk_ec(*pk), mbedtls_ctr_drbg_random, &ctr_drbg)) != 0) {
-        UM_LOG(ERR, "mbedtls_ecp_gen_key returned -0x%04x: %s", -ret, mbedtls_error(ret));
-        goto on_error;
-    }
-
-    on_error:
-    if (ret != 0) {
-        mbedtls_pk_free(pk);
-        free(pk);
-    }
-    else {
-        *key = pk;
-    }
-
-    return ret;
-}
-
-static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...) {
     int ret = 1;
-    mbedtls_pk_context *pk = key;
+    mbedtls_pk_context *pk = k->pkey;
     mbedtls_ctr_drbg_context ctr_drbg;
     char buf[1024];
     mbedtls_entropy_context entropy;
