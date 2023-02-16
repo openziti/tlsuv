@@ -49,11 +49,10 @@ endif()
 
 if(USE_MBEDTLS)
     set(tlsImpl mbedtls)
+    FILE(GLOB ssl_files src/mbedtls/*)
+
     LIST(APPEND tlsuv_sources
-            src/engine_mbedtls.c
-            src/p11/p11_mbedtls/mbed_p11.c
-            src/p11/p11_mbedtls/p11_ecdsa.c
-            src/p11/p11_mbedtls/p11_rsa.c
+            ${ssl_files}
             )
 endif()
 

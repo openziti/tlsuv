@@ -28,9 +28,9 @@
 #include <mbedtls/pem.h>
 #include <mbedtls/error.h>
 
-#include "bio.h"
-#include "p11_mbedtls/mbed_p11.h"
-#include "um_debug.h"
+#include "../bio.h"
+#include "mbed_p11.h"
+#include "../um_debug.h"
 #include <tlsuv/tlsuv.h>
 
 #if _WIN32
