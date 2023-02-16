@@ -195,8 +195,8 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
         *key = NULL;
         return rc;
     }
-
-    rc = mbedtls_pk_parse_key(pk, (const unsigned char *) keydata, keydatalen + 1, NULL, 0, mbedtls_ctr_drbg_random, &ctr_drbg);
+    size_t keylen = keydata[keydatalen - 1] == 0 ? keydatalen : keydatalen + 1;
+    rc = mbedtls_pk_parse_key(pk, (const unsigned char *) keydata, keylen, NULL, 0, mbedtls_ctr_drbg_random, &ctr_drbg);
     if (rc < 0) {
         rc = mbedtls_pk_parse_keyfile(pk, keydata, NULL, mbedtls_ctr_drbg_random, &ctr_drbg);
         if (rc < 0) {
