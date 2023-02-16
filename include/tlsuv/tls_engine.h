@@ -115,25 +115,30 @@ typedef struct {
 } tls_engine;
 
 typedef struct tls_context_s tls_context;
+typedef struct tlsuv_public_key_s *tlsuv_public_key_t;
+typedef struct tlsuv_private_key_s *tlsuv_private_key_t;
 typedef void *tls_cert;
 
-#define TLSUV_PUBKEY_API \
-void (*free)(struct tlsuv_public_key_s *pubkey);                        \
-int (*verify)(struct tlsuv_public_key_s *pubkey, const char* signature, size_t siglen);
+#define TLSUV_PUBKEY_API                                                 \
+    void (*free)(struct tlsuv_public_key_s * pubkey);                    \
+    int (*verify)(struct tlsuv_public_key_s * pubkey, enum hash_algo md, \
+                  const char *data, size_t datalen, const char *sig, size_t siglen);
 
-#define TLSUV_PRIVKEY_API \
-void (*free)(struct tlsuv_private_key_s *privkey);                        \
-int (*sign)(struct tlsuv_private_key_s *privkey, const char* data, size_t datalen); \
-struct tlsuv_public_key_s* (*public)(struct tlsuv_private_key_s *privkey);
+#define TLSUV_PRIVKEY_API                                                           \
+    void (*free)(struct tlsuv_private_key_s * privkey);                             \
+    int (*sign)(struct tlsuv_private_key_s * privkey, enum hash_algo md,            \
+                const char *data, size_t datalen, char *sig, size_t *siglen); \
+    struct tlsuv_public_key_s *(*pubkey)(struct tlsuv_private_key_s * privkey);     \
+    int (*to_pem)(struct tlsuv_private_key_s * privkey, char **pem, size_t *pemlen);
 
-typedef struct tlsuv_public_key_s {
+struct tlsuv_public_key_s {
     TLSUV_PUBKEY_API
-} *tlsuv_public_key_t;
+};
 
 
-typedef struct tlsuv_private_key_s {
+struct tlsuv_private_key_s {
     TLSUV_PRIVKEY_API
-} *tlsuv_private_key_t;
+};
 
 typedef struct {
     /* creates new TLS engine for a host */
