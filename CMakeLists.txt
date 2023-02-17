@@ -84,7 +84,7 @@ target_include_directories(tlsuv
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/p11
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
         )
 
 find_package(ZLIB REQUIRED)

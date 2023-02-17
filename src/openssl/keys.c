@@ -136,7 +136,7 @@ static tlsuv_public_key_t privkey_pubkey(tlsuv_private_key_t pk) {
 static int privkey_to_pem(tlsuv_private_key_t pk, char **pem, size_t *pemlen) {
     BIO *b = BIO_new(BIO_s_mem());
     struct priv_key_s *privkey = (struct priv_key_s *) pk;
-    PEM_write_bio_PrivateKey(b, privkey->pkey, NULL, NULL, 0, NULL, NULL);
+    PEM_write_bio_PKCS8PrivateKey(b, privkey->pkey, NULL, NULL, 0, NULL, NULL);
     size_t len = BIO_ctrl_pending(b);
     *pem = calloc(1, len + 1);
     BIO_read(b, *pem, (int)len);

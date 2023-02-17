@@ -124,17 +124,16 @@ typedef void *tls_cert;
     int (*verify)(struct tlsuv_public_key_s * pubkey, enum hash_algo md, \
                   const char *data, size_t datalen, const char *sig, size_t siglen);
 
-#define TLSUV_PRIVKEY_API                                                           \
-    void (*free)(struct tlsuv_private_key_s * privkey);                             \
-    int (*sign)(struct tlsuv_private_key_s * privkey, enum hash_algo md,            \
-                const char *data, size_t datalen, char *sig, size_t *siglen); \
-    struct tlsuv_public_key_s *(*pubkey)(struct tlsuv_private_key_s * privkey);     \
+#define TLSUV_PRIVKEY_API                                                       \
+    void (*free)(struct tlsuv_private_key_s * privkey);                         \
+    int (*sign)(struct tlsuv_private_key_s * privkey, enum hash_algo md,        \
+                const char *data, size_t datalen, char *sig, size_t *siglen);   \
+    struct tlsuv_public_key_s *(*pubkey)(struct tlsuv_private_key_s * privkey); \
     int (*to_pem)(struct tlsuv_private_key_s * privkey, char **pem, size_t *pemlen);
 
 struct tlsuv_public_key_s {
     TLSUV_PUBKEY_API
 };
-
 
 struct tlsuv_private_key_s {
     TLSUV_PRIVKEY_API
