@@ -1,0 +1,18 @@
+version: "3.9"
+volumes:
+  certs:
+services:
+  httpbin_http:
+    image: mccutchen/go-httpbin:latest
+    ports:
+      - 8080:8080
+
+  httpbin_https:
+    image: mccutchen/go-httpbin:latest
+    ports:
+      - 8443:8080
+    volumes:
+      - ./certs:/certs
+    environment:
+      - HTTPS_CERT_FILE=/certs/server.crt
+      - HTTPS_KEY_FILE=/certs/server.key
