@@ -1,0 +1,7 @@
+openssl req -x509 -newkey rsa:4096 -nodes -keyout ca.key -out ca.pem -sha256 -days 3650 -subj "/C=US/ST=New York/O=openziti.org/CN=test CA"
+
+# server cert
+openssl genrsa -out server.key
+openssl req -new -key server.key -out server.csr -config localhost_san.conf
+openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -days 3650 -out server.crt -extensions v3_ext -extfile localhost_san.conf
+# openssl x509 -in server.csr -noout -text
