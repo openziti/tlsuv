@@ -41,18 +41,18 @@ set(tlsuv_sources
 
 if(USE_OPENSSL)
     set(tlsImpl openssl)
+    FILE(GLOB ssl_files src/openssl/*)
     LIST(APPEND tlsuv_sources
-            src/engine_openssl.c
+            ${ssl_files}
             )
 endif()
 
 if(USE_MBEDTLS)
     set(tlsImpl mbedtls)
+    FILE(GLOB ssl_files src/mbedtls/*)
+
     LIST(APPEND tlsuv_sources
-            src/engine_mbedtls.c
-            src/p11/p11_mbedtls/mbed_p11.c
-            src/p11/p11_mbedtls/p11_ecdsa.c
-            src/p11/p11_mbedtls/p11_rsa.c
+            ${ssl_files}
             )
 endif()
 
@@ -84,7 +84,7 @@ target_include_directories(tlsuv
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/p11
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
         )
 
 find_package(ZLIB REQUIRED)

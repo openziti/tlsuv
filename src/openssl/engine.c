@@ -20,13 +20,15 @@
 #include <string.h>
 #include <stdarg.h>
 
-#include "bio.h"
-#include "um_debug.h"
+#include "../bio.h"
+#include "../um_debug.h"
 #include <tlsuv/tlsuv.h>
 
 #include <openssl/x509.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+
+#include "keys.h"
 
 #if _WIN32
 #include <wincrypt.h>
@@ -47,7 +49,7 @@ const char *const caFiles[] = {
 
 struct openssl_ctx {
     SSL_CTX *ctx;
-    tls_private_key own_key;
+    struct priv_key_s *own_key;
     X509 *own_cert;
     int (*cert_verify_f)(void *cert, void *v_ctx);
     void *verify_ctx;
@@ -85,12 +87,10 @@ static int tls_close(void *engine, char *out, size_t *out_bytes, size_t maxout);
 static int tls_reset(void *engine);
 
 static const char* tls_lib_version();
-static const char *tls_error(int code);
 static const char *tls_eng_error(void *eng);
 
 static void tls_free(tls_engine *engine);
 static void tls_free_ctx(tls_context *ctx);
-static void tls_free_key(tls_private_key *k);
 static void tls_free_cert(tls_cert *cert);
 
 static void tls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx);
@@ -102,15 +102,11 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len
 
 static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
 
-static int write_key_pem(tls_private_key pk, char **pem, size_t *pemlen);
-
-static int gen_key(tls_private_key *key);
-static int load_key(tls_private_key *key, const char* keydata, size_t keydatalen);
-
-static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...);
+static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...);
 
 static void msg_cb (int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg);
 static void info_cb(const SSL *s, int where, int ret);
+
 
 static tls_context_api openssl_context_api = {
         .version = tls_lib_version,
@@ -118,7 +114,6 @@ static tls_context_api openssl_context_api = {
         .new_engine = new_openssl_engine,
         .free_engine = tls_free,
         .free_ctx = tls_free_ctx,
-        .free_key = tls_free_key,
         .free_cert = tls_free_cert,
         .set_own_cert = tls_set_own_cert,
         .set_own_cert_pkcs11 = tls_set_own_cert_pkcs11,
@@ -129,7 +124,6 @@ static tls_context_api openssl_context_api = {
         .write_cert_to_pem = write_cert_pem,
         .generate_key = gen_key,
         .load_key = load_key,
-        .write_key_to_pem = write_key_pem,
         .generate_csr_to_pem = generate_csr,
 };
 
@@ -149,11 +143,10 @@ static const char* tls_lib_version() {
     return OpenSSL_version(OPENSSL_VERSION);
 }
 
-static const char *tls_error(int code) {
+const char *tls_error(int code) {
     static char errbuf[1024];
     ERR_error_string_n(code, errbuf, sizeof(errbuf));
     return errbuf;
-
 }
 
 static const char *tls_eng_error(void *eng) {
@@ -454,6 +447,8 @@ static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
     return 0;
 }
 
+
+
 static void tls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx) {
     struct openssl_ctx *c = ctx->ctx;
     c->cert_verify_f = verify_f;
@@ -462,33 +457,8 @@ static void tls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, vo
     SSL_CTX_set_cert_verify_callback(c->ctx, cert_verify_cb, c);
 }
 
-
 static int tls_verify_signature(void *cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
-    int rc = 0;
-    EVP_MD_CTX *digest = EVP_MD_CTX_new();
-    EVP_PKEY_CTX *pctx = NULL;
-    EVP_PKEY *pk = X509_get_pubkey(cert);
-    switch (md) {
-        case hash_SHA256:
-            EVP_DigestVerifyInit(digest, &pctx, EVP_sha256(), NULL, pk);
-            break;
-        case hash_SHA384:
-            EVP_DigestVerifyInit(digest, &pctx, EVP_sha384(), NULL, pk);
-            break;
-        case hash_SHA512:
-            EVP_DigestVerifyInit(digest, &pctx, EVP_sha512(), NULL, pk);
-            break;
-        default:
-            break;
-    }
-
-    if (!EVP_DigestVerify(digest, (const uint8_t *) sig, siglen, (const uint8_t *) data, datalen)) {
-        rc = -1;
-    }
-    EVP_PKEY_free(pk);
-    EVP_MD_CTX_free(digest);
-
-    return rc;
+    return verify_signature(X509_get_pubkey(cert), md, data, datalen, sig, siglen);
 }
 
 static void tls_free_ctx(tls_context *ctx) {
@@ -496,7 +466,10 @@ static void tls_free_ctx(tls_context *ctx) {
     if (c->alpn_protocols) {
         free(c->alpn_protocols);
     }
-    tls_free_key(&c->own_key);
+    if (c->own_key) {
+        c->own_key->free(c->own_key);
+        c->own_key = NULL;
+    }
     SSL_CTX_free(c->ctx);
     free(c);
     free(ctx);
@@ -521,12 +494,6 @@ static void tls_free(tls_engine *engine) {
     }
     free(e);
     free(engine);
-}
-
-static void tls_free_key(tls_private_key *k) {
-    EVP_PKEY *key = *k;
-    EVP_PKEY_free(key);
-    *k = NULL;
 }
 
 static void tls_free_cert(tls_cert *cert) {
@@ -569,7 +536,7 @@ if ((op) != 1) { \
 static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
     struct openssl_ctx *c = ctx;
     SSL_CTX *ssl = c->ctx;
-    int rc = load_key(&c->own_key, key_buf, key_len);
+    int rc = load_key((tlsuv_private_key_t *) &c->own_key, key_buf, key_len);
     if (rc != 0) return rc;
 
     X509_STORE_CTX *certs = load_certs(cert_buf, cert_len);
@@ -582,7 +549,7 @@ static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, co
     SSL_OP_CHECK(SSL_CTX_use_certificate(ssl, crt), "set own cert");
     c->own_cert = crt;
 
-    SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, c->own_key), "set own key");
+    SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, c->own_key->pkey), "set own key");
     SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
 
     X509_STORE_CTX_free(certs);
@@ -785,9 +752,6 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7buf, size_t pkcs7
     return 0;
 }
 
-#define PEM_BEGIN_CRT           "-----BEGIN CERTIFICATE-----\n"
-#define PEM_END_CRT             "-----END CERTIFICATE-----\n"
-
 static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen) {
     X509_STORE *store = cert;
 
@@ -811,65 +775,15 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
 }
 
 
-static int write_key_pem(tls_private_key pk, char **pem, size_t *pemlen) {
-    BIO *b = BIO_new(BIO_s_mem());
-    PEM_write_bio_PrivateKey(b, pk, NULL, NULL, 0, NULL, NULL);
-    size_t len = BIO_ctrl_pending(b);
-    *pem = calloc(1, len + 1);
-    BIO_read(b, *pem, len);
-    *pemlen = len;
-    BIO_free(b);
-    return 0;
-}
-
-static int load_key(tls_private_key *key, const char* keydata, size_t keydatalen) {
-    // try file
-    BIO *kb;
-    int rc = 0;
-    FILE *kf = fopen(keydata, "r");
-    if (kf != NULL) {
-        kb = BIO_new_fp(kf, 1);
-    } else {
-        kb = BIO_new_mem_buf(keydata, keydatalen);
-    }
-
-    EVP_PKEY *pk = NULL;
-    if (!PEM_read_bio_PrivateKey(kb, &pk, NULL, NULL)) {
-        rc = -1;
-    } else {
-        *key = pk;
-
-    }
-    BIO_free(kb);
-    return rc;
-}
 
 
-static int gen_key(tls_private_key *key) {
-    int rc = 0;
-    EVP_PKEY *pk = EVP_PKEY_new();
-    EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
-    EVP_PKEY_keygen_init(pctx);
-    EVP_PKEY_CTX_set_ec_paramgen_curve_nid(pctx, NID_X9_62_prime256v1);
-
-    if (!EVP_PKEY_keygen(pctx, &pk)) {
-        uint32_t err = ERR_get_error();
-        UM_LOG(ERR, "failed to generate key: %d(%s)", err, tls_error(err));
-        rc = -1;
-    }
-
-    if (rc == 0)
-        *key = pk;
-
-    EVP_PKEY_CTX_free(pctx);
-    return rc;
-}
 
 
-static int generate_csr(tls_private_key key, char **pem, size_t *pemlen, ...) {
+static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...) {
+    struct priv_key_s *privkey = (struct priv_key_s *) key;
     int ret = 0;
     const char* op = "";
-    EVP_PKEY *pk = key;
+    EVP_PKEY *pk = privkey->pkey;
     X509_REQ *req = X509_REQ_new();
     X509_NAME *subj = X509_REQ_get_subject_name(req);
     BIO *b = BIO_new(BIO_s_mem());
