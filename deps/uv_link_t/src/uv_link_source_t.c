@@ -81,6 +81,7 @@ static int uv_link_source_write(uv_link_t* link,
                                 void* arg) {
   uv_link_source_t* s;
   uv_link_source_write_t* req;
+  int rc;
 
   s = (uv_link_source_t*) link;
   req = malloc(sizeof(*req));
@@ -91,8 +92,12 @@ static int uv_link_source_write(uv_link_t* link,
   req->write_cb = cb;
   req->arg = arg;
 
-  return uv_write2(&req->req, s->stream, bufs, nbufs, send_handle,
-                   uv_link_source_wrap_write_cb);
+  rc = uv_write2(&req->req, s->stream, bufs, nbufs, send_handle,
+                 uv_link_source_wrap_write_cb);
+  if (rc != 0) {
+    free(req);
+  }
+  return rc;
 }
 
 
@@ -122,6 +127,7 @@ static int uv_link_source_shutdown(uv_link_t* link,
                                    void* arg) {
   uv_link_source_t* s;
   uv_link_source_shutdown_t* req;
+  int rc;
 
   s = (uv_link_source_t*) link;
 
@@ -133,7 +139,11 @@ static int uv_link_source_shutdown(uv_link_t* link,
   req->shutdown_cb = cb;
   req->arg = arg;
 
-  return uv_shutdown(&req->req, s->stream, uv_link_source_wrap_shutdown_cb);
+  rc = uv_shutdown(&req->req, s->stream, uv_link_source_wrap_shutdown_cb);
+  if (rc != 0) {
+    free(req);
+  }
+  return rc;
 }
 
 
