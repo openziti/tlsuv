@@ -143,3 +143,17 @@ TEST_CASE("gen csr", "[engine]") {
     ctx->api->free_ctx(ctx);
     free(pem);
 }
+
+#if defined(HSM_CONFIG)
+#define xstr(s) str(s)
+#define str(s) #s
+
+TEST_CASE("pkcs11", "[key]") {
+    tls_context *ctx = default_tls_context(nullptr, 0);
+    tlsuv_private_key_t key;
+
+    REQUIRE(ctx->api->load_pkcs11_key != nullptr);
+    auto rc = ctx->api->load_pkcs11_key(&key, xstr(HSM_LIB), nullptr, "2222", nullptr, "test-ec");
+    CHECK(rc == 0);
+}
+#endif

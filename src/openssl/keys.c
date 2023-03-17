@@ -12,9 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#define OPENSSL_API_LEVEL 101010
+
 #include <openssl/types.h>
 #include <openssl/evp.h>
 
+#include <assert.h>
+#include <openssl/engine.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <tlsuv/tlsuv.h>
@@ -167,6 +171,11 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
     }
     BIO_free(kb);
     return rc;
+}
+
+int load_pkcs11_key(struct priv_key_s *k, const char *lib, const char *slot, const char *pin, const char *id, const char *label) {
+    UM_LOG(ERR, "not implemented");
+    return -1;
 }
 
 

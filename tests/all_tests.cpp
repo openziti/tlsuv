@@ -39,7 +39,13 @@ static void test_log_f(int lvl, const char *file, unsigned int line, const char*
 
 tlsuv_log_func test_log = test_log_f;
 
+#define xstr(s) str(s)
+#define str(s) #s
+
 int main( int argc, char* argv[] ) {
+#if defined(HSM_CONFIG)
+    uv_os_setenv("SOFTHSM2_CONF", xstr(HSM_CONFIG));
+#endif
     uv_gettimeofday(&start);
     const char* debug = getenv("TLSUV_TEST_LOG");
     if (debug) {

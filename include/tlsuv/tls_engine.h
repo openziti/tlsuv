@@ -230,6 +230,8 @@ typedef struct {
      */
     int (*load_key)(tlsuv_private_key_t *pk, const char* keydata, size_t keydatalen);
 
+    int (*load_pkcs11_key)(tlsuv_private_key_t *pk, const char* pkcs11driver, const char *slot, const char *pin, const char *id, const char *label);
+
     /**
      * Create x509 signing request in PEM format
      * @param pk private key used for request
