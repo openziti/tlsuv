@@ -79,7 +79,7 @@ typedef enum http_request_state {
 /**
  * @brief HTTP responce object passed into #um_http_resp_cb.
  */
-typedef struct tlsuv_http_resp_s {
+struct tlsuv_http_resp_s {
     tlsuv_http_req_t *req;
 
     char http_version[4];
@@ -91,13 +91,13 @@ typedef struct tlsuv_http_resp_s {
 
     /** @brief callback called with response body data. May be called multiple times, last one with `len` of `UV_EOF` */
     tlsuv_http_body_cb body_cb;
-} tlsuv_http_resp_t;
+};
 
 /**
  * HTTP request object.
  *
  */
-typedef struct tlsuv_http_req_s {
+struct tlsuv_http_req_s {
 
     struct tlsuv_http_s *client;
     char *method;
@@ -121,12 +121,12 @@ typedef struct tlsuv_http_req_s {
     tlsuv_http_resp_t resp;
 
     STAILQ_ENTRY(tlsuv_http_req_s) _next;
-} tlsuv_http_req_t;
+};
 
 /**
  * @brief HTTP client struct
  */
-typedef struct tlsuv_http_s {
+struct tlsuv_http_s {
     char *host;
     char port[6];
     char *prefix;
@@ -155,7 +155,7 @@ typedef struct tlsuv_http_s {
 
     void *data;
     tlsuv_http_close_cb close_cb;
-} tlsuv_http_t;
+};
 
 /**
  * Initialize HTTP client

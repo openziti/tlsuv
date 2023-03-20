@@ -16,6 +16,7 @@
 #error "USE_OPENSSL must be set to compile this file"
 #endif
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>

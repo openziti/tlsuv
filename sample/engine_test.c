@@ -22,6 +22,7 @@
 #define SOCKET int //differences tween windows and posix
 #endif
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

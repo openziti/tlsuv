@@ -21,10 +21,10 @@
 #define to_str1(s) #s
 #define to_str(s) to_str1(s)
 
-#ifdef UV_MBED_VERSION
-#define UM_VERS to_str(UV_MBED_VERSION)
+#ifdef TLSUV_VERSION
+#define TLSUV_VERS to_str(TLSUV_VERSION)
 #else
-#define UM_VERS "<unknown>"
+#define TLSUV_VERS "<unknown>"
 #endif
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
@@ -57,21 +57,21 @@ tls_context *get_default_tls() {
 }
 
 const char* tlsuv_version() {
-    return UM_VERS;
+    return TLSUV_VERS;
 }
 
-int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *mbed, tls_context *tls) {
-    mbed->loop = l;
+int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
+    clt->loop = l;
 
-    mbed->socket = calloc(1, sizeof(*mbed->socket));
-    tcp_src_init(l, mbed->socket);
+    clt->socket = calloc(1, sizeof(*clt->socket));
+    tcp_src_init(l, clt->socket);
 
-    uv_link_init((uv_link_t *) mbed, &mbed_methods);
-    mbed->tls = tls != NULL ? tls : get_default_tls();
-    mbed->tls_engine = NULL;
-    mbed->host = NULL;
-    mbed->conn_req = NULL;
-    mbed->close_cb = NULL;
+    uv_link_init((uv_link_t *) clt, &mbed_methods);
+    clt->tls = tls != NULL ? tls : get_default_tls();
+    clt->tls_engine = NULL;
+    clt->host = NULL;
+    clt->conn_req = NULL;
+    clt->close_cb = NULL;
 
     return 0;
 }
@@ -93,18 +93,18 @@ static void on_mbed_close(uv_link_t *l) {
     if(mbed->close_cb) mbed->close_cb((uv_handle_t *) mbed);
 }
 
-int tlsuv_stream_close(tlsuv_stream_t *session, uv_close_cb close_cb) {
-    session->close_cb = close_cb;
-    uv_link_propagate_close((uv_link_t *) session, (uv_link_t *) session, on_mbed_close);
+int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
+    clt->close_cb = close_cb;
+    uv_link_propagate_close((uv_link_t *) clt, (uv_link_t *) clt, on_mbed_close);
     return 0;
 }
 
-int tlsuv_stream_keepalive(tlsuv_stream_t *mbed, int keepalive, unsigned int delay) {
-    return tcp_src_keepalive(mbed->socket, keepalive, delay);
+int tlsuv_stream_keepalive(tlsuv_stream_t *clt, int keepalive, unsigned int delay) {
+    return tcp_src_keepalive(clt->socket, keepalive, delay);
 }
 
-int tlsuv_stream_nodelay(tlsuv_stream_t *mbed, int nodelay) {
-    return tcp_src_nodelay(mbed->socket, nodelay);
+int tlsuv_stream_nodelay(tlsuv_stream_t *clt, int nodelay) {
+    return tcp_src_nodelay(clt->socket, nodelay);
 }
 
 static void on_tls_hs(tls_link_t *tls_link, int status) {
@@ -127,57 +127,57 @@ static void on_tls_hs(tls_link_t *tls_link, int status) {
 }
 
 static void on_src_connect(tlsuv_src_t *src, int status, void *ctx) {
-    tlsuv_stream_t *mbed = ctx;
+    tlsuv_stream_t *clt = ctx;
 
     if (status == 0) {
-        if (mbed->tls_engine != NULL) {
-            mbed->tls->api->free_engine(mbed->tls_engine);
+        if (clt->tls_engine != NULL) {
+            clt->tls->api->free_engine(clt->tls_engine);
         }
-        void *data = mbed->data;
-        mbed->tls_engine = mbed->tls->api->new_engine(mbed->tls->ctx, mbed->host);
-        tlsuv_tls_link_init(&mbed->tls_link, mbed->tls_engine, on_tls_hs);
-        uv_link_init((uv_link_t *) mbed, &mbed_methods);
-        mbed->data = data;
+        void *data = clt->data;
+        clt->tls_engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
+        tlsuv_tls_link_init(&clt->tls_link, clt->tls_engine, on_tls_hs);
+        uv_link_init((uv_link_t *) clt, &mbed_methods);
+        clt->data = data;
 
-        mbed->tls_link.data = mbed;
-        uv_link_chain(src->link, (uv_link_t *)&mbed->tls_link);
-        uv_link_chain((uv_link_t *) &mbed->tls_link, (uv_link_t *) mbed);
-        uv_link_read_start((uv_link_t *) mbed);
+        clt->tls_link.data = clt;
+        uv_link_chain(src->link, (uv_link_t *)&clt->tls_link);
+        uv_link_chain((uv_link_t *) &clt->tls_link, (uv_link_t *) clt);
+        uv_link_read_start((uv_link_t *) clt);
     } else {
         UM_LOG(WARN, "failed to connect");
-        mbed->conn_req->cb(mbed->conn_req, status);
-        mbed->conn_req = NULL;
+        clt->conn_req->cb(clt->conn_req, status);
+        clt->conn_req = NULL;
     }
 }
 
-int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *mbed, const char *host, int port, uv_connect_cb cb) {
+int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *host, int port, uv_connect_cb cb) {
     if (!req) {
         return UV_EINVAL;
     }
-    if (mbed->conn_req != NULL) {
+    if (clt->conn_req != NULL) {
         return UV_EALREADY;
     }
 
     char portstr[6];
     sprintf(portstr, "%d", port);
 
-    req->handle = (uv_stream_t *) mbed;
+    req->handle = (uv_stream_t *) clt;
     req->cb = cb;
-    if (mbed->host) free (mbed->host);
-    mbed->host = strdup(host);
-    mbed->conn_req = req;
+    if (clt->host) free (clt->host);
+    clt->host = strdup(host);
+    clt->conn_req = req;
 
-    if (!mbed->socket) {
-        mbed->socket = calloc(1, sizeof(*mbed->socket));
-        tcp_src_init(mbed->loop, mbed->socket);
+    if (!clt->socket) {
+        clt->socket = calloc(1, sizeof(*clt->socket));
+        tcp_src_init(clt->loop, clt->socket);
     }
 
-    return mbed->socket->connect((tlsuv_src_t *) mbed->socket, host, portstr, on_src_connect, mbed);
+    return clt->socket->connect((tlsuv_src_t *) clt->socket, host, portstr, on_src_connect, clt);
 }
 
-int tlsuv_stream_read(tlsuv_stream_t *client, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
-    client->alloc_cb = (uv_link_alloc_cb) alloc_cb;
-    client->read_cb = (uv_link_read_cb) read_cb;
+int tlsuv_stream_read(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
+    clt->alloc_cb = (uv_link_alloc_cb) alloc_cb;
+    clt->read_cb = (uv_link_read_cb) read_cb;
     return 0;
 }
 
@@ -186,25 +186,25 @@ static void on_mbed_link_write(uv_link_t* l, int status, void *ctx) {
     wr->cb(wr, status);
 }
 
-int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *mbed, uv_buf_t *buf, uv_write_cb cb) {
-    req->handle = (uv_stream_t *) mbed;
+int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_write_cb cb) {
+    req->handle = (uv_stream_t *) clt;
     req->cb = cb;
-    return uv_link_write((uv_link_t *) mbed, buf, 1, NULL, on_mbed_link_write, req);
+    return uv_link_write((uv_link_t *) clt, buf, 1, NULL, on_mbed_link_write, req);
 }
 
-int tlsuv_stream_free(tlsuv_stream_t *session) {
-    if (session->host) {
-        free(session->host);
-        session->host = NULL;
+int tlsuv_stream_free(tlsuv_stream_t *clt) {
+    if (clt->host) {
+        free(clt->host);
+        clt->host = NULL;
     }
-    if (session->tls_engine) {
-        session->tls->api->free_engine(session->tls_engine);
-        session->tls_engine = NULL;
+    if (clt->tls_engine) {
+        clt->tls->api->free_engine(clt->tls_engine);
+        clt->tls_engine = NULL;
     }
-    if (session->socket) {
-        tcp_src_free(session->socket);
-        free(session->socket);
-        session->socket = NULL;
+    if (clt->socket) {
+        tcp_src_free(clt->socket);
+        free(clt->socket);
+        clt->socket = NULL;
     }
     return 0;
 }
