@@ -13,22 +13,19 @@
 // limitations under the License.
 
 /**
- * @file um_http_src_t.h
- * @brief header file for um_http_src_t type
+ * @file ttp_src_t.h
+ * @brief header file for tlsuv_src_t type
  *
  */
 
-#ifndef TLSUV_HTTP_SRC_T_H
-#define TLSUV_HTTP_SRC_T_H
+#ifndef TLSUV_SRC_T_H
+#define TLSUV_SRC_T_H
 
 #include <uv_link_t.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-// forward ref
-typedef struct tlsuv_http_s tlsuv_http_t;
 
 /**
  * Source link types
@@ -50,12 +47,12 @@ typedef void (*tlsuv_src_release_t)(tlsuv_src_t *sl);
     tlsuv_src_release_t release;
 
 
-typedef struct tlsuv_src_s {
+struct tlsuv_src_s {
     tlsuv_SRC_FIELDS
-} tlsuv_src_t;
+};
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif//TLSUV_HTTP_SRC_T_H
+#endif//TLSUV_SRC_T_H

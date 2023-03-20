@@ -21,7 +21,7 @@
 #ifndef TLSUV_TCP_SRC_H
 #define TLSUV_TCP_SRC_H
 
-#include "http_src_t.h"
+#include "src_t.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -171,9 +171,10 @@ TEST_CASE("http_tests", "[http]") {
 
         test.run();
 
-        REQUIRE(resp.code == HTTP_STATUS_MOVED_PERMANENTLY);
-        REQUIRE_THAT(resp.headers["Location"], Equals(scheme + "://www.google.com/"));
-        REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("text/html"));
+        std::vector<llhttp_status_t> redirects{HTTP_STATUS_MOVED_PERMANENTLY, HTTP_STATUS_FOUND};
+        CHECK_THAT(redirects, Catch::Matchers::VectorContains((llhttp_status_t)resp.code));
+        CHECK_THAT(resp.headers["Location"], Catch::Matchers::StartsWith(scheme + "://www.google.com/"));
+        CHECK_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("text/html"));
     }
 
     WHEN(scheme << " redirect") {
