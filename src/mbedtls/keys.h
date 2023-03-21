@@ -25,7 +25,7 @@ struct pub_key_s {
 
 struct priv_key_s {
     TLSUV_PRIVKEY_API
-    struct mbedtls_pk_context *pkey;
+    struct mbedtls_pk_context pkey;
 };
 
 const char *mbedtls_error(int code);

@@ -437,7 +437,7 @@ static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len
         }
     }
 
-    rc = mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, c->own_key->pkey);
+    rc = mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, &c->own_key->pkey);
     return rc;
 }
 
@@ -445,11 +445,11 @@ static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert
         const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id) {
 
     struct mbedtls_context *c = ctx;
-    c->own_key = calloc(1, sizeof(mbedtls_pk_context));
-    int rc = mp11_load_key(c->own_key, pkcs11_lib, pin, slot, key_id);
+    c->own_key = calloc(1, sizeof(*c->own_key));
+    int rc = mp11_load_key(&c->own_key->pkey, pkcs11_lib, pin, slot, key_id);
     if (rc != CKR_OK) {
         fprintf(stderr, "failed to load private key - %s", p11_strerror(rc));
-        mbedtls_pk_free(c->own_key);
+        mbedtls_pk_free(&c->own_key->pkey);
         free(c->own_key);
         c->own_key = NULL;
         return TLS_ERR;
@@ -471,7 +471,7 @@ static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert
         }
     }
 
-    mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, c->own_key->pkey);
+    mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, &c->own_key->pkey);
     return TLS_OK;
 }
 
@@ -761,7 +761,7 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
     struct priv_key_s *k = (struct priv_key_s *) key;
 
     int ret = 1;
-    mbedtls_pk_context *pk = k->pkey;
+    mbedtls_pk_context *pk = &k->pkey;
     mbedtls_ctr_drbg_context ctr_drbg;
     char buf[1024];
     mbedtls_entropy_context entropy;

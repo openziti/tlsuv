@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /**
- * @file ttp_src_t.h
+ * @file src_t.h
  * @brief header file for tlsuv_src_t type
  *
  */
