@@ -16,7 +16,6 @@
 #define TLSUV_H
 
 #include <uv.h>
-#include <stdbool.h>
 #include <uv_link_t.h>
 
 #include "tcp_src.h"
@@ -34,21 +33,21 @@ typedef struct tlsuv_stream_s tlsuv_stream_t;
 typedef void(*tlsuv_log_func)(int level, const char *file, unsigned int line, const char *msg);
 void tlsuv_set_debug(int level, tlsuv_log_func output_f);
 
-int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *mbed, tls_context *tls);
-int tlsuv_stream_keepalive(tlsuv_stream_t *mbed, int keepalive, unsigned int delay);
-int tlsuv_stream_nodelay(tlsuv_stream_t *mbed, int nodelay);
+int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls);
+int tlsuv_stream_keepalive(tlsuv_stream_t *clt, int keepalive, unsigned int delay);
+int tlsuv_stream_nodelay(tlsuv_stream_t *clt, int nodelay);
 
-int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *mbed, const char *host, int port, uv_connect_cb cb);
+int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *host, int port, uv_connect_cb cb);
 
-int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *mbed, const struct addrinfo *addr, uv_connect_cb cb);
+int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const struct addrinfo *addr, uv_connect_cb cb);
 
-int tlsuv_stream_read(tlsuv_stream_t *client, uv_alloc_cb, uv_read_cb);
+int tlsuv_stream_read(tlsuv_stream_t *clt, uv_alloc_cb, uv_read_cb);
 
-int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *mbed, uv_buf_t *buf, uv_write_cb cb);
+int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_write_cb cb);
 
-int tlsuv_stream_close(tlsuv_stream_t *session, uv_close_cb close_cb);
+int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb);
 
-int tlsuv_stream_free(tlsuv_stream_t *session);
+int tlsuv_stream_free(tlsuv_stream_t *clt);
 
 struct tlsuv_stream_s {
     UV_LINK_FIELDS

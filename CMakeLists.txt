@@ -24,7 +24,7 @@ cmake_dependent_option(USE_OPENSSL "Use OpenSSL" ON "TLSUV_TLSLIB STREQUAL opens
 cmake_dependent_option(USE_MBEDTLS "Use mbedTLS" ON "TLSUV_TLSLIB STREQUAL mbedtls" OFF)
 
 set(tlsuv_sources
-        src/uv_mbed.c
+        src/tlsuv.c
         src/bio.c
         src/http.c
         src/tcp_src.c
