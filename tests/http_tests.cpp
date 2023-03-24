@@ -297,7 +297,7 @@ TEST_CASE("http_tests", "[http]") {
 
 TEST_CASE("client_cert_test","[http]") {
     UvLoopTest test;
-    tls_context *tls = default_tls_context(nullptr, 0);
+    tls_context *tls = NULL;
 
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
@@ -323,7 +323,8 @@ TEST_CASE("client_cert_test","[http]") {
 
     WHEN("client cert set") {
         tlsuv_http_init(test.loop, &clt, testServerURL("auth").c_str());
-        tlsuv_http_set_ssl(&clt, testServerTLS());
+        tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+        tlsuv_http_set_ssl(&clt, tls);
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
         // client cert downloaded from https://badssl.com/download/
@@ -382,8 +383,8 @@ TEST_CASE("client_cert_test","[http]") {
                       "c7ugThP6iMPNVAycWkIF4vvHTwZ9RCSmEQabRaqGGLz/bhLL3fi3lPGCR+iW2Dxq\n"
                       "GTH3fhaM/pZZGdIC75x/69Y=\n"
                       "-----END PRIVATE KEY-----";
-        tls->api->set_own_cert(tls->ctx, cert, strlen(cert) + 1, key, strlen(key) + 1);
-        tlsuv_http_set_ssl(&clt, tls);
+        int rc = tls->api->set_own_cert(tls->ctx, cert, strlen(cert) + 1, key, strlen(key) + 1);
+        CHECK(rc == 0);
 
         test.run();
 
@@ -394,7 +395,8 @@ TEST_CASE("client_cert_test","[http]") {
     }
 
     tlsuv_http_close(&clt, nullptr);
-    tls->api->free_ctx(tls);
+    if (tls)
+        tls->api->free_ctx(tls);
 }
 
 const int ONE_SECOND = 1000000;
@@ -581,6 +583,7 @@ TEST_CASE("multiple requests", "[http]") {
 
     tlsuv_http_t clt;
     tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
 
     resp_capture resp1(resp_body_cb);
     tlsuv_http_req_t *req1 = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp1);
@@ -638,9 +641,8 @@ TEST_CASE("TLS reconnect", "[http]") {
     resp_capture resp(resp_body_cb);
     resp_capture resp2(resp_body_cb);
 
-    tls_context *tls = default_tls_context(nullptr, 0);
     tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
-    tlsuv_http_set_ssl(&clt, tls);
+    tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_header(&clt, "Connection", "close");
 
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
@@ -652,8 +654,6 @@ TEST_CASE("TLS reconnect", "[http]") {
     CHECK(resp2.code == 200);
 
     tlsuv_http_close(&clt, nullptr);
-
-    tls->api->free_ctx(tls);
 }
 
 typedef struct verify_ctx_s {
@@ -677,9 +677,8 @@ TEST_CASE("large POST(GH-87)", "[http][gh-87]") {
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
 
-    tls_context *tls = default_tls_context(nullptr, 0);
     tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
-    tlsuv_http_set_ssl(&clt, tls);
+    tlsuv_http_set_ssl(&clt, testServerTLS());
 
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/anything", resp_capture_cb, &resp);
     int buf_size = 64 * 1024;
@@ -698,8 +697,6 @@ TEST_CASE("large POST(GH-87)", "[http][gh-87]") {
 
     tlsuv_http_close(&clt, nullptr);
     free(buf);
-
-    tls->api->free_ctx(tls);
 }
 
 TEST_CASE("TLS verify with JWT", "[http]") {
@@ -807,6 +804,7 @@ TEST_CASE("HTTP gzip", "[http]") {
     auto clt = new tlsuv_http_t;
     resp_capture resp(resp_body_cb);
     tlsuv_http_init(test.loop, clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(clt, testServerTLS());
     tlsuv_http_req_t *req = tlsuv_http_req(clt, "GET", "/gzip", resp_capture_cb, &resp);
 
     test.run();
@@ -832,6 +830,7 @@ TEST_CASE("HTTP deflate", "[http]") {
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
     tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/deflate", resp_capture_cb, &resp);
 
     test.run();
