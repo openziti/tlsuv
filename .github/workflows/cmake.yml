@@ -50,7 +50,7 @@ jobs:
     - name: start test server
       if: matrix.os != 'windows'
       run: |
-        ${{ github.workspace }}/build/test-server -keyfile ./tests/certs/server.key -certfile ./tests/certs/server.crt
+        ${{ github.workspace }}/build/test-server -keyfile ./tests/certs/server.key -certfile ./tests/certs/server.crt &
 
     - name: start test server
       if: matrix.os == 'windows'
