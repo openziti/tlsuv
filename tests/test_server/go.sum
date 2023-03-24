@@ -1,0 +1,4 @@
+github.com/mccutchen/go-httpbin v1.1.1 h1:aEws49HEJEyXHLDnshQVswfUlCVoS8g6h9YaDyaW7RE=
+github.com/mccutchen/go-httpbin v1.1.1/go.mod h1:fhpOYavp5g2K74XDl/ao2y4KvhqVtKlkg1e+0UaQv7I=
+github.com/mccutchen/go-httpbin/v2 v2.6.0 h1:oxUgTD7/7+WB1T2GRsGwWJin9oNvwfEEK0vJBDVSCAk=
+github.com/mccutchen/go-httpbin/v2 v2.6.0/go.mod h1:+DBHcmg6EOeoizuiOI8iL12VIHXx+9YQNlz+gjB9uxk=
