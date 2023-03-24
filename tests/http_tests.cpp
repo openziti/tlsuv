@@ -504,6 +504,24 @@ TEST_CASE("basic_test", "[http]") {
     tlsuv_http_close(&clt, nullptr);
 }
 
+TEST_CASE("invalid CA", "[http]") {
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    resp_capture resp(resp_body_cb);
+    tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
+
+    test.run();
+
+    THEN("default CA should not work") {
+        CHECK(resp.code == UV_ECONNABORTED);
+    }
+
+    tlsuv_http_close(&clt, nullptr);
+}
+
+
 TEST_CASE("http_prefix", "[http]") {
     UvLoopTest test;
 
