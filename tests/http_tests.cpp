@@ -801,11 +801,11 @@ TEST_CASE("connect timeout", "[http]") {
     tlsuv_http_connect_timeout(&clt, 10); // should be short enough
     tlsuv_http_header(&clt, "Connection", "close");
 
-    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/dns-query?name=google.com&type=AAAA", resp_capture_cb, &resp);
-    tlsuv_http_req_t *req2 = tlsuv_http_req(&clt, "GET", "/dns-query?name=yahoo.com&type=AAAA", resp_capture_cb, &resp2);
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
+    tlsuv_http_req_t *req2 = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp2);
 
-    tlsuv_http_req_header(req, "Accept", "application/dns-json");
-    tlsuv_http_req_header(req2, "Accept", "application/dns-json");
+    tlsuv_http_req_header(req, "Accept", "application/json");
+    tlsuv_http_req_header(req2, "Accept", "application/json");
 
     test.run();
 
@@ -873,7 +873,8 @@ TEST_CASE("URL encode", "[http]") {
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
 
-    tlsuv_http_init(test.loop, &clt, "https://www.google.com/search");
+    tlsuv_http_init(test.loop, &clt, "https://localhost:8443/anything");
+    tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", R"(?query=this is a <test>!)", resp_capture_cb, &resp);
 
     test.run();
@@ -882,7 +883,8 @@ TEST_CASE("URL encode", "[http]") {
     CHECK_THAT(resp.http_version, Equals("1.1"));
     CHECK_THAT(resp.status, Equals("OK"));
     CHECK(resp.resp_body_end_called == 1);
-    CHECK_THAT(resp.body, Contains("this is a test", Catch::CaseSensitive::No));
+    CHECK_THAT(resp.body, Contains("this is a <test>!", Catch::CaseSensitive::No));
+    CHECK_THAT(resp.body, Contains(R"("url": "http://localhost/anything?query=this%20is%20a%20%3Ctest%3E!")", Catch::CaseSensitive::No));
 
     std::cout << resp.req_body << std::endl;
 
