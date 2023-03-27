@@ -189,6 +189,32 @@ static X509_STORE_CTX * load_certs(const char *buf, size_t buf_len) {
     return store;
 }
 
+#if _WIN32
+static X509_STORE_CTX *load_system_certs() {
+    X509_STORE_CTX *store = X509_STORE_CTX_new();
+    X509_STORE_CTX_init(store, X509_STORE_new(), NULL, NULL);
+    X509_STORE *certs = X509_STORE_CTX_get0_store(store);
+    X509 *c;
+
+    HCERTSTORE hCertStore;
+    PCCERT_CONTEXT pCertContext = NULL;
+
+    if (!(hCertStore = CertOpenSystemStore(0, "ROOT"))) {
+        UM_LOG(ERROR, "The first system store did not open.");
+        return store;
+    }
+    
+    while ((pCertContext = CertEnumCertificatesInStore(hCertStore, pCertContext)) != NULL) {
+        c = d2i_X509(NULL, (const uint8_t **)&pCertContext->pbCertEncoded, (long)pCertContext->cbCertEncoded);
+        X509_STORE_add_cert(certs, c);
+    }
+    CertFreeCertificateContext(pCertContext);
+    CertCloseStore(hCertStore, 0);
+
+    return store;
+}
+#endif
+
 static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_len) {
     SSL_library_init();
 
@@ -206,10 +232,17 @@ static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_
         X509_STORE_CTX *ca = load_certs(cabuf, cabuf_len);
         SSL_CTX_set1_cert_store(ctx, X509_STORE_CTX_get0_store(ca));
         X509_STORE_CTX_free(ca);
-    } else { // try loading default CA stores
+    } else {
+        // try loading default CA stores
+#if _WIN32
+        X509_STORE_CTX *ca = load_system_certs();
+        SSL_CTX_set1_cert_store(ctx, X509_STORE_CTX_get0_store(ca));
+        X509_STORE_CTX_free(ca);
+#else
         SSL_CTX_set_default_verify_paths(ctx);
+#endif
     }
-    //SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
 
