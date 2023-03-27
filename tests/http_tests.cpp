@@ -30,6 +30,27 @@ extern tlsuv_log_func test_log;
 using namespace std;
 using namespace Catch::Matchers;
 
+#define to_str_(x) #x
+#define to_str(x) to_str_(x)
+static const char *test_server_CA = to_str(TEST_SERVER_CA);
+
+std::string testServerURL(const string& type) {
+    if (type == "http") {
+        return "http://localhost:8080";
+    } else if (type == "https") {
+        return "https://localhost:8443";
+    } else if (type == "auth") {
+        return "https://localhost:9443";
+    }
+    FAIL("unsupported scheme");
+    return "";
+}
+
+tls_context* testServerTLS() {
+    static tls_context *tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+    return tls;
+}
+
 struct ci_less : std::binary_function<string, string, bool>
 {
     // case-independent (ci) compare_less binary function
@@ -165,32 +186,20 @@ TEST_CASE("http_tests", "[http]") {
 
     resp_capture resp(resp_body_cb);
 
-    WHEN(scheme << " redirect google.com ") {
-        tlsuv_http_init(test.loop, &clt, (scheme + "://google.com").c_str());
-        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
-
-        test.run();
-
-        std::vector<llhttp_status_t> redirects{HTTP_STATUS_MOVED_PERMANENTLY, HTTP_STATUS_FOUND};
-        CHECK_THAT(redirects, Catch::Matchers::VectorContains((llhttp_status_t)resp.code));
-        CHECK_THAT(resp.headers["Location"], Catch::Matchers::StartsWith(scheme + "://www.google.com/"));
-        CHECK_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("text/html"));
-    }
-
     WHEN(scheme << " redirect") {
-        tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/redirect/2", resp_capture_cb, &resp);
 
         test.run();
 
-        INFO("httpbin.org redirect currently fails")
-//        REQUIRE(resp.code == HTTP_STATUS_FOUND);
-//        REQUIRE(resp.headers["Location"] == "/relative-redirect/1");
-//        REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("text/html"));
+        REQUIRE(resp.code == HTTP_STATUS_FOUND);
+        REQUIRE(resp.headers["Location"] == "/relative-redirect/1");
     }
 
     WHEN(scheme << " body GET") {
-        tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
 
         test.run();
@@ -205,7 +214,8 @@ TEST_CASE("http_tests", "[http]") {
     }
 
     WHEN(scheme << " send headers") {
-        tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
         tlsuv_http_header(&clt, "Client-Header", "This is client header");
 
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
@@ -218,15 +228,16 @@ TEST_CASE("http_tests", "[http]") {
 
         REQUIRE(resp.code == HTTP_STATUS_OK);
         REQUIRE(resp2.code == HTTP_STATUS_OK);
-        REQUIRE_THAT(resp.body, Contains("\"Client-Header\": \"This is client header\""));
-        REQUIRE_THAT(resp2.body, Contains("\"Client-Header\": \"This is client header\""));
+        REQUIRE_THAT(resp.body, Contains("Client-Header") && Contains("This is client header"));
+        REQUIRE_THAT(resp2.body, Contains("Client-Header") && Contains("This is client header"));
 
-        REQUIRE_THAT(resp.body, Contains("\"Request-Header\": \"this is request header\""));
-        REQUIRE_THAT(resp2.body, !Contains("\"Request-Header\": \"this is request header\""));
+        REQUIRE_THAT(resp.body, Contains("Request-Header") && Contains("this is request header"));
+        REQUIRE_THAT(resp2.body, !Contains("Request-Header") && !Contains("this is request header"));
     }
 
     WHEN(scheme << " POST body") {
-        tlsuv_http_init(test.loop, &clt, (scheme + "://httpbin.org").c_str());
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
         string req_body("this is a test message");
         tlsuv_http_req_data(req, req_body.c_str(), req_body.length(), req_body_cb);
@@ -248,7 +259,8 @@ TEST_CASE("http_tests", "[http]") {
 
 
     WHEN(scheme << " posting chunked") {
-        tlsuv_http_init(test.loop, &clt, (scheme + "://httpbin.org").c_str());
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
         tlsuv_http_req_header(req, "Transfer-Encoding", "chunked");
 
@@ -285,22 +297,21 @@ TEST_CASE("http_tests", "[http]") {
 
 TEST_CASE("client_cert_test","[http]") {
     UvLoopTest test;
-    tls_context *tls = default_tls_context(nullptr, 0);
+    tls_context *tls = NULL;
 
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
 
-    const char *test_site = "https://client.badssl.com";
-
     WHEN("client cert NOT set") {
-        tlsuv_http_init(test.loop, &clt, test_site);
+        tlsuv_http_init(test.loop, &clt, testServerURL("auth").c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/secure/", resp_capture_cb, &resp);
 
         test.run();
 
         THEN("request should be bad") {
-            CHECK(resp.code == HTTP_STATUS_BAD_REQUEST);
-            CHECK_THAT(resp.body, Contains("No required SSL certificate was sent"));
+            CHECK(resp.code == HTTP_STATUS_UNAUTHORIZED);
+            CHECK_THAT(resp.body, Contains("I don't know you"));
         }
 
         AND_THEN("response body size matches") {
@@ -311,7 +322,9 @@ TEST_CASE("client_cert_test","[http]") {
     }
 
     WHEN("client cert set") {
-        tlsuv_http_init(test.loop, &clt, test_site);
+        tlsuv_http_init(test.loop, &clt, testServerURL("auth").c_str());
+        tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+        tlsuv_http_set_ssl(&clt, tls);
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
         // client cert downloaded from https://badssl.com/download/
@@ -370,18 +383,20 @@ TEST_CASE("client_cert_test","[http]") {
                       "c7ugThP6iMPNVAycWkIF4vvHTwZ9RCSmEQabRaqGGLz/bhLL3fi3lPGCR+iW2Dxq\n"
                       "GTH3fhaM/pZZGdIC75x/69Y=\n"
                       "-----END PRIVATE KEY-----";
-        tls->api->set_own_cert(tls->ctx, cert, strlen(cert) + 1, key, strlen(key) + 1);
-        tlsuv_http_set_ssl(&clt, tls);
+        int rc = tls->api->set_own_cert(tls->ctx, cert, strlen(cert) + 1, key, strlen(key) + 1);
+        CHECK(rc == 0);
 
         test.run();
 
 
         CHECK(resp.code == HTTP_STATUS_OK);
         CHECK(resp.resp_body_end_called);
+        CHECK(resp.body == "you are 'CN=BadSSL Client Certificate,O=BadSSL,L=San Francisco,ST=California,C=US' by CN=BadSSL Client Root Certificate Authority,O=BadSSL,L=San Francisco,ST=California,C=US");
     }
 
     tlsuv_http_close(&clt, nullptr);
-    tls->api->free_ctx(tls);
+    if (tls)
+        tls->api->free_ctx(tls);
 }
 
 const int ONE_SECOND = 1000000;
@@ -403,7 +418,8 @@ TEST_CASE("client_idle_test","[http]") {
         }
     };
     resp_capture resp(bodyCb);
-    tlsuv_http_init(test.loop, &clt, "https://httpbin.org");
+    tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_idle_keepalive(&clt, 5000);
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
 
@@ -471,7 +487,8 @@ TEST_CASE("basic_test", "[http]") {
 
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
-    tlsuv_http_init(test.loop, &clt, "https://httpbin.org");
+    tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
 
     test.run();
@@ -481,18 +498,38 @@ TEST_CASE("basic_test", "[http]") {
         CHECK_THAT(resp.http_version, Equals("1.1"));
         CHECK_THAT(resp.status, Equals("OK"));
 
-        CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
+        CHECK_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
     }
 
     tlsuv_http_close(&clt, nullptr);
 }
+
+TEST_CASE("invalid CA", "[http]") {
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    resp_capture resp(resp_body_cb);
+    tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
+
+    test.run();
+
+    THEN("default CA should not work") {
+        INFO("skipping for https://github.com/openziti/tlsuv/issues/141")
+//        CHECK(resp.code == UV_ECONNABORTED);
+    }
+
+    tlsuv_http_close(&clt, nullptr);
+}
+
 
 TEST_CASE("http_prefix", "[http]") {
     UvLoopTest test;
 
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
-    tlsuv_http_init(test.loop, &clt, "http://httpbin.org/bytes");
+    tlsuv_http_init(test.loop, &clt, (testServerURL("http") + "/bytes").c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/256", resp_capture_cb, &resp);
 
     test.run();
@@ -508,7 +545,9 @@ TEST_CASE("http_prefix_after", "[http]") {
 
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
-    tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
+    tlsuv_http_init(test.loop, &clt, testServerURL("http").c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
+
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/256", resp_capture_cb, &resp);
     tlsuv_http_set_path_prefix(&clt, "/bytes");
 
@@ -522,13 +561,16 @@ TEST_CASE("http_prefix_after", "[http]") {
 
 TEST_CASE("content_length_test", "[http]") {
     UvLoopTest test;
+    std::string scheme = GENERATE("http", "https");
 
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
-    tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
+    tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
+
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/json", resp_capture_cb, &resp);
 
-    WHEN("set Content-Length first") {
+    WHEN(scheme << ": set Content-Length first") {
         int rc = tlsuv_http_req_header(req, "Content-Length", "20");
         CHECK(rc == 0);
         CHECK(req->req_body_size == 20);
@@ -540,7 +582,7 @@ TEST_CASE("content_length_test", "[http]") {
         CHECK(!req->req_chunked);
     }
 
-    WHEN("set Chunked first") {
+    WHEN(scheme << ": set Chunked first") {
         int rc = tlsuv_http_req_header(req, "Transfer-Encoding", "chunked");
         CHECK(rc == 0);
         CHECK(req->req_body_size == -1);
@@ -559,7 +601,8 @@ TEST_CASE("multiple requests", "[http]") {
     UvLoopTest test;
 
     tlsuv_http_t clt;
-    tlsuv_http_init(test.loop, &clt, "http://httpbin.org");
+    tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
 
     resp_capture resp1(resp_body_cb);
     tlsuv_http_req_t *req1 = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp1);
@@ -576,13 +619,13 @@ TEST_CASE("multiple requests", "[http]") {
             CHECK(resp1.code == HTTP_STATUS_OK);
             CHECK_THAT(resp1.http_version, Equals("1.1"));
             CHECK_THAT(resp1.status, Equals("OK"));
-            CHECK_THAT(resp1.headers["Content-Type"], Equals("application/json"));
+            CHECK_THAT(resp1.headers["Content-Type"], StartsWith("application/json"));
             CHECK_THAT(resp1.headers["Connection"], Equals("close"));
 
             CHECK(resp2.code == HTTP_STATUS_OK);
             CHECK_THAT(resp2.http_version, Equals("1.1"));
             CHECK_THAT(resp2.status, Equals("OK"));
-            CHECK_THAT(resp2.headers["Content-Type"], Equals("application/json"));
+            CHECK_THAT(resp2.headers["Content-Type"], StartsWith("application/json"));
             CHECK_THAT(resp2.headers["Connection"], Equals("close"));
         }
     }
@@ -596,13 +639,13 @@ TEST_CASE("multiple requests", "[http]") {
             CHECK(resp1.code == HTTP_STATUS_OK);
             CHECK_THAT(resp1.http_version, Equals("1.1"));
             CHECK_THAT(resp1.status, Equals("OK"));
-            CHECK_THAT(resp1.headers["Content-Type"], Equals("application/json"));
-            CHECK_THAT(resp1.headers["Connection"], Equals("keep-alive"));
+            CHECK_THAT(resp1.headers["Content-Type"], StartsWith("application/json"));
+            CHECK_THAT(resp1.headers["Connection"], !StartsWith("close"));
 
             CHECK(resp2.code == HTTP_STATUS_OK);
             CHECK_THAT(resp2.http_version, Equals("1.1"));
             CHECK_THAT(resp2.status, Equals("OK"));
-            CHECK_THAT(resp2.headers["Connection"], Equals("keep-alive"));
+            CHECK_THAT(resp2.headers["Connection"], !Equals("close"));
         }
     }
 
@@ -617,9 +660,8 @@ TEST_CASE("TLS reconnect", "[http]") {
     resp_capture resp(resp_body_cb);
     resp_capture resp2(resp_body_cb);
 
-    tls_context *tls = default_tls_context(nullptr, 0);
-    tlsuv_http_init(test.loop, &clt, "https://httpbin.org");
-    tlsuv_http_set_ssl(&clt, tls);
+    tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_header(&clt, "Connection", "close");
 
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
@@ -631,8 +673,6 @@ TEST_CASE("TLS reconnect", "[http]") {
     CHECK(resp2.code == 200);
 
     tlsuv_http_close(&clt, nullptr);
-
-    tls->api->free_ctx(tls);
 }
 
 typedef struct verify_ctx_s {
@@ -656,9 +696,8 @@ TEST_CASE("large POST(GH-87)", "[http][gh-87]") {
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
 
-    tls_context *tls = default_tls_context(nullptr, 0);
-    tlsuv_http_init(test.loop, &clt, "https://httpbin.org");
-    tlsuv_http_set_ssl(&clt, tls);
+    tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
 
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/anything", resp_capture_cb, &resp);
     int buf_size = 64 * 1024;
@@ -677,8 +716,6 @@ TEST_CASE("large POST(GH-87)", "[http][gh-87]") {
 
     tlsuv_http_close(&clt, nullptr);
     free(buf);
-
-    tls->api->free_ctx(tls);
 }
 
 TEST_CASE("TLS verify with JWT", "[http]") {
@@ -765,11 +802,11 @@ TEST_CASE("connect timeout", "[http]") {
     tlsuv_http_connect_timeout(&clt, 10); // should be short enough
     tlsuv_http_header(&clt, "Connection", "close");
 
-    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/dns-query?name=google.com&type=AAAA", resp_capture_cb, &resp);
-    tlsuv_http_req_t *req2 = tlsuv_http_req(&clt, "GET", "/dns-query?name=yahoo.com&type=AAAA", resp_capture_cb, &resp2);
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
+    tlsuv_http_req_t *req2 = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp2);
 
-    tlsuv_http_req_header(req, "Accept", "application/dns-json");
-    tlsuv_http_req_header(req2, "Accept", "application/dns-json");
+    tlsuv_http_req_header(req, "Accept", "application/json");
+    tlsuv_http_req_header(req2, "Accept", "application/json");
 
     test.run();
 
@@ -785,7 +822,8 @@ TEST_CASE("HTTP gzip", "[http]") {
 
     auto clt = new tlsuv_http_t;
     resp_capture resp(resp_body_cb);
-    tlsuv_http_init(test.loop, clt, "https://httpbin.org");
+    tlsuv_http_init(test.loop, clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(clt, testServerTLS());
     tlsuv_http_req_t *req = tlsuv_http_req(clt, "GET", "/gzip", resp_capture_cb, &resp);
 
     test.run();
@@ -793,9 +831,9 @@ TEST_CASE("HTTP gzip", "[http]") {
     CHECK(resp.code == HTTP_STATUS_OK);
     CHECK_THAT(resp.http_version, Equals("1.1"));
     CHECK_THAT(resp.status, Equals("OK"));
-    CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
+    CHECK_THAT(resp.headers["Content-Type"], StartsWith("application/json"));
     CHECK(resp.headers["Content-Encoding"] == "gzip");
-    CHECK_THAT(resp.body, Contains(R"("Accept-Encoding": "gzip, deflate")"));
+    CHECK_THAT(resp.body, Contains(R"("Accept-Encoding")") && Contains("gzip, deflate"));
     CHECK(resp.resp_body_end_called == 1);
 
     std::cout << resp.req_body << std::endl;
@@ -810,7 +848,8 @@ TEST_CASE("HTTP deflate", "[http]") {
 
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
-    tlsuv_http_init(test.loop, &clt, "https://httpbin.org");
+    tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/deflate", resp_capture_cb, &resp);
 
     test.run();
@@ -818,9 +857,9 @@ TEST_CASE("HTTP deflate", "[http]") {
     CHECK(resp.code == HTTP_STATUS_OK);
     CHECK_THAT(resp.http_version, Equals("1.1"));
     CHECK_THAT(resp.status, Equals("OK"));
-    CHECK_THAT(resp.headers["Content-Type"], Equals("application/json"));
+    CHECK_THAT(resp.headers["Content-Type"], StartsWith("application/json"));
     CHECK(resp.headers["Content-Encoding"] == "deflate");
-    CHECK_THAT(resp.body, Contains(R"("Accept-Encoding": "gzip, deflate")"));
+    CHECK_THAT(resp.body, Contains(R"("Accept-Encoding")") && Contains("gzip, deflate"));
     CHECK(resp.resp_body_end_called == 1);
 
 
@@ -835,7 +874,8 @@ TEST_CASE("URL encode", "[http]") {
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
 
-    tlsuv_http_init(test.loop, &clt, "https://www.google.com/search");
+    tlsuv_http_init(test.loop, &clt, "https://localhost:8443/anything");
+    tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", R"(?query=this is a <test>!)", resp_capture_cb, &resp);
 
     test.run();
@@ -844,7 +884,8 @@ TEST_CASE("URL encode", "[http]") {
     CHECK_THAT(resp.http_version, Equals("1.1"));
     CHECK_THAT(resp.status, Equals("OK"));
     CHECK(resp.resp_body_end_called == 1);
-    CHECK_THAT(resp.body, Contains("this is a test", Catch::CaseSensitive::No));
+    CHECK_THAT(resp.body, Contains("this is a <test>!", Catch::CaseSensitive::No));
+    CHECK_THAT(resp.body, Contains(R"("url": "http://localhost/anything?query=this%20is%20a%20%3Ctest%3E!")", Catch::CaseSensitive::No));
 
     std::cout << resp.req_body << std::endl;
 
@@ -870,7 +911,8 @@ TEST_CASE("test request cancel", "[http]") {
 
     testdata td;
 
-    tlsuv_http_init(test.loop, &td.clt, "https://www.google.com/search");
+    tlsuv_http_init(test.loop, &td.clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(&td.clt, testServerTLS());
 
     auto r1_cb = [](tlsuv_http_resp_t *resp, void *p) {
         auto t = (testdata*)p;
@@ -883,9 +925,9 @@ TEST_CASE("test request cancel", "[http]") {
         resp_capture_cb(resp, &_td->resp2);
     };
 
-    td.r1 = tlsuv_http_req(&td.clt, "GET", R"(?query=this is a <test>!)", r1_cb, &td);
+    td.r1 = tlsuv_http_req(&td.clt, "GET", "/json", r1_cb, &td);
 
-    td.r2 = tlsuv_http_req(&td.clt, "GET", R"(?query=this is NOT a <test2>!)", r2_cb, &td);
+    td.r2 = tlsuv_http_req(&td.clt, "GET", "/anything", r2_cb, &td);
 
     test.run();
 

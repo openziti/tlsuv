@@ -37,6 +37,26 @@ jobs:
       with:
         vcpkgGitCommitId: 'f14984af3738e69f197bf0e647a8dca12de92996'
 
+    - name: Setup Golang with cache
+      uses: magnetikonline/action-golang-cache@v4
+      with:
+        go-version: ~1.20
+
+    - name: build test server
+      run: |
+        cd ./tests/test_server
+        go build -o ${{ github.workspace }}/build/ .
+
+    - name: start test server
+      if: matrix.os != 'windows'
+      run: |
+        ${{ github.workspace }}/build/test-server -keyfile ./tests/certs/server.key -certfile ./tests/certs/server.crt &
+
+    - name: start test server
+      if: matrix.os == 'windows'
+      run: |
+        Start-Process -FilePath ${{ github.workspace }}/build/test-server -ArgumentList "-keyfile","./tests/certs/server.key","-certfile","./tests/certs/server.crt"
+
     - uses: lukka/run-cmake@v10
       name: Build and Test
       with:
