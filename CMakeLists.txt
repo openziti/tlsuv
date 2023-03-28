@@ -1,5 +1,7 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.22)
 
+set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake;${CMAKE_MODULE_PATH}")
+
 include(cmake/version.cmake)
 get_version(${CMAKE_CURRENT_LIST_DIR}/version.txt ver)
 
@@ -101,11 +103,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 if (USE_MBEDTLS)
-    include(deps/mbedtls.cmake)
+    find_package(MbedTLS REQUIRED)
     target_compile_definitions(tlsuv PRIVATE USE_MBEDTLS)
-    target_link_libraries(tlsuv
-            PRIVATE mbedtls
-            )
+    target_include_directories(tlsuv PUBLIC $<BUILD_INTERFACE:${MBEDTLS_INCLUDE_DIRS}>)
+    target_link_libraries(tlsuv PRIVATE ${MBEDTLS_LIBRARIES})
 elseif(USE_OPENSSL)
     find_package(OpenSSL REQUIRED)
     target_compile_definitions(tlsuv PRIVATE USE_OPENSSL)

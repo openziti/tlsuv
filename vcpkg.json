@@ -20,9 +20,14 @@
       "description": "use OpenSSL",
       "dependencies": [ "openssl" ]
     },
+
     "mbedtls": {
       "description": "use mbedTLS",
-      "dependencies": []
+      "dependencies": [
+        {
+          "name": "mbedtls"
+        }
+      ]
     },
     "test": {
       "description": "Dependencies for testing",
