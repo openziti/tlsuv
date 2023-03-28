@@ -18,6 +18,7 @@ add_executable(all_tests
 set_property(TARGET all_tests PROPERTY CXX_STANDARD 11)
 
 target_compile_definitions(all_tests PRIVATE
+        TEST_${TLSUV_TLSLIB}
         TEST_SERVER_CA=${CMAKE_CURRENT_SOURCE_DIR}/certs/ca.pem)
 target_link_libraries(all_tests
         tlsuv

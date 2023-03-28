@@ -61,7 +61,7 @@ jobs:
       name: Build and Test
       with:
         configurePreset: ci-${{ matrix.os }}
-        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}` ]"
+        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}`, `-DVCPKG_MANIFEST_FEATURES='test;samples;${{ matrix.tls }}'` ]"
         buildPreset: ci-${{ matrix.os }}
         testPreset: ci-${{ matrix.os }}
         testPresetAdditionalArgs: "[ `--output-on-failure`, `--no-compress-output` ]"
@@ -71,7 +71,7 @@ jobs:
       if: always() && matrix.os == 'ubuntu'
       with:
         configurePreset: ci-${{ matrix.os }}
-        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}` ]"
+        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}`,`-DVCPKG_MANIFEST_FEATURES='${{ matrix.tls }};test;samples'` ]"
         buildPreset: ci-${{ matrix.os }}
         testPreset: ci-${{ matrix.os }}
         testPresetAdditionalArgs: "[ `--test-dir`, `${{ github.workspace }}/build`,  `--output-on-failure`, `--no-compress-output`, `-T`, `MemCheck` ]"

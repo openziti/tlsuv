@@ -41,6 +41,14 @@
 #ifndef ZITI_SDK_MBED_P11_H
 #define ZITI_SDK_MBED_P11_H
 
+#ifndef MBEDTLS_PRIVATE
+#define MBEDTLS_PRIVATE(x) x
+#endif
+
+#ifndef MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED
+#define MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED MBEDTLS_ERR_PK_HW_ACCEL_FAILED
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
