@@ -28,6 +28,7 @@
 #include <mbedtls/oid.h>
 #include <mbedtls/pem.h>
 #include <mbedtls/error.h>
+#include <mbedtls/version.h>
 
 #include "keys.h"
 #include "../bio.h"
@@ -71,6 +72,9 @@ struct mbedtls_engine {
     um_BIO  *in;
     um_BIO *out;
     int error;
+
+    int ip_len;
+    struct in6_addr addr;
 };
 
 static void mbedtls_set_alpn_protocols(void *ctx, const char** protos, int len);
@@ -246,6 +250,26 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
     free(seed);
 }
 
+static int verify_ip(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
+    struct mbedtls_engine *eng = ctx;
+
+    // mbedTLS does not verify IP address SANs, here we patch the result if we find a match
+    if (depth == 0 && eng->ip_len > 0 && (*flags & MBEDTLS_X509_BADCERT_CN_MISMATCH) != 0) {
+        const mbedtls_x509_sequence *cur;
+        for (cur = &crt->subject_alt_names; cur != NULL; cur = cur->next) {
+            const unsigned char san_type = (unsigned char) cur->buf.tag & MBEDTLS_ASN1_TAG_VALUE_MASK;
+            if (san_type == MBEDTLS_X509_SAN_IP_ADDRESS) {
+                if (cur->buf.len == eng->ip_len && memcmp(cur->buf.p, &eng->addr, eng->ip_len) == 0) {
+                    // found matching address -- can clear the flag
+                    *flags &= ~MBEDTLS_X509_BADCERT_CN_MISMATCH;
+                    break;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 tls_engine *new_mbedtls_engine(void *ctx, const char *host) {
     struct mbedtls_context *context = ctx;
     mbedtls_ssl_context *ssl = calloc(1, sizeof(mbedtls_ssl_context));
@@ -261,6 +285,14 @@ tls_engine *new_mbedtls_engine(void *ctx, const char *host) {
     mbed_eng->out = um_BIO_new(0);
     mbedtls_ssl_set_bio(ssl, mbed_eng, mbed_ssl_send, mbed_ssl_recv, NULL);
     engine->api = &mbedtls_engine_api;
+
+    if (uv_inet_pton(AF_INET6, host, &mbed_eng->addr) == 0) {
+        mbed_eng->ip_len = 16;
+        mbedtls_ssl_set_verify(ssl, verify_ip, mbed_eng);
+    } else if (uv_inet_pton(AF_INET, host, &mbed_eng->addr) == 0) {
+        mbed_eng->ip_len = 4;
+        mbedtls_ssl_set_verify(ssl, verify_ip, mbed_eng);
+    }
 
     return engine;
 }
