@@ -18,6 +18,7 @@
 #include "mbed_p11.h"
 #include <mbedtls/asn1write.h>
 #include <mbedtls/oid.h>
+#include <mbedtls/version.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -69,7 +70,11 @@ int p11_load_rsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_con
 
     mbedtls_rsa_context *rsa = malloc(sizeof(mbedtls_rsa_context));
     mbedtls_platform_zeroize(rsa, sizeof(mbedtls_rsa_context));
+#if MBEDTLS_VERSION_MAJOR == 3
     mbedtls_rsa_init(rsa /*, MBEDTLS_RSA_PKCS_V15, MBEDTLS_MD_SHA256*/);
+#else
+    mbedtls_rsa_init(rsa, MBEDTLS_RSA_PKCS_V15, MBEDTLS_MD_SHA256);
+#endif
     mbedtls_mpi_read_binary(&rsa->N, pubattr[1].pValue, pubattr[1].ulValueLen);
     mbedtls_mpi_read_binary(&rsa->E, pubattr[0].pValue, pubattr[0].ulValueLen);
 
@@ -151,7 +156,12 @@ static int p11_rsa_verify(void *ctx, mbedtls_md_type_t md_alg,
                           const unsigned char *hash, size_t hash_len,
                           const unsigned char *sig, size_t sig_len) {
     mp11_key_ctx *p11key = ctx;
+
+#if MBEDTLS_VERSION_MAJOR == 3
     return mbedtls_rsa_rsassa_pkcs1_v15_verify(p11key->pub, md_alg, hash_len, hash, sig);
+#else
+    return mbedtls_rsa_rsassa_pkcs1_v15_verify(p11key->pub, NULL, NULL, MBEDTLS_RSA_PUBLIC, md_alg, hash_len, hash, sig);
+#endif
 }
 
 static void p11_rsa_free(void *ctx) {

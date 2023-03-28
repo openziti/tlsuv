@@ -20,6 +20,7 @@
 #include "keys.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/entropy.h"
+#include "mbedtls/version.h"
 
 static void pubkey_free(tlsuv_public_key_t k);
 static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *data, size_t datalen, const char *sig, size_t siglen);
@@ -139,7 +140,11 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *d
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
 
+#if MBEDTLS_VERSION_MAJOR == 3
     if (mbedtls_pk_sign(&priv->pkey, type, hash, mbedtls_md_get_size(md_info), (uint8_t *)sig, *siglen, siglen, mbedtls_ctr_drbg_random, &ctr_drbg) != 0) {
+#else
+    if (mbedtls_pk_sign(&priv->pkey, type, hash, mbedtls_md_get_size(md_info), (uint8_t *)sig, siglen, mbedtls_ctr_drbg_random, &ctr_drbg) != 0) {
+#endif
         return -1;
     }
     return 0;
@@ -196,9 +201,17 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
         return rc;
     }
     size_t keylen = keydata[keydatalen - 1] == 0 ? keydatalen : keydatalen + 1;
-    rc = mbedtls_pk_parse_key(&privkey->pkey, (const unsigned char *) keydata, keylen, NULL, 0, mbedtls_ctr_drbg_random, &ctr_drbg);
+    rc = mbedtls_pk_parse_key(&privkey->pkey, (const unsigned char *) keydata, keylen, NULL, 0
+#if MBEDTLS_VERSION_MAJOR == 3
+            ,mbedtls_ctr_drbg_random, &ctr_drbg
+#endif
+    );
     if (rc < 0) {
-        rc = mbedtls_pk_parse_keyfile(&privkey->pkey, keydata, NULL, mbedtls_ctr_drbg_random, &ctr_drbg);
+        rc = mbedtls_pk_parse_keyfile(&privkey->pkey, keydata, NULL
+#if MBEDTLS_VERSION_MAJOR == 3
+            ,mbedtls_ctr_drbg_random, &ctr_drbg
+#endif
+        );
         if (rc < 0) {
             mbedtls_pk_free(&privkey->pkey);
             free(privkey);

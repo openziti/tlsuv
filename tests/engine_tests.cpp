@@ -121,6 +121,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     }
 
     tls_context *tls = default_tls_context(nullptr, 0);
+    printf("tls engine: %s\n", tls->api->version());
     const char *protos[] = {
             "h2",
             "http1.1"
