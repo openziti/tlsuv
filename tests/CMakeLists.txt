@@ -12,13 +12,15 @@ if (USE_OPENSSL)
     find_program(pk11 pkcs11-tool)
     message("hsm lib = ${softhsm_lib}")
     if (softhsm_lib AND softhsm_tool AND pk11)
+        add_custom_target(generate-test-hsm-data
+                COMMAND rm -r ${CMAKE_CURRENT_SOURCE_DIR}/testdata/softhsm/*
+                COMMAND SOFTHSM2_CONF=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf ${softhsm_tool} --init-token --slot 0 --label "test token" --so-pin 1111 --pin 2222
+                COMMAND SOFTHSM2_CONF=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf ${pk11} --module ${softhsm_lib} -I
+                COMMAND SOFTHSM2_CONF=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf ${pk11} --module ${softhsm_lib} --keypairgen --key-type rsa:2048 --id 1 --label test-rsa --pin 2222
+                COMMAND SOFTHSM2_CONF=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf ${pk11} --module ${softhsm_lib} --keypairgen --key-type EC:prime256v1 --id 2 --label test-ec --pin 2222
+                )
         message("PKCS11 key test is on")
-        FILE(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/hsm)
         set(ENV{SOFTHSM2_CONF} ${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf)
-        execute_process(COMMAND ${softhsm_tool} --init-token --slot 0 --label "test token" --so-pin 1111 --pin 2222)
-        execute_process(COMMAND ${pk11} --module ${softhsm_lib} -I)
-        execute_process(COMMAND ${pk11} --module ${softhsm_lib} --keypairgen --key-type rsa:2048 --id 1 --label test-rsa --pin 2222)
-        execute_process(COMMAND ${pk11} --module ${softhsm_lib} --keypairgen --key-type EC:prime256v1 --id 2 --label test-ec --pin 2222)
         set(PKCS11_OPTS -DHSM_LIB=${softhsm_lib} -DHSM_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf)
     endif()
 endif()
@@ -40,7 +42,15 @@ target_compile_options(all_tests PRIVATE ${PKCS11_OPTS})
 
 target_compile_definitions(all_tests PRIVATE
         TEST_${TLSUV_TLSLIB}
-        TEST_SERVER_CA=${CMAKE_CURRENT_SOURCE_DIR}/certs/ca.pem)
+        TEST_SERVER_CA=${CMAKE_CURRENT_SOURCE_DIR}/certs/ca.pem
+        )
+if (softhsm_lib)
+    target_compile_definitions(all_tests PRIVATE
+            HSM_LIB=${softhsm_lib}
+            HSM_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf
+            )
+endif (softhsm_lib)
+
 target_link_libraries(all_tests
         tlsuv
         Catch2::Catch2
