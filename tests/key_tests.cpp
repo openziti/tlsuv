@@ -17,6 +17,10 @@
 #include <cstring>
 #include <tlsuv/tls_engine.h>
 
+#define xstr(s) str__(s)
+#define str__(s) #s
+
+
 
 
 TEST_CASE("key gen", "[key]") {
@@ -145,15 +149,49 @@ TEST_CASE("gen csr", "[engine]") {
 }
 
 #if defined(HSM_CONFIG)
-#define xstr(s) str(s)
-#define str(s) #s
+#define HSM_DRIVER xstr(HSM_LIB)
 
-TEST_CASE("pkcs11", "[key]") {
+TEST_CASE("pkcs11 valid EC key", "[key]") {
     tls_context *ctx = default_tls_context(nullptr, 0);
-    tlsuv_private_key_t key;
-
     REQUIRE(ctx->api->load_pkcs11_key != nullptr);
-    auto rc = ctx->api->load_pkcs11_key(&key, xstr(HSM_LIB), nullptr, "2222", nullptr, "test-ec");
+
+    tlsuv_private_key_t key = nullptr;
+
+    int rc = 0;
+    rc = ctx->api->load_pkcs11_key(&key, HSM_DRIVER, nullptr, "2222", nullptr, "test-ec");
     CHECK(rc == 0);
+    CHECK(key != nullptr);
+
+    WHEN("private key PEM") {
+        char *pem;
+        size_t pemlen;
+        rc = key->to_pem(key, &pem, &pemlen);
+        THEN("should fail") {
+            CHECK(rc == -1);
+            CHECK(pem == nullptr);
+            CHECK(pemlen == 0);
+        }
+    }
+
+    WHEN("public key PEM") {
+        char *pem = nullptr;
+        size_t pemlen;
+        auto pub = key->pubkey(key);
+        REQUIRE(pub != nullptr);
+        THEN("should work") {
+            CHECK(pub->to_pem(pub, &pem, &pemlen) == 0);
+            CHECK(pem != nullptr);
+            CHECK(pemlen > 0);
+            Catch::cout() << std::string(pem, pemlen);
+        }
+        pub->free(pub);
+        free(pem);
+    }
+
+    if (key) {
+        key->free(key);
+    }
+    ctx->api->free_ctx(ctx);
 }
+
 #endif
