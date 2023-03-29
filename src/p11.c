@@ -167,6 +167,13 @@ int p11_load_key(p11_context *p11, p11_key_ctx *p11_key, const char *idstr, cons
     return 0;
 }
 
+void p11_key_free(p11_key_ctx *key) {
+    if (key) {
+        free(key->ctx);
+        free(key);
+    }
+}
+
 #define P11_ERRORS(XX) \
 XX(CKR_OK) \
 XX(CKR_CANCEL) \

@@ -35,7 +35,7 @@ void priv_key_init(struct priv_key_s *privkey);
 
 int gen_key(tlsuv_private_key_t *key);
 int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen);
-int load_pkcs11_key(struct priv_key_s *k, const char *lib, const char *slot, const char *pin, const char *id, const char *label);
+int load_pkcs11_key(tlsuv_private_key_t *k, const char *lib, const char *slot, const char *pin, const char *id, const char *label);
 
 
 int verify_signature (EVP_PKEY *pk, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen);

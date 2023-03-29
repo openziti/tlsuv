@@ -55,6 +55,7 @@ typedef struct p11_key_ctx_s p11_key_ctx;
 int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pin);
 int p11_load_key(p11_context *p11, p11_key_ctx *p11_key, const char *id, const char *label);
 int p11_get_key_attr(p11_key_ctx *key, CK_ATTRIBUTE_TYPE type, char **val, size_t *len);
+void p11_key_free(p11_key_ctx *key);
 const char *p11_strerror(CK_RV rv);
 
 

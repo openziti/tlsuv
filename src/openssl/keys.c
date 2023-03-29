@@ -12,26 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#define OPENSSL_API_LEVEL 101010
+#define OPENSSL_SUPPRESS_DEPRECATED
 
 #include <openssl/types.h>
 #include <openssl/evp.h>
 
-#include <assert.h>
-#include <openssl/engine.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <tlsuv/tlsuv.h>
 
+#include "../p11.h"
 #include "../um_debug.h"
 #include "keys.h"
 
+static int pubkey_to_pem(tlsuv_public_key_t pub, char **pem, size_t *pemlen);
 static void pubkey_free(tlsuv_public_key_t k);
 static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *data, size_t datalen, const char *sig, size_t siglen);
 
 static struct pub_key_s PUB_KEY_API = {
         .free = pubkey_free,
         .verify = pubkey_verify,
+        .to_pem = pubkey_to_pem,
 };
 
 
@@ -47,6 +48,31 @@ static struct priv_key_s PRIV_KEY_API = {
         .pubkey = privkey_pubkey,
         .sign = privkey_sign,
 };
+
+static EC_KEY_METHOD *p11_method;
+static int p11_ec_idx = 0;
+static uv_once_t init_once;
+static void p11_ec_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                           int idx, long argl, void *argp)
+{
+    if (ptr != NULL && idx == p11_ec_idx) {
+        p11_key_free(ptr);
+    }
+}
+
+static void init() {
+    p11_ec_idx = EC_KEY_get_ex_new_index(0, "tlsuv-ec-pkcs11", NULL, NULL, p11_ec_ex_free);
+
+    p11_method = EC_KEY_METHOD_new(EC_KEY_OpenSSL());
+}
+
+static void set_ec_p11_impl(EC_KEY *ec, p11_key_ctx *p11_key) {
+    uv_once(&init_once, init);
+
+    EC_KEY_set_method(ec, p11_method);
+    EC_KEY_set_ex_data(ec, p11_ec_idx, p11_key);
+}
+
 
 void pub_key_init(struct pub_key_s *pubkey) {
     *pubkey = PUB_KEY_API;
@@ -140,13 +166,42 @@ static tlsuv_public_key_t privkey_pubkey(tlsuv_private_key_t pk) {
 static int privkey_to_pem(tlsuv_private_key_t pk, char **pem, size_t *pemlen) {
     BIO *b = BIO_new(BIO_s_mem());
     struct priv_key_s *privkey = (struct priv_key_s *) pk;
-    PEM_write_bio_PKCS8PrivateKey(b, privkey->pkey, NULL, NULL, 0, NULL, NULL);
-    size_t len = BIO_ctrl_pending(b);
-    *pem = calloc(1, len + 1);
-    BIO_read(b, *pem, (int)len);
-    *pemlen = len;
+
+    *pem = NULL;
+    *pemlen = 0;
+
+    if (!PEM_write_bio_PKCS8PrivateKey(b, privkey->pkey, NULL, NULL, 0, NULL, NULL)) {
+        unsigned long err = ERR_get_error();
+        UM_LOG(WARN, "failed to generate PEM for private key: %d/%s", err, ERR_lib_error_string(err));
+    } else {
+        size_t len = BIO_ctrl_pending(b);
+        *pem = calloc(1, len + 1);
+        BIO_read(b, *pem, (int) len);
+        *pemlen = len;
+    }
     BIO_free(b);
-    return 0;
+    return *pem != NULL ? 0 : -1;
+}
+
+
+static int pubkey_to_pem(tlsuv_public_key_t pub, char **pem, size_t *pemlen) {
+    BIO *b = BIO_new(BIO_s_mem());
+    struct pub_key_s *pubkey = (struct pub_key_s *) pub;
+
+    *pem = NULL;
+    *pemlen = 0;
+
+    if (!PEM_write_bio_PUBKEY(b, pubkey->pkey)) {
+        unsigned long err = ERR_get_error();
+        UM_LOG(WARN, "failed to generate PEM for public key: %d/%s", err, ERR_lib_error_string(err));
+    } else {
+        size_t len = BIO_ctrl_pending(b);
+        *pem = calloc(1, len + 1);
+        BIO_read(b, *pem, (int) len);
+        *pemlen = len;
+    }
+    BIO_free(b);
+    return *pem != NULL ? 0 : -1;
 }
 
 int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
@@ -173,8 +228,94 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
     return rc;
 }
 
-int load_pkcs11_key(struct priv_key_s *k, const char *lib, const char *slot, const char *pin, const char *id, const char *label) {
-    UM_LOG(ERR, "not implemented");
+int load_pkcs11_key(tlsuv_private_key_t *key, const char *lib, const char *slot, const char *pin, const char *id, const char *label) {
+    p11_context *p11 = calloc(1, sizeof(*p11));
+    p11_key_ctx *p11_key = NULL;
+    char *value = NULL, *a;
+    ASN1_OCTET_STRING *os = NULL;
+    EVP_PKEY *pkey = NULL;
+    size_t len;
+
+    int rc = p11_init(p11, lib, slot, pin);
+    if (rc != 0) {
+        UM_LOG(WARN, "failed to init pkcs#11 token driver[%s] slot[%s]", lib, slot);
+        free(p11);
+        return rc;
+    }
+
+    p11_key = calloc(1, sizeof(*p11_key));
+    rc = p11_load_key(p11, p11_key, id, label);
+    if (rc != 0) {
+        UM_LOG(WARN, "failed to load pkcs#11 key id[%s] label[%s]: %d/%s", id, label, rc, p11_strerror(rc));
+        goto error;
+    }
+
+    EC_KEY *ec = EC_KEY_new();
+    rc = p11_get_key_attr(p11_key, CKA_EC_PARAMS, &value, &len);
+    if (rc != 0) {
+        UM_LOG(WARN, "failed to load EC parameters for key id[%s] label[%s]: %d/%s", id, label, rc, p11_strerror(rc));
+        goto error;
+    } else {
+        a = value;
+        if (d2i_ECParameters(&ec, (const unsigned char **) &a, (long) len) == NULL) {
+            unsigned long err = ERR_get_error();
+            UM_LOG(WARN, "failed to set EC parameters for key id[%s] label[%s]: %d/%s", id, label, err, ERR_lib_error_string(err));
+            goto error;
+        }
+
+        free(value);
+        value = NULL;
+    }
+
+    rc = p11_get_key_attr(p11_key, CKA_EC_POINT, &value, &len);
+    if (rc != 0) {
+        UM_LOG(WARN, "failed to load EC point for key id[%s] label[%s]: %d/%s", id, label, rc, p11_strerror(rc));
+        goto error;
+    } else {
+        a = value;
+        os = d2i_ASN1_OCTET_STRING(NULL, (const unsigned char **) &a, len);
+        if (os) {
+            a = os->data;
+            if (o2i_ECPublicKey(&ec, (const unsigned char **) &a, os->length) == NULL) {
+                unsigned long err = ERR_get_error();
+                UM_LOG(WARN, "failed to set EC pubkey for key id[%s] label[%s]: %d/%s", id, label, err, ERR_lib_error_string(err));
+                goto error;
+            }
+            ASN1_STRING_free(os);
+        } else {
+            if(o2i_ECPublicKey(&ec, (const unsigned char **) &a, (int) len) == NULL) {
+                unsigned long err = ERR_get_error();
+                UM_LOG(WARN, "failed to set EC pubkey for key id[%s] label[%s]: %d/%s", id, label, err, ERR_lib_error_string(err));
+                goto error;
+            }
+        }
+        free(value);
+        value = NULL;
+    }
+
+    set_ec_p11_impl(ec, p11_key);
+
+    pkey = EVP_PKEY_new();
+    if (!EVP_PKEY_set1_EC_KEY(pkey, ec)) {
+        unsigned long err = ERR_get_error();
+        UM_LOG(WARN, "failed to set EC pubkey for key id[%s] label[%s]: %d/%s", id, label, err, ERR_lib_error_string(err));
+        goto error;
+    }
+    EC_KEY_free(ec); // decrease refcount
+
+    struct priv_key_s *private_key = calloc(1, sizeof(struct priv_key_s));
+    *private_key = PRIV_KEY_API;
+    private_key->pkey = pkey;
+    *key = (tlsuv_private_key_t)private_key;
+
+    return 0;
+
+error:
+    free(p11_key);
+    free(p11);
+    if(ec) EC_KEY_free(ec);
+    if(pkey) EVP_PKEY_free(pkey);
+    free(value);
     return -1;
 }
 
