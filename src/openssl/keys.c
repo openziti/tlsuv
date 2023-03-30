@@ -121,11 +121,11 @@ int verify_signature (EVP_PKEY *pk, enum hash_algo md, const char* data, size_t 
             break;
     }
     if (!EVP_DigestVerifyInit(digest, &pctx, hash, NULL, pk)) {
-        ulong err = ERR_get_error();
+        unsigned long err = ERR_get_error();
         UM_LOG(WARN, "failed to setup digest %ld/%s", err, ERR_lib_error_string(err));
         rc = -1;
     } else if (EVP_DigestVerify(digest, (const uint8_t *) sig, siglen, (const uint8_t *) data, datalen) != 1) {
-        ulong err = ERR_get_error();
+        unsigned long err = ERR_get_error();
         UM_LOG(WARN, "failed to verify digest %ld/%s", err, ERR_lib_error_string(err));
         rc = -1;
     }
@@ -161,12 +161,12 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *d
             break;
     }
     if (!EVP_DigestSignInit(digest, &pctx, hash, NULL, priv->pkey)) {
-        ulong err = ERR_get_error();
+        unsigned long err = ERR_get_error();
         UM_LOG(WARN, "failed to setup digest %ld/%s", err, ERR_lib_error_string(err));
         rc = -1;
     } else {
         if (EVP_DigestSign(digest, (uint8_t *)sig, siglen, (const uint8_t *) data, datalen) != 1) {
-            ulong err = ERR_get_error();
+            unsigned long err = ERR_get_error();
             UM_LOG(WARN, "failed to sign digest %ld/%s", err, ERR_lib_error_string(err));
             rc = -1;
         }
