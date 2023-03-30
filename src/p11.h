@@ -17,7 +17,6 @@
 #define TLSUV_P11_H
 
 #ifdef _WIN32
-#pragma pack(push, cryptoki, 1)
 #define CK_PTR *
 #define CK_DECLARE_FUNCTION(returnType, name)  returnType __declspec(dllimport) name
 #define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType __declspec(dllimport) (* name)

@@ -13,8 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "p11.h"
-#include "um_debug.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +23,9 @@
 #else
 #include <dlfcn.h>
 #endif
+
+#include "p11.h"
+#include "um_debug.h"
 
 
 #define P11(op) do {\
