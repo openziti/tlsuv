@@ -15,11 +15,16 @@
 
 #include "p11.h"
 #include "um_debug.h"
-#include <dlfcn.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 
 #define P11(op) do {\
@@ -164,6 +169,28 @@ int p11_load_key(p11_context *p11, p11_key_ctx *p11_key, const char *idstr, cons
 
     P11(p11->funcs->C_GetAttributeValue(p11->session, p11_key->priv_handle, &attr, 1));
     p11_key->ctx = p11;
+    return 0;
+}
+
+int p11_key_sign(p11_key_ctx *key, const uint8_t *digest, int digest_len, uint8_t *sig, size_t *siglen, int padding) {
+    p11_context *p11 = key->ctx;
+
+    CK_MECHANISM mech = {0};
+    switch (key->key_type) {
+        case CKK_EC: mech.mechanism = CKM_ECDSA; break;
+        case CKK_RSA: mech.mechanism = CKM_RSA_PKCS; break;
+    }
+
+    CK_RV rc = p11->funcs->C_SignInit(p11->session, &mech, key->priv_handle);
+    if (rc != CKR_OK) {
+        UM_LOG(WARN, "failed to init sign op: %s", p11_strerror(rc));
+        return -1;
+    }
+    rc = p11->funcs->C_Sign(p11->session, (CK_BYTE_PTR)digest, digest_len, (CK_BYTE_PTR) sig, siglen);
+    if (rc != CKR_OK) {
+        UM_LOG(WARN, "failed to perform sign op: %s", p11_strerror(rc));
+        return -1;
+    }
     return 0;
 }
 
