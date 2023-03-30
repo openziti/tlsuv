@@ -20,7 +20,7 @@ jobs:
     - name: Install tools
       if: matrix.os == 'ubuntu'
       run: |
-        sudo apt install -y valgrind
+        sudo apt install -y valgrind softhsm
 
     - name: Install tools
       if: matrix.os == 'macOS'

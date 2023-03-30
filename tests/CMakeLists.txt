@@ -6,11 +6,18 @@ message("catch2 is ${Catch2_CONFIG}")
 CONFIGURE_FILE(softhsm2.conf.in ${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf)
 
 if (USE_OPENSSL)
-    find_library(softhsm_lib softhsm2
-            PATH_SUFFIXES softhsm)
+    find_library(softhsm_lib softhsm2 PATH_SUFFIXES softhsm)
+    if (softhsm_lib)
+        set(PKCS11_OPTS -DHSM_LIB=${softhsm_lib} -DHSM_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf)
+        message("PKCS11 key test is ON")
+        message("hsm lib = ${softhsm_lib}")
+    else ()
+        message("PKCS11 key test is OFF")
+    endif ()
+
+
     find_program(softhsm_tool softhsm2-util)
     find_program(pk11 pkcs11-tool)
-    message("hsm lib = ${softhsm_lib}")
     if (softhsm_lib AND softhsm_tool AND pk11)
         add_custom_target(generate-test-hsm-data
                 COMMAND rm -r ${CMAKE_CURRENT_SOURCE_DIR}/testdata/softhsm/*
@@ -19,9 +26,6 @@ if (USE_OPENSSL)
                 COMMAND SOFTHSM2_CONF=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf ${pk11} --module ${softhsm_lib} --keypairgen --key-type rsa:2048 --id 1 --label test-rsa --pin 2222
                 COMMAND SOFTHSM2_CONF=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf ${pk11} --module ${softhsm_lib} --keypairgen --key-type EC:prime256v1 --id 2 --label test-ec --pin 2222
                 )
-        message("PKCS11 key test is on")
-        set(ENV{SOFTHSM2_CONF} ${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf)
-        set(PKCS11_OPTS -DHSM_LIB=${softhsm_lib} -DHSM_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf)
     endif()
 endif()
 
