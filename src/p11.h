@@ -31,7 +31,7 @@
 
 #include "pkcs11/pkcs11.h"
 #include <stddef.h>
-#include <stdint-gcc.h>
+#include <stdint.h>
 
 struct p11_context_s {
     void *lib;
