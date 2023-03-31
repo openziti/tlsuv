@@ -125,12 +125,13 @@ typedef void *tls_cert;
     int (*verify)(struct tlsuv_public_key_s * pubkey, enum hash_algo md,           \
                   const char *data, size_t datalen, const char *sig, size_t siglen);
 
-#define TLSUV_PRIVKEY_API                                                       \
-    void (*free)(struct tlsuv_private_key_s * privkey);                         \
-    int (*sign)(struct tlsuv_private_key_s * privkey, enum hash_algo md,        \
-                const char *data, size_t datalen, char *sig, size_t *siglen);   \
-    struct tlsuv_public_key_s *(*pubkey)(struct tlsuv_private_key_s * privkey); \
-    int (*to_pem)(struct tlsuv_private_key_s * privkey, char **pem, size_t *pemlen);
+#define TLSUV_PRIVKEY_API                                                            \
+    void (*free)(struct tlsuv_private_key_s * privkey);                              \
+    int (*sign)(struct tlsuv_private_key_s * privkey, enum hash_algo md,             \
+                const char *data, size_t datalen, char *sig, size_t *siglen);        \
+    struct tlsuv_public_key_s *(*pubkey)(struct tlsuv_private_key_s * privkey);      \
+    int (*to_pem)(struct tlsuv_private_key_s * privkey, char **pem, size_t *pemlen); \
+    int (*get_certificate)(struct tlsuv_private_key_s * privkey, tls_cert * cert);
 
 struct tlsuv_public_key_s {
     TLSUV_PUBKEY_API
@@ -151,20 +152,20 @@ typedef struct {
     void (*free_cert)(tls_cert *cert);
 
     void (*set_alpn_protocols)(void *ctx, const char **protocols, int len);
+
     /**
      * (Optional): if you bring your own engine this is probably not needed.
      * This method is provided to set client/server side cert on the default TLS context.
      */
-    int (*set_own_cert)(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
+    int (*set_own_cert)(void *ctx, const char *cert_buf, size_t cert_len);
 
     /**
-     * (Optional): if you bring your own engine this is probably not needed.
-     * This method is provided to set client/server-side cert backed by an HSM(hardware key) on the default TLS context.
-     * if `cert_buf is NULL` certificate is loaded from HSM as well, matched by `key_id` (TODO: not implemented yet)
+     * set client auth key.
+     *
+     * It also sets client certificate if the key has associated cert (pkcs11 keys)
+     * @param key
      */
-    int (*set_own_cert_pkcs11)(void *ctx, const char *cert_buf, size_t cert_len,
-                               const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
-
+    int (*set_own_key)(void *ctx, tlsuv_private_key_t key);
 
     /**
      * Sets custom server cert validation function.
