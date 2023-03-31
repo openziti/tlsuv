@@ -25,6 +25,12 @@ if (USE_OPENSSL)
                 COMMAND SOFTHSM2_CONF=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf ${pk11} --module ${softhsm_lib} -I
                 COMMAND SOFTHSM2_CONF=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf ${pk11} --module ${softhsm_lib} --keypairgen --key-type rsa:2048 --id 1 --label test-rsa --pin 2222
                 COMMAND SOFTHSM2_CONF=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf ${pk11} --module ${softhsm_lib} --keypairgen --key-type EC:prime256v1 --id 2 --label test-ec --pin 2222
+                COMMAND openssl req -new -x509 -subj '/CN=test-rsa/' -sha256 -engine pkcs11 -keyform engine -key 'pkcs11:id=%01;type=private;pin-value=2222'
+                        -out ${CMAKE_CURRENT_BINARY_DIR}/test-rsa.der -config p11.conf -outform DER
+                COMMAND openssl req -new -x509 -subj '/CN=test-ec/' -sha256 -engine pkcs11 -keyform engine -key 'pkcs11:id=%02;type=private;pin-value=2222'
+                        -out ${CMAKE_CURRENT_BINARY_DIR}/test-ec.der -config p11.conf -outform DER
+                COMMAND SOFTHSM2_CONF=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf ${pk11} --module ${softhsm_lib} --write-object ${CMAKE_CURRENT_BINARY_DIR}/test-rsa.der --type cert --id 1
+                COMMAND SOFTHSM2_CONF=${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf ${pk11} --module ${softhsm_lib} --write-object ${CMAKE_CURRENT_BINARY_DIR}/test-ec.der --type cert --id 2
                 )
     endif()
 endif()
