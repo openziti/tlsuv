@@ -36,6 +36,8 @@ if (rc != CKR_OK) { \
    }\
 } while(0)
 
+static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, char **val, size_t *len);
+
 int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pin) {
     memset(p11, 0, sizeof(p11_context));
 
@@ -84,14 +86,55 @@ int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pi
     return 0;
 }
 
-int p11_get_key_attr(p11_key_ctx *key, CK_ATTRIBUTE_TYPE type, char **val, size_t *len) {
+int p11_get_key_cert(p11_key_ctx *key, char **val, size_t *len) {
     p11_context *p11 = key->ctx;
+    CK_ULONG cls = CKO_CERTIFICATE;
+
+    uint8_t *id = NULL;
+    CK_ULONG idlen;
+    p11_get_obj_attr(p11, key->priv_handle, CKA_ID, &id, &idlen);
+
+
+    CK_ULONG qcount = 2;
+    CK_ATTRIBUTE query[2];
+    query[0].type = CKA_CLASS;
+    query[0].pValue = &cls;
+    query[0].ulValueLen = sizeof(cls);
+
+    query[1].type = CKA_ID;
+    query[1].pValue = id;
+    query[1].ulValueLen = idlen;
+
+    CK_ULONG objc;
+    CK_OBJECT_HANDLE cert_handle;
+    P11(p11->funcs->C_FindObjectsInit(p11->session, query, qcount));
+    P11(p11->funcs->C_FindObjects(p11->session, &cert_handle, 1, &objc));
+    P11(p11->funcs->C_FindObjectsFinal(p11->session));
+
+    free(id);
+    if (objc == 0) {
+        UM_LOG(WARN, "certificate not found");
+        *val = NULL;
+        *len = 0;
+        return -1;
+    }
+
+    return p11_get_obj_attr(p11, cert_handle, CKA_VALUE, val, len);
+}
+
+
+int p11_get_key_attr(p11_key_ctx *key, CK_ATTRIBUTE_TYPE type, char **val, size_t *len) {
+    return p11_get_obj_attr(key->ctx, key->pub_handle, type, val, len);
+}
+
+static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, char **val, size_t *len) {
+
         // load public key
     CK_ATTRIBUTE attr[] = {
             {type, NULL, 0},
     };
 
-    CK_RV rc = p11->funcs->C_GetAttributeValue(p11->session, key->pub_handle, attr, 1);
+    CK_RV rc = p11->funcs->C_GetAttributeValue(p11->session, h, attr, 1);
     if (rc != CKR_OK) {
         *val = NULL;
         *len = 0;
@@ -99,11 +142,12 @@ int p11_get_key_attr(p11_key_ctx *key, CK_ATTRIBUTE_TYPE type, char **val, size_
     }
 
     *len = attr[0].ulValueLen;
-    *val = malloc(*len + 1);
+    *val = calloc(1, *len + 1);
 
     attr[0].pValue = *val;
-    rc = p11->funcs->C_GetAttributeValue(p11->session, key->pub_handle, attr, 1);
+    rc = p11->funcs->C_GetAttributeValue(p11->session, h, attr, 1);
     if (rc != CKR_OK) {
+        free(*val);
         *val = NULL;
         *len = 0;
         return (int)rc;
