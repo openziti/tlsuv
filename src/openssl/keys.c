@@ -41,6 +41,8 @@ static int privkey_to_pem(tlsuv_private_key_t pk, char **pem, size_t *pemlen);
 static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md,
                         const char *data, size_t datalen, char *sig, size_t *siglen);
 
+static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert);
+
 static ECDSA_SIG *privkey_p11_sign_sig(const unsigned char *digest, int len, const BIGNUM *pSt, const BIGNUM *pBignumSt, EC_KEY *ec);
 static int privkey_p11_rsa_enc(int type, const unsigned char *m,
                                 unsigned char *m_length,
@@ -51,6 +53,7 @@ static struct priv_key_s PRIV_KEY_API = {
         .to_pem = privkey_to_pem,
         .pubkey = privkey_pubkey,
         .sign = privkey_sign,
+        .get_certificate = privkey_get_cert,
 };
 
 static EC_KEY_METHOD *p11_ec_method;
@@ -452,8 +455,49 @@ static int privkey_p11_rsa_enc(int msglen, const unsigned char *msg,
                                 RSA *rsa, int padding) {
     p11_key_ctx *p11_key = RSA_get_ex_data(rsa, p11_rsa_idx);
 
+    CK_MECHANISM_TYPE mech;
     size_t siglen = RSA_size(rsa);
-    int rc = p11_key_sign(p11_key, msg, msglen, enc, &siglen, padding);
+    if (padding == RSA_PKCS1_PADDING) {
+        mech = CKM_RSA_PKCS;
+    } else if (padding == RSA_NO_PADDING) {
+        mech = CKM_RSA_X_509;
+    } else if (padding == RSA_X931_PADDING) {
+        mech = CKM_RSA_X9_31;
+    }
+    int rc = p11_key_sign(p11_key, msg, msglen, enc, &siglen, mech);
 
     return siglen;
+}
+
+static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert) {
+    struct priv_key_s *key = (struct priv_key_s *) pk;
+
+    p11_key_ctx *p11_key = NULL;
+    switch (EVP_PKEY_id(key->pkey)) {
+        case EVP_PKEY_EC:
+            p11_key = EC_KEY_get_ex_data(EVP_PKEY_get0_EC_KEY(key->pkey), p11_ec_idx);
+            break;
+        case EVP_PKEY_RSA:
+            p11_key = RSA_get_ex_data(EVP_PKEY_get0_RSA(key->pkey), p11_rsa_idx);
+            break;
+    }
+
+    if (p11_key == NULL) {
+        return -1;
+    }
+
+    char *der;
+    size_t derlen;
+
+    if (p11_get_key_cert(p11_key, &der, &derlen) == 0) {
+        const uint8_t *a = der;
+        X509 *c = d2i_X509(NULL, &a, (long)derlen);
+        X509_STORE_CTX *store = X509_STORE_CTX_new();
+        X509_STORE_CTX_set_cert(store, c);
+        *cert = store;
+        free(der);
+        return 0;
+    }
+
+    return -1;
 }
