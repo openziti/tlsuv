@@ -119,9 +119,10 @@ typedef struct tlsuv_public_key_s *tlsuv_public_key_t;
 typedef struct tlsuv_private_key_s *tlsuv_private_key_t;
 typedef void *tls_cert;
 
-#define TLSUV_PUBKEY_API                                                 \
-    void (*free)(struct tlsuv_public_key_s * pubkey);                    \
-    int (*verify)(struct tlsuv_public_key_s * pubkey, enum hash_algo md, \
+#define TLSUV_PUBKEY_API                                                           \
+    void (*free)(struct tlsuv_public_key_s * pubkey);                              \
+    int (*to_pem)(struct tlsuv_public_key_s * pubkey, char **pem, size_t *pemlen); \
+    int (*verify)(struct tlsuv_public_key_s * pubkey, enum hash_algo md,           \
                   const char *data, size_t datalen, const char *sig, size_t siglen);
 
 #define TLSUV_PRIVKEY_API                                                       \
@@ -229,6 +230,8 @@ typedef struct {
      * @returns 0 on success, or error code
      */
     int (*load_key)(tlsuv_private_key_t *pk, const char* keydata, size_t keydatalen);
+
+    int (*load_pkcs11_key)(tlsuv_private_key_t *pk, const char* pkcs11driver, const char *slot, const char *pin, const char *id, const char *label);
 
     /**
      * Create x509 signing request in PEM format

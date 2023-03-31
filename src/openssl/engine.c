@@ -125,6 +125,7 @@ static tls_context_api openssl_context_api = {
         .write_cert_to_pem = write_cert_pem,
         .generate_key = gen_key,
         .load_key = load_key,
+        .load_pkcs11_key = load_pkcs11_key,
         .generate_csr_to_pem = generate_csr,
 };
 

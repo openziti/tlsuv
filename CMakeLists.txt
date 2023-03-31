@@ -39,6 +39,8 @@ set(tlsuv_sources
         src/tls_engine.c
         src/compression.c
         src/compression.h
+        src/p11.c
+        src/p11.h
         )
 
 if(USE_OPENSSL)
