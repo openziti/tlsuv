@@ -57,7 +57,7 @@ int p11_load_key(p11_context *p11, p11_key_ctx *p11_key, const char *id, const c
 int p11_get_key_attr(p11_key_ctx *key, CK_ATTRIBUTE_TYPE type, char **val, size_t *len);
 int p11_get_key_cert(p11_key_ctx *key, char **val, size_t *len);
 
-int p11_key_sign(p11_key_ctx *key, const uint8_t *digest, int digest_len, uint8_t *sig, size_t *siglen, int padding);
+int p11_key_sign(p11_key_ctx *key, const uint8_t *digest, int digest_len, uint8_t *sig, size_t *siglen, CK_MECHANISM_TYPE padding);
 void p11_key_free(p11_key_ctx *key);
 const char *p11_strerror(CK_RV rv);
 

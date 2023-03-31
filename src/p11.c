@@ -217,13 +217,13 @@ int p11_load_key(p11_context *p11, p11_key_ctx *p11_key, const char *idstr, cons
     return 0;
 }
 
-int p11_key_sign(p11_key_ctx *key, const uint8_t *digest, int digest_len, uint8_t *sig, size_t *siglen, int padding) {
+int p11_key_sign(p11_key_ctx *key, const uint8_t *digest, int digest_len, uint8_t *sig, size_t *siglen, CK_MECHANISM_TYPE padding) {
     p11_context *p11 = key->ctx;
 
     CK_MECHANISM mech = {0};
     switch (key->key_type) {
         case CKK_EC: mech.mechanism = CKM_ECDSA; break;
-        case CKK_RSA: mech.mechanism = CKM_RSA_PKCS; break;
+        case CKK_RSA: mech.mechanism = padding; break;
     }
 
     CK_RV rc = p11->funcs->C_SignInit(p11->session, &mech, key->priv_handle);
