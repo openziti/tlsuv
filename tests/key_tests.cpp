@@ -190,6 +190,30 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
         free(pem);
     }
 
+    WHEN(keyType << ": get key cert") {
+        tls_cert cert;
+        char *pem = nullptr;
+        size_t pemlen;
+        CHECK(key->get_certificate(key, &cert) == 0);
+        CHECK(ctx->api->write_cert_to_pem(cert, 1, &pem, &pemlen) == 0);
+        CHECK(pemlen > 0);
+        CHECK(pem != nullptr);
+        Catch::cout() << std::string(pem, pemlen) << std::endl;
+        free(pem);
+        THEN("verify using cert") {
+            char sig[512];
+            const char *data = "I want to sign and verify this";
+            size_t datalen = strlen(data);
+
+            memset(sig, 0, sizeof(sig));
+            size_t siglen = sizeof(sig);
+
+            CHECK(0 == key->sign(key, hash_SHA256, data, datalen, sig, &siglen));
+            CHECK(0 == ctx->api->verify_signature(cert, hash_SHA256, data, datalen, sig, siglen));
+        }
+        ctx->api->free_cert(&cert);
+    }
+
     WHEN(keyType << ": sign and verify") {
         auto pub = key->pubkey(key);
         REQUIRE(pub != nullptr);
