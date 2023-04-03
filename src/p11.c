@@ -22,6 +22,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <stdbool.h>
 #endif
 
 #include "p11.h"
@@ -36,7 +37,7 @@ if (rc != CKR_OK) { \
    }\
 } while(0)
 
-static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, char **val, size_t *len);
+static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, uint8_t **val, size_t *len);
 
 int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pin) {
     memset(p11, 0, sizeof(p11_context));
@@ -86,6 +87,58 @@ int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pi
     return 0;
 }
 
+int p11_store_key_cert(p11_key_ctx *key, char *cert, size_t certlen, char *subj, size_t subjlen) {
+    p11_context *p11 = key->ctx;
+
+    uint8_t *id = NULL;
+    CK_ULONG idlen;
+    p11_get_obj_attr(p11, key->priv_handle, CKA_ID, &id, &idlen);
+
+    CK_ULONG cls = CKO_CERTIFICATE;
+
+    CK_ATTRIBUTE temp[10];
+    int idx = 0;
+    temp[idx].type = CKA_CLASS;
+    temp[idx].pValue = &cls;
+    temp[idx].ulValueLen = sizeof(cls);
+    idx++;
+
+    CK_CERTIFICATE_TYPE cert_type = CKC_X_509;
+    temp[idx].type = CKA_CERTIFICATE_TYPE;
+    temp[idx].pValue = &cert_type;
+    temp[idx].ulValueLen = sizeof(cert_type);
+    idx++;
+
+    bool private = false;
+    temp[idx].type = CKA_PRIVATE;
+    temp[idx].pValue = &private;
+    temp[idx].ulValueLen = sizeof(private);
+    idx++;
+
+    temp[idx].type = CKA_ID;
+    temp[idx].pValue = id;
+    temp[idx].ulValueLen = idlen;
+    idx++;
+
+    temp[idx].type = CKA_SUBJECT;
+    temp[idx].pValue = subj;
+    temp[idx].ulValueLen = subjlen;
+    idx++;
+
+    temp[idx].type = CKA_VALUE;
+    temp[idx].pValue = cert;
+    temp[idx].ulValueLen = certlen;
+    idx++;
+
+    CK_OBJECT_HANDLE h;
+    CK_RV rc = p11->funcs->C_CreateObject(p11->session, temp, idx, &h);
+    if (rc != CKR_OK) {
+        UM_LOG(WARN, "failed to store cert to pkcs#11 token: %d/%s", rc, p11_strerror(rc));
+        return -1;
+    }
+    return 0;
+}
+
 int p11_get_key_cert(p11_key_ctx *key, char **val, size_t *len) {
     p11_context *p11 = key->ctx;
     CK_ULONG cls = CKO_CERTIFICATE;
@@ -127,7 +180,7 @@ int p11_get_key_attr(p11_key_ctx *key, CK_ATTRIBUTE_TYPE type, char **val, size_
     return p11_get_obj_attr(key->ctx, key->pub_handle, type, val, len);
 }
 
-static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, char **val, size_t *len) {
+static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, uint8_t **val, size_t *len) {
 
         // load public key
     CK_ATTRIBUTE attr[] = {
