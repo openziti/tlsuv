@@ -31,11 +31,6 @@
 
 #include "keys.h"
 
-#if _WIN32
-#include <wincrypt.h>
-#pragma comment (lib, "crypt32.lib")
-#endif
-
 // inspired by https://golang.org/src/crypto/x509/root_linux.go
 // Possible certificate files; stop after finding one.
 const char *const caFiles[] = {
@@ -108,6 +103,9 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
 static void msg_cb (int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg);
 static void info_cb(const SSL *s, int where, int ret);
 
+#if _WIN32
+static X509_STORE_CTX *load_system_certs();
+#endif
 
 static tls_context_api openssl_context_api = {
         .version = tls_lib_version,
@@ -189,32 +187,6 @@ static X509_STORE_CTX * load_certs(const char *buf, size_t buf_len) {
     }
     return store;
 }
-
-#if _WIN32
-static X509_STORE_CTX *load_system_certs() {
-    X509_STORE_CTX *store = X509_STORE_CTX_new();
-    X509_STORE_CTX_init(store, X509_STORE_new(), NULL, NULL);
-    X509_STORE *certs = X509_STORE_CTX_get0_store(store);
-    X509 *c;
-
-    HCERTSTORE hCertStore;
-    PCCERT_CONTEXT pCertContext = NULL;
-
-    if (!(hCertStore = CertOpenSystemStore(0, "ROOT"))) {
-        UM_LOG(ERROR, "The first system store did not open.");
-        return store;
-    }
-    
-    while ((pCertContext = CertEnumCertificatesInStore(hCertStore, pCertContext)) != NULL) {
-        c = d2i_X509(NULL, (const uint8_t **)&pCertContext->pbCertEncoded, (long)pCertContext->cbCertEncoded);
-        X509_STORE_add_cert(certs, c);
-    }
-    CertFreeCertificateContext(pCertContext);
-    CertCloseStore(hCertStore, 0);
-
-    return store;
-}
-#endif
 
 static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_len) {
     SSL_library_init();
@@ -466,10 +438,9 @@ static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
     struct openssl_ctx *c = ctx;
 
     X509 *crt = X509_STORE_CTX_get0_cert(certs);
-    X509_NAME *name = X509_get_subject_name(crt);
 
     char n[1024];
-    X509_NAME_oneline(name, n, 1024);
+    X509_NAME_oneline(X509_get_subject_name(crt), n, 1024);
     UM_LOG(VERB, "verifying %s", n);
 
     if (c->cert_verify_f) {
@@ -905,3 +876,32 @@ goto on_error;            \
 
     return ret;
 }
+
+#if _WIN32
+#include <wincrypt.h>
+#pragma comment (lib, "crypt32.lib")
+
+static X509_STORE_CTX *load_system_certs() {
+    X509_STORE_CTX *store = X509_STORE_CTX_new();
+    X509_STORE_CTX_init(store, X509_STORE_new(), NULL, NULL);
+    X509_STORE *certs = X509_STORE_CTX_get0_store(store);
+    X509 *c;
+
+    HCERTSTORE hCertStore;
+    PCCERT_CONTEXT pCertContext = NULL;
+
+    if (!(hCertStore = CertOpenSystemStore(0, "ROOT"))) {
+        UM_LOG(ERROR, "The first system store did not open.");
+        return store;
+    }
+
+    while ((pCertContext = CertEnumCertificatesInStore(hCertStore, pCertContext)) != NULL) {
+        c = d2i_X509(NULL, (const uint8_t **)&pCertContext->pbCertEncoded, (long)pCertContext->cbCertEncoded);
+        X509_STORE_add_cert(certs, c);
+    }
+    CertFreeCertificateContext(pCertContext);
+    CertCloseStore(hCertStore, 0);
+
+    return store;
+}
+#endif

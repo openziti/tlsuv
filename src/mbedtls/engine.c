@@ -454,6 +454,12 @@ static void mbedtls_set_alpn_protocols(void *ctx, const char** protos, int len) 
 static int mbedtls_set_own_key(void *ctx, tlsuv_private_key_t key) {
     struct mbedtls_context *c = ctx;
     c->own_key = (struct priv_key_s *) key;
+    if (c->own_cert) {
+        int rc = mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, &c->own_key->pkey);
+        if (rc != 0) {
+            return -1;
+        }
+    }
     return 0;
 }
 
@@ -480,7 +486,9 @@ static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len
         }
     }
 
-    rc = mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, &c->own_key->pkey);
+    if (c->own_key) {
+        rc = mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, &c->own_key->pkey);
+    }
     return rc;
 }
 

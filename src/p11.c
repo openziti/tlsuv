@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +23,6 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
-#include <stdbool.h>
 #endif
 
 #include "p11.h"

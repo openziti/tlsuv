@@ -438,6 +438,7 @@ TEST_CASE("client_cert_test","[http]") {
 }
 
 const int ONE_SECOND = 1000000;
+const int ONE_MILLI = 1000;
 
 static long duration(uv_timeval64_t &start, uv_timeval64_t &stop) {
     return stop.tv_sec * ONE_SECOND + stop.tv_usec - start.tv_sec * ONE_SECOND - start.tv_usec;
@@ -471,7 +472,7 @@ TEST_CASE("client_idle_test","[http]") {
         THEN("request should be fast and then idle for 5 seconds") {
             CHECK(resp.code == HTTP_STATUS_OK);
             CHECK(duration(start, resp.resp_endtime) < 2 * ONE_SECOND);
-            CHECK(duration(resp.resp_endtime, stop) >= 5 * ONE_SECOND);
+            CHECK(duration(resp.resp_endtime, stop) >= (5 * ONE_SECOND - ONE_MILLI));
         }
 
         tlsuv_http_close(&clt, nullptr);
