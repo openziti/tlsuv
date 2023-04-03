@@ -42,6 +42,7 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md,
                         const char *data, size_t datalen, char *sig, size_t *siglen);
 
 static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert);
+static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert);
 
 static ECDSA_SIG *privkey_p11_sign_sig(const unsigned char *digest, int len, const BIGNUM *pSt, const BIGNUM *pBignumSt, EC_KEY *ec);
 static int privkey_p11_rsa_enc(int type, const unsigned char *m,
@@ -54,6 +55,7 @@ static struct priv_key_s PRIV_KEY_API = {
         .pubkey = privkey_pubkey,
         .sign = privkey_sign,
         .get_certificate = privkey_get_cert,
+        .store_certificate = privkey_store_cert,
 };
 
 static EC_KEY_METHOD *p11_ec_method;
@@ -500,4 +502,37 @@ static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert) {
     }
 
     return -1;
+}
+
+static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert) {
+    struct priv_key_s *key = (struct priv_key_s *) pk;
+
+    p11_key_ctx *p11_key = NULL;
+    switch (EVP_PKEY_id(key->pkey)) {
+        case EVP_PKEY_EC:
+            p11_key = EC_KEY_get_ex_data(EVP_PKEY_get0_EC_KEY(key->pkey), p11_ec_idx);
+            break;
+        case EVP_PKEY_RSA:
+            p11_key = RSA_get_ex_data(EVP_PKEY_get0_RSA(key->pkey), p11_rsa_idx);
+            break;
+    }
+
+    if (p11_key == NULL) {
+        return -1;
+    }
+    X509_STORE_CTX *store = cert;
+    X509 *c = X509_STORE_CTX_get0_cert(store);
+
+    X509_NAME *subj_name = X509_get_subject_name(c);
+    char *subj_der = NULL;
+    int subjlen = i2d_X509_NAME(subj_name, &subj_der);
+
+    char *der = NULL;
+    int derlen = i2d_X509(c, (unsigned char **) &der);
+
+    int rc = p11_store_key_cert(p11_key, der, derlen, subj_der, subjlen);
+
+    OPENSSL_free(der);
+    OPENSSL_free(subj_der);
+    return rc;
 }
