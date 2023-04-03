@@ -52,6 +52,19 @@ static void check_key(tlsuv_private_key_t key) {
     auto pub = key->pubkey(key);
     REQUIRE(pub != nullptr);
 
+    char *pem = nullptr;
+    size_t pemlen;
+    CHECK(key->to_pem(key, &pem, &pemlen) == 0);
+    CHECK(pem != nullptr);
+    CHECK(pemlen > 0);
+    free(pem);
+
+    pem = nullptr;
+    CHECK(pub->to_pem(pub, &pem, &pemlen) == 0);
+    CHECK(pem != nullptr);
+    CHECK(pemlen > 0);
+    free(pem);
+
     const char *data = "this is an important message";
     size_t datalen = strlen(data);
 
@@ -162,7 +175,7 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
     int rc = 0;
     rc = ctx->api->load_pkcs11_key(&key, HSM_DRIVER, nullptr, "2222", nullptr, keyLabel.c_str());
     CHECK(rc == 0);
-    CHECK(key != nullptr);
+    REQUIRE(key != nullptr);
 
     WHEN(keyType <<": private key PEM") {
         char *pem;
