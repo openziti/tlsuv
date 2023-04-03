@@ -131,7 +131,8 @@ typedef void *tls_cert;
                 const char *data, size_t datalen, char *sig, size_t *siglen);        \
     struct tlsuv_public_key_s *(*pubkey)(struct tlsuv_private_key_s * privkey);      \
     int (*to_pem)(struct tlsuv_private_key_s * privkey, char **pem, size_t *pemlen); \
-    int (*get_certificate)(struct tlsuv_private_key_s * privkey, tls_cert * cert);
+    int (*get_certificate)(struct tlsuv_private_key_s * privkey, tls_cert * cert);   \
+    int (*store_certificate)(struct tlsuv_private_key_s *privkey, tls_cert cert);
 
 struct tlsuv_public_key_s {
     TLSUV_PUBKEY_API
