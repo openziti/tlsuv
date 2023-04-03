@@ -195,12 +195,18 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
         char *pem = nullptr;
         size_t pemlen;
         CHECK(key->get_certificate(key, &cert) == 0);
-        CHECK(ctx->api->write_cert_to_pem(cert, 1, &pem, &pemlen) == 0);
-        CHECK(pemlen > 0);
-        CHECK(pem != nullptr);
-        Catch::cout() << std::string(pem, pemlen) << std::endl;
-        free(pem);
-        THEN("verify using cert") {
+
+        THEN("should be able to write cert to PEM") {
+            CHECK(ctx->api->write_cert_to_pem(cert, 1, &pem, &pemlen) == 0);
+            CHECK(pemlen > 0);
+            CHECK(pem != nullptr);
+            Catch::cout() << std::string(pem, pemlen) << std::endl;
+            free(pem);
+        }
+        AND_THEN("should be able to store cert back to key") {
+            CHECK(key->store_certificate(key, cert) == 0);
+        }
+        AND_THEN("verify using cert") {
             char sig[512];
             const char *data = "I want to sign and verify this";
             size_t datalen = strlen(data);
