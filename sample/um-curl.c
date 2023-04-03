@@ -95,11 +95,14 @@ int main(int argc, char **argv) {
     tlsuv_http_init(loop, &app.clt, host_url);
     tlsuv_http_idle_keepalive(&app.clt, -1);
 
+    tlsuv_private_key_t tlsKey = NULL;
     if (CA || (cert && key)) {
         tls = default_tls_context(CA, CA ? strlen(CA) + 1 : 0);
 
         if (cert && key) {
-            tls->api->set_own_cert(tls->ctx, cert, strlen(cert), key, strlen(key));
+            tls->api->load_key(&tlsKey, key, strlen(key));
+            tls->api->set_own_key(tls->ctx, tlsKey);
+            tls->api->set_own_cert(tls->ctx, cert, strlen(cert));
         }
         tlsuv_http_set_ssl(&app.clt, tls);
     }
