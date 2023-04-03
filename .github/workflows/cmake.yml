@@ -35,7 +35,7 @@ jobs:
 
     - uses: lukka/run-vcpkg@v10
       with:
-        vcpkgGitCommitId: 'f14984af3738e69f197bf0e647a8dca12de92996'
+        vcpkgGitCommitId: '19af97cba8ca48474e4ad15a24ed50271a9ecdac'
 
     - name: Setup Golang with cache
       uses: magnetikonline/action-golang-cache@v4
