@@ -69,6 +69,7 @@ static int pubkey_pem(tlsuv_public_key_t pk, char **pem, size_t *pemlen) {
     int rc;
     rc = mbedtls_pk_write_pubkey_pem(&pub->pkey, buf, len);
     if (rc != 0) {
+        free(buf);
         UM_LOG(WARN, "pubkey to_pem error: %d/%s", rc, mbedtls_error(rc));
         return -1;
     }
