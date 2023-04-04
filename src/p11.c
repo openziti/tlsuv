@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +36,8 @@ if (rc != CKR_OK) { \
             return rc; \
    }\
 } while(0)
+
+static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, uint8_t **val, size_t *len);
 
 int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pin) {
     memset(p11, 0, sizeof(p11_context));
@@ -84,14 +87,107 @@ int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pi
     return 0;
 }
 
-int p11_get_key_attr(p11_key_ctx *key, CK_ATTRIBUTE_TYPE type, char **val, size_t *len) {
+int p11_store_key_cert(p11_key_ctx *key, char *cert, size_t certlen, char *subj, size_t subjlen) {
     p11_context *p11 = key->ctx;
+
+    uint8_t *id = NULL;
+    CK_ULONG idlen;
+    p11_get_obj_attr(p11, key->priv_handle, CKA_ID, &id, &idlen);
+
+    CK_ULONG cls = CKO_CERTIFICATE;
+
+    CK_ATTRIBUTE temp[10];
+    int idx = 0;
+    temp[idx].type = CKA_CLASS;
+    temp[idx].pValue = &cls;
+    temp[idx].ulValueLen = sizeof(cls);
+    idx++;
+
+    CK_CERTIFICATE_TYPE cert_type = CKC_X_509;
+    temp[idx].type = CKA_CERTIFICATE_TYPE;
+    temp[idx].pValue = &cert_type;
+    temp[idx].ulValueLen = sizeof(cert_type);
+    idx++;
+
+    bool private = false;
+    temp[idx].type = CKA_PRIVATE;
+    temp[idx].pValue = &private;
+    temp[idx].ulValueLen = sizeof(private);
+    idx++;
+
+    temp[idx].type = CKA_ID;
+    temp[idx].pValue = id;
+    temp[idx].ulValueLen = idlen;
+    idx++;
+
+    temp[idx].type = CKA_SUBJECT;
+    temp[idx].pValue = subj;
+    temp[idx].ulValueLen = subjlen;
+    idx++;
+
+    temp[idx].type = CKA_VALUE;
+    temp[idx].pValue = cert;
+    temp[idx].ulValueLen = certlen;
+    idx++;
+
+    CK_OBJECT_HANDLE h;
+    CK_RV rc = p11->funcs->C_CreateObject(p11->session, temp, idx, &h);
+    if (rc != CKR_OK) {
+        UM_LOG(WARN, "failed to store cert to pkcs#11 token: %d/%s", rc, p11_strerror(rc));
+        return -1;
+    }
+    return 0;
+}
+
+int p11_get_key_cert(p11_key_ctx *key, char **val, size_t *len) {
+    p11_context *p11 = key->ctx;
+    CK_ULONG cls = CKO_CERTIFICATE;
+
+    uint8_t *id = NULL;
+    CK_ULONG idlen;
+    p11_get_obj_attr(p11, key->priv_handle, CKA_ID, &id, &idlen);
+
+
+    CK_ULONG qcount = 2;
+    CK_ATTRIBUTE query[2];
+    query[0].type = CKA_CLASS;
+    query[0].pValue = &cls;
+    query[0].ulValueLen = sizeof(cls);
+
+    query[1].type = CKA_ID;
+    query[1].pValue = id;
+    query[1].ulValueLen = idlen;
+
+    CK_ULONG objc;
+    CK_OBJECT_HANDLE cert_handle;
+    P11(p11->funcs->C_FindObjectsInit(p11->session, query, qcount));
+    P11(p11->funcs->C_FindObjects(p11->session, &cert_handle, 1, &objc));
+    P11(p11->funcs->C_FindObjectsFinal(p11->session));
+
+    free(id);
+    if (objc == 0) {
+        UM_LOG(WARN, "certificate not found");
+        *val = NULL;
+        *len = 0;
+        return -1;
+    }
+
+    return p11_get_obj_attr(p11, cert_handle, CKA_VALUE, val, len);
+}
+
+
+int p11_get_key_attr(p11_key_ctx *key, CK_ATTRIBUTE_TYPE type, char **val, size_t *len) {
+    return p11_get_obj_attr(key->ctx, key->pub_handle, type, val, len);
+}
+
+static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, uint8_t **val, size_t *len) {
+
         // load public key
     CK_ATTRIBUTE attr[] = {
             {type, NULL, 0},
     };
 
-    CK_RV rc = p11->funcs->C_GetAttributeValue(p11->session, key->pub_handle, attr, 1);
+    CK_RV rc = p11->funcs->C_GetAttributeValue(p11->session, h, attr, 1);
     if (rc != CKR_OK) {
         *val = NULL;
         *len = 0;
@@ -99,11 +195,12 @@ int p11_get_key_attr(p11_key_ctx *key, CK_ATTRIBUTE_TYPE type, char **val, size_
     }
 
     *len = attr[0].ulValueLen;
-    *val = malloc(*len + 1);
+    *val = calloc(1, *len + 1);
 
     attr[0].pValue = *val;
-    rc = p11->funcs->C_GetAttributeValue(p11->session, key->pub_handle, attr, 1);
+    rc = p11->funcs->C_GetAttributeValue(p11->session, h, attr, 1);
     if (rc != CKR_OK) {
+        free(*val);
         *val = NULL;
         *len = 0;
         return (int)rc;
@@ -173,13 +270,13 @@ int p11_load_key(p11_context *p11, p11_key_ctx *p11_key, const char *idstr, cons
     return 0;
 }
 
-int p11_key_sign(p11_key_ctx *key, const uint8_t *digest, int digest_len, uint8_t *sig, size_t *siglen, int padding) {
+int p11_key_sign(p11_key_ctx *key, const uint8_t *digest, int digest_len, uint8_t *sig, size_t *siglen, CK_MECHANISM_TYPE padding) {
     p11_context *p11 = key->ctx;
 
     CK_MECHANISM mech = {0};
     switch (key->key_type) {
         case CKK_EC: mech.mechanism = CKM_ECDSA; break;
-        case CKK_RSA: mech.mechanism = CKM_RSA_PKCS; break;
+        case CKK_RSA: mech.mechanism = padding; break;
     }
 
     CK_RV rc = p11->funcs->C_SignInit(p11->session, &mech, key->priv_handle);

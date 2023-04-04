@@ -78,9 +78,12 @@ struct mbedtls_engine {
 };
 
 static void mbedtls_set_alpn_protocols(void *ctx, const char** protos, int len);
-static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
+static int mbedtls_set_own_key(void *ctx, tlsuv_private_key_t key);
+static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len);
 static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
             const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
+
+static int mbedtls_load_key_p11(tlsuv_private_key_t *key, const char *string, const char *string1, const char *string2, const char *string3, const char *string4);
 
 tls_engine *new_mbedtls_engine(void *ctx, const char *host);
 
@@ -128,14 +131,15 @@ static tls_context_api mbedtls_context_api = {
         .free_ctx = mbedtls_free_ctx,
         .free_cert = mbedtls_free_cert,
         .set_alpn_protocols = mbedtls_set_alpn_protocols,
+        .set_own_key = mbedtls_set_own_key,
         .set_own_cert = mbedtls_set_own_cert,
-        .set_own_cert_pkcs11 = mbedtls_set_own_cert_p11,
         .set_cert_verify = mbedtls_set_cert_verify,
         .verify_signature =  mbedtls_verify_signature,
         .parse_pkcs7_certs = parse_pkcs7_certs,
         .write_cert_to_pem = write_cert_pem,
         .generate_key = gen_key,
         .load_key = load_key,
+        .load_pkcs11_key = load_key_p11,
         .generate_csr_to_pem = generate_csr,
 };
 
@@ -447,11 +451,24 @@ static void mbedtls_set_alpn_protocols(void *ctx, const char** protos, int len) 
     mbedtls_ssl_conf_alpn_protocols(&c->config, c->alpn_protocols);
 }
 
-static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
+static int mbedtls_set_own_key(void *ctx, tlsuv_private_key_t key) {
     struct mbedtls_context *c = ctx;
-    int rc = load_key((tlsuv_private_key_t *) &c->own_key, key_buf, key_len);
-    if (rc != 0) return rc;
+    c->own_key = (struct priv_key_s *) key;
+    if (c->own_cert) {
+        int rc = mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, &c->own_key->pkey);
+        if (rc != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
 
+static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len) {
+    struct mbedtls_context *c = ctx;
+    int rc;
+//    rc = load_key((tlsuv_private_key_t *) &c->own_key, key_buf, key_len);
+//    if (rc != 0) return rc;
+//
 
     c->own_cert = calloc(1, sizeof(mbedtls_x509_crt));
     rc = mbedtls_x509_crt_parse(c->own_cert, (const unsigned char *)cert_buf, cert_len);
@@ -469,7 +486,9 @@ static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len
         }
     }
 
-    rc = mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, &c->own_key->pkey);
+    if (c->own_key) {
+        rc = mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, &c->own_key->pkey);
+    }
     return rc;
 }
 

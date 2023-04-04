@@ -31,11 +31,6 @@
 
 #include "keys.h"
 
-#if _WIN32
-#include <wincrypt.h>
-#pragma comment (lib, "crypt32.lib")
-#endif
-
 // inspired by https://golang.org/src/crypto/x509/root_linux.go
 // Possible certificate files; stop after finding one.
 const char *const caFiles[] = {
@@ -66,9 +61,9 @@ struct openssl_engine {
 };
 
 static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_len);
-static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len);
-static int tls_set_own_cert_pkcs11(void *ctx, const char *cert_buf, size_t cert_len,
-                               const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
+static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len);
+static int tls_set_own_key(void *ctx, tlsuv_private_key_t key);
+
 tls_engine *new_openssl_engine(void *ctx, const char *host);
 static void tls_set_alpn_protocols(void *ctx, const char **protos, int len);
 
@@ -108,6 +103,9 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
 static void msg_cb (int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg);
 static void info_cb(const SSL *s, int where, int ret);
 
+#if _WIN32
+static X509_STORE_CTX *load_system_certs();
+#endif
 
 static tls_context_api openssl_context_api = {
         .version = tls_lib_version,
@@ -117,7 +115,7 @@ static tls_context_api openssl_context_api = {
         .free_ctx = tls_free_ctx,
         .free_cert = tls_free_cert,
         .set_own_cert = tls_set_own_cert,
-        .set_own_cert_pkcs11 = tls_set_own_cert_pkcs11,
+        .set_own_key = tls_set_own_key,
         .set_cert_verify = tls_set_cert_verify,
         .set_alpn_protocols = tls_set_alpn_protocols,
         .verify_signature =  tls_verify_signature,
@@ -189,32 +187,6 @@ static X509_STORE_CTX * load_certs(const char *buf, size_t buf_len) {
     }
     return store;
 }
-
-#if _WIN32
-static X509_STORE_CTX *load_system_certs() {
-    X509_STORE_CTX *store = X509_STORE_CTX_new();
-    X509_STORE_CTX_init(store, X509_STORE_new(), NULL, NULL);
-    X509_STORE *certs = X509_STORE_CTX_get0_store(store);
-    X509 *c;
-
-    HCERTSTORE hCertStore;
-    PCCERT_CONTEXT pCertContext = NULL;
-
-    if (!(hCertStore = CertOpenSystemStore(0, "ROOT"))) {
-        UM_LOG(ERROR, "The first system store did not open.");
-        return store;
-    }
-    
-    while ((pCertContext = CertEnumCertificatesInStore(hCertStore, pCertContext)) != NULL) {
-        c = d2i_X509(NULL, (const uint8_t **)&pCertContext->pbCertEncoded, (long)pCertContext->cbCertEncoded);
-        X509_STORE_add_cert(certs, c);
-    }
-    CertFreeCertificateContext(pCertContext);
-    CertCloseStore(hCertStore, 0);
-
-    return store;
-}
-#endif
 
 static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_len) {
     SSL_library_init();
@@ -466,10 +438,9 @@ static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
     struct openssl_ctx *c = ctx;
 
     X509 *crt = X509_STORE_CTX_get0_cert(certs);
-    X509_NAME *name = X509_get_subject_name(crt);
 
     char n[1024];
-    X509_NAME_oneline(name, n, 1024);
+    X509_NAME_oneline(X509_get_subject_name(crt), n, 1024);
     UM_LOG(VERB, "verifying %s", n);
 
     if (c->cert_verify_f) {
@@ -494,7 +465,14 @@ static void tls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, vo
 }
 
 static int tls_verify_signature(void *cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
-    return verify_signature(X509_get_pubkey(cert), md, data, datalen, sig, siglen);
+    X509_STORE_CTX *store = cert;
+    X509 *c = X509_STORE_CTX_get0_cert(store);
+    EVP_PKEY *pk = X509_get_pubkey(c);
+    if (pk == NULL) {
+        unsigned long err = ERR_peek_error();
+        UM_LOG(WARN, "no pub key: %ld/%s", err, ERR_lib_error_string(err));
+    }
+    return verify_signature(pk, md, data, datalen, sig, siglen);
 }
 
 static void tls_free_ctx(tls_context *ctx) {
@@ -503,7 +481,7 @@ static void tls_free_ctx(tls_context *ctx) {
         free(c->alpn_protocols);
     }
     if (c->own_key) {
-        c->own_key->free(c->own_key);
+        c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
         c->own_key = NULL;
     }
     SSL_CTX_free(c->ctx);
@@ -533,9 +511,12 @@ static void tls_free(tls_engine *engine) {
 }
 
 static void tls_free_cert(tls_cert *cert) {
-    X509_STORE *s = *cert;
-    if (s != NULL)
-        X509_STORE_free(s);
+    X509_STORE_CTX *s = *cert;
+    if (s != NULL) {
+        X509 *c = X509_STORE_CTX_get0_cert(s);
+        X509_free(c);
+        X509_STORE_CTX_free(s);
+    }
     *cert = NULL;
 }
 
@@ -569,11 +550,40 @@ if ((op) != 1) { \
         return TLS_ERR; \
     }} while(0)
 
-static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, const char *key_buf, size_t key_len) {
+static int tls_set_own_key(void *ctx, tlsuv_private_key_t key) {
     struct openssl_ctx *c = ctx;
     SSL_CTX *ssl = c->ctx;
-    int rc = load_key((tlsuv_private_key_t *) &c->own_key, key_buf, key_len);
-    if (rc != 0) return rc;
+
+    // sanity check
+    struct priv_key_s *pk = (struct priv_key_s *) key;
+    if (key == NULL && pk->pkey == NULL) {
+        return -1;
+    }
+
+    if (c->own_key) {
+        c->own_key->free((tlsuv_private_key_t) c->own_key);
+    }
+    c->own_key = (struct priv_key_s *) key;
+    SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, c->own_key->pkey), "set own key");
+
+    tls_cert cert;
+    if (key->get_certificate(key, &cert) == 0) {
+        X509_STORE_CTX *store = cert;
+        X509 *x509 = X509_STORE_CTX_get0_cert(store);
+        c->own_cert = x509;
+
+        SSL_OP_CHECK(SSL_CTX_use_certificate(c->ctx, c->own_cert), "set own cert");
+    }
+
+    if (c->own_cert) {
+        SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
+    }
+    return 0;
+}
+
+static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len) {
+    struct openssl_ctx *c = ctx;
+    SSL_CTX *ssl = c->ctx;
 
     X509_STORE_CTX *certs = load_certs(cert_buf, cert_len);
     X509_STORE *store = X509_STORE_CTX_get0_store(certs);
@@ -585,12 +595,13 @@ static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len, co
     SSL_OP_CHECK(SSL_CTX_use_certificate(ssl, crt), "set own cert");
     c->own_cert = crt;
 
-    SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, c->own_key->pkey), "set own key");
-    SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
+    if (c->own_key) {
+        SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
+    }
 
     X509_STORE_CTX_free(certs);
     X509_STORE_free(store);
-    return rc;
+    return 0;
 }
 
 #if 0
@@ -776,11 +787,15 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7buf, size_t pkcs7
         PKCS7_free(pkcs7);
         return -1;
     }
-    int count = sk_X509_num(certs);
-    X509_STORE *store = X509_STORE_new();
-    for (int i = 0; i < count; i++) {
-        X509_STORE_add_cert(store, sk_X509_value(certs, i));
+
+    STACK_OF(X509) *copy = sk_X509_new_null();
+    X509_STORE_CTX *store = X509_STORE_CTX_new();
+    for (int i = 0; i < sk_X509_num(certs); i++) {
+        X509 *c = sk_X509_value(certs, i);
+        sk_X509_push(copy, X509_dup(c));
     }
+
+    X509_STORE_CTX_set0_verified_chain(store, copy);
 
     *chain = store;
     PKCS7_free(pkcs7);
@@ -789,17 +804,20 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7buf, size_t pkcs7
 }
 
 static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen) {
-    X509_STORE *store = cert;
+    X509_STORE_CTX *ctx = cert;
 
     BIO *pembio = BIO_new(BIO_s_mem());
-    
-    STACK_OF(X509_OBJECT) *objects = X509_STORE_get0_objects(store);
-    for (int i = 0; i < sk_X509_OBJECT_num(objects); i++) {
-        X509_OBJECT *o = sk_X509_OBJECT_value(objects, i);
-        if (X509_OBJECT_get_type(o) == X509_LU_X509) {
-            X509 *c = X509_OBJECT_get0_X509(o);
-            PEM_write_bio_X509(pembio, c);
-        }
+    X509 *c;
+    c = X509_STORE_CTX_get0_cert(ctx);
+    if (c) {
+        PEM_write_bio_X509(pembio, c);
+    }
+
+    STACK_OF(X509) *objects = X509_STORE_CTX_get0_chain(ctx);
+    int count = sk_X509_num(objects);
+    for (int i = 0; i < count; i++) {
+        c = sk_X509_value(objects, i);
+        PEM_write_bio_X509(pembio, c);
     }
 
     *pemlen = BIO_ctrl_pending(pembio);
@@ -809,11 +827,6 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
     BIO_free_all(pembio);
     return 0;
 }
-
-
-
-
-
 
 static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...) {
     struct priv_key_s *privkey = (struct priv_key_s *) key;
@@ -864,8 +877,31 @@ goto on_error;            \
     return ret;
 }
 
-static int tls_set_own_cert_pkcs11(void *ctx, const char *cert_buf, size_t cert_len,
-                               const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id) {
-    UM_LOG(ERR, "pkcs11 support not implemented by this engine");
-    return TLS_ERR;
+#if _WIN32
+#include <wincrypt.h>
+#pragma comment (lib, "crypt32.lib")
+
+static X509_STORE_CTX *load_system_certs() {
+    X509_STORE_CTX *store = X509_STORE_CTX_new();
+    X509_STORE_CTX_init(store, X509_STORE_new(), NULL, NULL);
+    X509_STORE *certs = X509_STORE_CTX_get0_store(store);
+    X509 *c;
+
+    HCERTSTORE hCertStore;
+    PCCERT_CONTEXT pCertContext = NULL;
+
+    if (!(hCertStore = CertOpenSystemStore(0, "ROOT"))) {
+        UM_LOG(ERROR, "The first system store did not open.");
+        return store;
+    }
+
+    while ((pCertContext = CertEnumCertificatesInStore(hCertStore, pCertContext)) != NULL) {
+        c = d2i_X509(NULL, (const uint8_t **)&pCertContext->pbCertEncoded, (long)pCertContext->cbCertEncoded);
+        X509_STORE_add_cert(certs, c);
+    }
+    CertFreeCertificateContext(pCertContext);
+    CertCloseStore(hCertStore, 0);
+
+    return store;
 }
+#endif

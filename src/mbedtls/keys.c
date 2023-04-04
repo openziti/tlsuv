@@ -21,12 +21,16 @@
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/version.h"
+#include "p11.h"
+#include "mbed_p11.h"
 
 static void pubkey_free(tlsuv_public_key_t k);
 static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *data, size_t datalen, const char *sig, size_t siglen);
+static int pubkey_pem(tlsuv_public_key_t pk, char **pem, size_t *pemlen);
 
 static struct pub_key_s PUB_KEY_API = {
         .free = pubkey_free,
+        .to_pem = pubkey_pem,
         .verify = pubkey_verify,
 };
 
@@ -54,9 +58,24 @@ void priv_key_init(struct priv_key_s *privkey) {
 
 static void pubkey_free(tlsuv_public_key_t k) {
     struct pub_key_s *pub = (struct pub_key_s *) k;
-    mbedtls_pk_free(pub->pkey);
-    free(pub->pkey);
+    mbedtls_pk_free(&pub->pkey);
     free(pub);
+}
+
+static int pubkey_pem(tlsuv_public_key_t pk, char **pem, size_t *pemlen) {
+    struct pub_key_s *pub = (struct pub_key_s *) pk;
+    size_t len = 1024;
+    char *buf = malloc(len);
+    int rc;
+    rc = mbedtls_pk_write_pubkey_pem(&pub->pkey, buf, len);
+    if (rc != 0) {
+        free(buf);
+        UM_LOG(WARN, "pubkey to_pem error: %d/%s", rc, mbedtls_error(rc));
+        return -1;
+    }
+    *pem = buf;
+    *pemlen = strlen(buf);
+    return 0;
 }
 
 
@@ -95,7 +114,7 @@ int verify_signature (mbedtls_pk_context *pk, enum hash_algo md, const char* dat
 
 static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *data, size_t datalen, const char *sig, size_t siglen) {
     struct pub_key_s *pub = (struct pub_key_s *) pk;
-    return verify_signature(pub->pkey, md, data, datalen, sig, siglen);
+    return verify_signature(&pub->pkey, md, data, datalen, sig, siglen);
 }
 
 static void privkey_free(tlsuv_private_key_t k) {
@@ -160,9 +179,7 @@ static tlsuv_public_key_t privkey_pubkey(tlsuv_private_key_t pk) {
     // but I did not find it
     uint8_t buf[4096];
     mbedtls_pk_write_pubkey_pem(&priv->pkey, buf, sizeof(buf));
-    mbedtls_pk_context *pubkey = calloc(1, sizeof(*pubkey));
-    mbedtls_pk_parse_public_key(pubkey, buf, strlen(buf) + 1);
-    pub->pkey = pubkey;
+    mbedtls_pk_parse_public_key(&pub->pkey, buf, strlen(buf) + 1);
 
     return (tlsuv_public_key_t) pub;
 }
@@ -266,4 +283,9 @@ int gen_key(tlsuv_private_key_t *key) {
     }
 
     return ret;
+}
+
+int load_key_p11(tlsuv_private_key_t *key, const char *lib, const char *slot, const char *pin, const char *id, const char *label) {
+    UM_LOG(WARN, "not implemented");
+    return -1;
 }

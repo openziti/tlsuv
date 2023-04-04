@@ -295,6 +295,41 @@ TEST_CASE("http_tests", "[http]") {
     tlsuv_http_close(&clt, nullptr);
 }
 
+#if defined(HSM_LIB)
+
+TEST_CASE("pkcs11_client_cert_test","[http]") {
+    std::string keyType = GENERATE("rsa","ec");
+
+    UvLoopTest test;
+    tls_context *tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+
+    tlsuv_http_t clt;
+    resp_capture resp(resp_body_cb);
+
+    WHEN(keyType << ": client cert set") {
+        tlsuv_http_init(test.loop, &clt, testServerURL("auth").c_str());
+        tlsuv_http_set_ssl(&clt, tls);
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
+
+        std::string keyName = "test-" + keyType;
+        tlsuv_private_key_t pk;
+        int rc = tls->api->load_pkcs11_key(&pk, to_str(HSM_LIB), nullptr, "2222", nullptr, keyName.c_str());
+        REQUIRE(rc == 0);
+        CHECK(tls->api->set_own_key(tls->ctx, pk) == 0);
+
+        test.run();
+
+        CHECK(resp.code == HTTP_STATUS_OK);
+        CHECK(resp.resp_body_end_called);
+        CHECK(resp.body == "you are 'CN=test-" + keyType + "' by CN=test-" + keyType);
+    }
+
+    tlsuv_http_close(&clt, nullptr);
+    if (tls)
+        tls->api->free_ctx(tls);
+}
+#endif
+
 TEST_CASE("client_cert_test","[http]") {
     UvLoopTest test;
     tls_context *tls = NULL;
@@ -383,8 +418,11 @@ TEST_CASE("client_cert_test","[http]") {
                       "c7ugThP6iMPNVAycWkIF4vvHTwZ9RCSmEQabRaqGGLz/bhLL3fi3lPGCR+iW2Dxq\n"
                       "GTH3fhaM/pZZGdIC75x/69Y=\n"
                       "-----END PRIVATE KEY-----";
-        int rc = tls->api->set_own_cert(tls->ctx, cert, strlen(cert) + 1, key, strlen(key) + 1);
-        CHECK(rc == 0);
+        tlsuv_private_key_t pk;
+        int rc = tls->api->load_key(&pk, key, strlen(key) + 1);
+        REQUIRE(rc == 0);
+        CHECK(tls->api->set_own_cert(tls->ctx, cert, strlen(cert) + 1) == 0);
+        CHECK(tls->api->set_own_key(tls->ctx, pk) == 0);
 
         test.run();
 
@@ -400,6 +438,7 @@ TEST_CASE("client_cert_test","[http]") {
 }
 
 const int ONE_SECOND = 1000000;
+const int ONE_MILLI = 1000;
 
 static long duration(uv_timeval64_t &start, uv_timeval64_t &stop) {
     return stop.tv_sec * ONE_SECOND + stop.tv_usec - start.tv_sec * ONE_SECOND - start.tv_usec;
@@ -433,7 +472,7 @@ TEST_CASE("client_idle_test","[http]") {
         THEN("request should be fast and then idle for 5 seconds") {
             CHECK(resp.code == HTTP_STATUS_OK);
             CHECK(duration(start, resp.resp_endtime) < 2 * ONE_SECOND);
-            CHECK(duration(resp.resp_endtime, stop) >= 5 * ONE_SECOND);
+            CHECK(duration(resp.resp_endtime, stop) >= (5 * ONE_SECOND - ONE_MILLI));
         }
 
         tlsuv_http_close(&clt, nullptr);

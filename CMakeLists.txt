@@ -116,6 +116,7 @@ elseif(USE_OPENSSL)
 endif()
 
 if (WIN32)
+    target_compile_definitions(tlsuv PRIVATE WIN32_LEAN_AND_MEAN)
     target_link_libraries(tlsuv PUBLIC crypt32)
 endif()
 

@@ -102,7 +102,8 @@ fcwJ0v2IisYTCMavk0DJSj9Hd+coMSyTa7ghp8ja/0PSoQAxAA==
     char *pem;
     size_t pemlen;
     REQUIRE(ctx->api->write_cert_to_pem(chain, 1, &pem, &pemlen) == 0);
-
+    CHECK(pem != nullptr);
+    CHECK(pemlen > 0);
     printf("\n%.*s\n", (int)pemlen, pem);
 
     free(pem);

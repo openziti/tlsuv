@@ -20,7 +20,7 @@
 
 struct pub_key_s {
     TLSUV_PUBKEY_API
-    struct mbedtls_pk_context *pkey;
+    struct mbedtls_pk_context pkey;
 };
 
 struct priv_key_s {
@@ -35,6 +35,7 @@ void priv_key_init(struct priv_key_s *privkey);
 
 int gen_key(tlsuv_private_key_t *key);
 int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen);
+int load_key_p11(tlsuv_private_key_t *key, const char *lib, const char *slot, const char *pin, const char *id, const char *label);
 
 int verify_signature (mbedtls_pk_context *pk, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen);
 

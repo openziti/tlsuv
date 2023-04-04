@@ -52,6 +52,19 @@ static void check_key(tlsuv_private_key_t key) {
     auto pub = key->pubkey(key);
     REQUIRE(pub != nullptr);
 
+    char *pem = nullptr;
+    size_t pemlen;
+    CHECK(key->to_pem(key, &pem, &pemlen) == 0);
+    CHECK(pem != nullptr);
+    CHECK(pemlen > 0);
+    free(pem);
+
+    pem = nullptr;
+    CHECK(pub->to_pem(pub, &pem, &pemlen) == 0);
+    CHECK(pem != nullptr);
+    CHECK(pemlen > 0);
+    free(pem);
+
     const char *data = "this is an important message";
     size_t datalen = strlen(data);
 
@@ -162,7 +175,7 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
     int rc = 0;
     rc = ctx->api->load_pkcs11_key(&key, HSM_DRIVER, nullptr, "2222", nullptr, keyLabel.c_str());
     CHECK(rc == 0);
-    CHECK(key != nullptr);
+    REQUIRE(key != nullptr);
 
     WHEN(keyType <<": private key PEM") {
         char *pem;
@@ -188,6 +201,36 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
         }
         pub->free(pub);
         free(pem);
+    }
+
+    WHEN(keyType << ": get key cert") {
+        tls_cert cert;
+        char *pem = nullptr;
+        size_t pemlen;
+        CHECK(key->get_certificate(key, &cert) == 0);
+
+        THEN("should be able to write cert to PEM") {
+            CHECK(ctx->api->write_cert_to_pem(cert, 1, &pem, &pemlen) == 0);
+            CHECK(pemlen > 0);
+            CHECK(pem != nullptr);
+            Catch::cout() << std::string(pem, pemlen) << std::endl;
+            free(pem);
+        }
+        AND_THEN("should be able to store cert back to key") {
+            CHECK(key->store_certificate(key, cert) == 0);
+        }
+        AND_THEN("verify using cert") {
+            char sig[512];
+            const char *data = "I want to sign and verify this";
+            size_t datalen = strlen(data);
+
+            memset(sig, 0, sizeof(sig));
+            size_t siglen = sizeof(sig);
+
+            CHECK(0 == key->sign(key, hash_SHA256, data, datalen, sig, &siglen));
+            CHECK(0 == ctx->api->verify_signature(cert, hash_SHA256, data, datalen, sig, siglen));
+        }
+        ctx->api->free_cert(&cert);
     }
 
     WHEN(keyType << ": sign and verify") {
