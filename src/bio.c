@@ -29,48 +29,43 @@ struct msg {
     STAILQ_ENTRY(msg) next;
 };
 
-tlsuv_BIO *tlsuv_BIO_new(int zerocopy) {
+tlsuv_BIO *tlsuv_BIO_new() {
     tlsuv_BIO * bio = calloc(1, sizeof(tlsuv_BIO));
     bio->available = 0;
     bio->headoffset = 0;
     bio->qlen = 0;
-    bio->zerocopy = zerocopy;
 
     STAILQ_INIT(&bio->message_q);
     return bio;
 }
 
-void tlsuv_BIO_free(tlsuv_BIO *) {
-    while(!STAILQ_EMPTY(&b->message_q)) {
-        struct msg *m = STAILQ_FIRST(&b->message_q);
-        STAILQ_REMOVE_HEAD(&b->message_q, next);
+void tlsuv_BIO_free(tlsuv_BIO *bio) {
+    while(!STAILQ_EMPTY(&bio->message_q)) {
+        struct msg *m = STAILQ_FIRST(&bio->message_q);
+        STAILQ_REMOVE_HEAD(&bio->message_q, next);
         free(m->buf);
         free(m);
     }
 
-    free(b);
+    free(bio);
 }
 
-size_t tlsuv_BIO_available(tlsuv_BIO *) {
+size_t tlsuv_BIO_available(tlsuv_BIO *bio) {
     return bio->available;
 }
 
-int tlsuv_BIO_put(tlsuv_BIO *, const uint8_t *buf, size_t len) {
+int tlsuv_BIO_put(tlsuv_BIO *bio, const uint8_t *buf, size_t len) {
     struct msg *m = malloc(sizeof(struct msg));
     if (m == NULL) {
         return -1;
     }
 
-    if (bio->zerocopy) {
-        m->buf = buf;
-    } else {
-        m->buf = malloc(len);
-        if (m->buf == NULL) {
-            free(m);
-            return -1;
-        }
-        memcpy(m->buf, buf, len);
+    m->buf = malloc(len);
+    if (m->buf == NULL) {
+        free(m);
+        return -1;
     }
+    memcpy(m->buf, buf, len);
 
     m->len = len;
 
@@ -81,7 +76,7 @@ int tlsuv_BIO_put(tlsuv_BIO *, const uint8_t *buf, size_t len) {
     return len;
 }
 
-int tlsuv_BIO_read(tlsuv_BIO *, uint8_t *buf, size_t len) {
+int tlsuv_BIO_read(tlsuv_BIO *bio, uint8_t *buf, size_t len) {
 
     size_t total = 0;
 

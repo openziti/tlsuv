@@ -22,13 +22,11 @@ typedef struct tlsuv_bio_s {
     size_t available;
     size_t headoffset;
     unsigned int qlen;
-    int zerocopy;
     STAILQ_HEAD(msgq, msg) message_q;
 } tlsuv_BIO;
 
-// zerocopy means that buffer passed into um_BIO_put will be owned/released by BIO,
-// this avoids an extra alloc/copy operation
-tlsuv_BIO *tlsuv_BIO_new(int zerocopy);
+// create new BIO
+tlsuv_BIO *tlsuv_BIO_new();
 void tlsuv_BIO_free(tlsuv_BIO *bio);
 
 int tlsuv_BIO_put(tlsuv_BIO *bio, const uint8_t *buf, size_t len);
