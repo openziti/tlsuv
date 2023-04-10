@@ -172,12 +172,12 @@ int p11_get_key_cert(p11_key_ctx *key, char **val, size_t *len) {
         return -1;
     }
 
-    return p11_get_obj_attr(p11, cert_handle, CKA_VALUE, val, len);
+    return p11_get_obj_attr(p11, cert_handle, CKA_VALUE, (uint8_t **)val, len);
 }
 
 
 int p11_get_key_attr(p11_key_ctx *key, CK_ATTRIBUTE_TYPE type, char **val, size_t *len) {
-    return p11_get_obj_attr(key->ctx, key->pub_handle, type, val, len);
+    return p11_get_obj_attr(key->ctx, key->pub_handle, type, (uint8_t **)val, len);
 }
 
 static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, uint8_t **val, size_t *len) {
@@ -206,10 +206,6 @@ static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_T
         return (int)rc;
     }
     return 0;
-}
-
-int p11_load_ec_params(p11_key_ctx *p11_key, char **ec_param, size_t *len) {
-    return p11_get_key_attr(p11_key, CKA_EC_PARAMS, ec_param, len);
 }
 
 int p11_load_key(p11_context *p11, p11_key_ctx *p11_key, const char *idstr, const char *label) {

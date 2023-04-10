@@ -142,9 +142,9 @@ void um_free_inflater(http_inflater_t *inflater) {
 }
 
 int um_inflate(http_inflater_t *inflater, const char *compressed, size_t len) {
-    inflater->s.next_in = compressed;
+    inflater->s.next_in = (uint8_t *)compressed;
     inflater->s.avail_in = len;
-    char decompressed[32 * 1024];
+    uint8_t decompressed[32 * 1024];
     while(inflater->s.avail_in > 0) {
         inflater->s.next_out = decompressed;
         inflater->s.avail_out = sizeof(decompressed);
@@ -152,9 +152,9 @@ int um_inflate(http_inflater_t *inflater, const char *compressed, size_t len) {
         if (rc == Z_DATA_ERROR) {
             return -1;
         }
-        ssize_t decomp_count = sizeof(decompressed) - inflater->s.avail_out;
+        size_t decomp_count = sizeof(decompressed) - inflater->s.avail_out;
         if (decomp_count > 0) {
-            inflater->cb(inflater->cb_ctx, decompressed, decomp_count);
+            inflater->cb(inflater->cb_ctx, (const char*)decompressed, (ssize_t)decomp_count);
         }
         if (rc == Z_STREAM_END) {
             inflater->complete = 1;

@@ -27,8 +27,6 @@
 
 extern tls_context *get_default_tls();
 
-static const unsigned int U1 = 1;
-
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
 
 static int http_status_cb(llhttp_t *parser, const char *status, size_t len);
@@ -69,9 +67,9 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 
     if (nread < 0) {
         if (c->active) {
-            const char *err = uv_strerror(nread);
+            const char *err = uv_strerror((int)nread);
             UM_LOG(ERR, "connection error before active request could complete %zd (%s)", nread, err);
-            fail_active_request(c, nread, err);
+            fail_active_request(c, (int)nread, err);
         }
 
         close_connection(c);
@@ -311,7 +309,7 @@ static void send_body(tlsuv_http_req_t *req) {
                 buf.len = snprintf(buf.base, 10, "%zx\r\n", b->len);
                 uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, chunk_hdr_wcb, buf.base);
 
-                buf.base = b->chunk;
+                buf.base = (char*)b->chunk;
                 buf.len = b->len;
                 uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, req_write_body_cb, b);
 
@@ -327,7 +325,7 @@ static void send_body(tlsuv_http_req_t *req) {
             }
         }
         else {
-            buf = uv_buf_init(b->chunk, b->len);
+            buf = uv_buf_init((char*)b->chunk, b->len);
             uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, req_write_body_cb, b);
             if (req->body_sent_size > req->req_body_size) {
                 UM_LOG(WARN, "Supplied data[%ld] is larger than provided Content-Length[%ld]",
@@ -463,7 +461,7 @@ int tlsuv_http_set_url(tlsuv_http_t *clt, const char *url) {
         return UV_EINVAL;
     }
 
-    uint16_t port = -1;
+    uint16_t port;
     if (strncasecmp("http", u.scheme, u.scheme_len) == 0) {
         port = 80;
     } else if (strncasecmp("https", u.scheme, u.scheme_len) == 0) {
@@ -588,6 +586,7 @@ tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const ch
 int tlsuv_http_cancel_all(tlsuv_http_t *clt) {
     fail_active_request(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
     close_connection(clt);
+    return 0;
 }
 
 int tlsuv_http_req_cancel(tlsuv_http_t *clt, tlsuv_http_req_t *req) {

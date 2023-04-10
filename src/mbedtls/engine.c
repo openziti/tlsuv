@@ -285,8 +285,8 @@ tls_engine *new_mbedtls_engine(void *ctx, const char *host) {
     struct mbedtls_engine *mbed_eng = calloc(1, sizeof(struct mbedtls_engine));
     engine->engine = mbed_eng;
     mbed_eng->ssl = ssl;
-    mbed_eng->in = tlsuv_BIO_new(0);
-    mbed_eng->out = tlsuv_BIO_new(0);
+    mbed_eng->in = tlsuv_BIO_new();
+    mbed_eng->out = tlsuv_BIO_new();
     mbedtls_ssl_set_bio(ssl, mbed_eng, mbed_ssl_send, mbed_ssl_recv, NULL);
     engine->api = &mbedtls_engine_api;
 
@@ -671,9 +671,17 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len
     unsigned char *end;
     unsigned char *cert_buf;
 
-    int rc = mbedtls_base64_decode(NULL, 0, &der_len, pkcs7, pkcs7len); // determine necessary buffer size
+    int rc = mbedtls_base64_decode(NULL, 0, &der_len, (const uint8_t *)pkcs7, pkcs7len); // determine necessary buffer size
+    if (rc != 0 && rc != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
+        UM_LOG(ERR, "base64 decoding parsing error: %d", rc);
+        return rc;
+    }
     uint8_t *base64_decoded_pkcs7 = calloc(1, der_len + 1);
-    rc = mbedtls_base64_decode(base64_decoded_pkcs7, der_len, &der_len, pkcs7, pkcs7len);
+    rc = mbedtls_base64_decode(base64_decoded_pkcs7, der_len, &der_len, (const uint8_t *)pkcs7, pkcs7len);
+    if (rc != 0) {
+        UM_LOG(ERR, "base64 decoding parsing error: %d", rc);
+        return rc;
+    }
 
     unsigned char *der = (unsigned char *) base64_decoded_pkcs7;
 
@@ -874,8 +882,8 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
     }
     on_error:
     if (ret == 0) {
-        *pem = strdup(pembuf);
-        *pemlen = strlen(pembuf) + 1;
+        *pem = strdup((const char*)pembuf);
+        *pemlen = strlen((const char*)pembuf) + 1;
     }
     mbedtls_x509write_csr_free(&csr);
     return ret;

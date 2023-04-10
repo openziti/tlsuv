@@ -47,9 +47,9 @@ static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert);
 static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert);
 
 static ECDSA_SIG *privkey_p11_sign_sig(const unsigned char *digest, int len, const BIGNUM *pSt, const BIGNUM *pBignumSt, EC_KEY *ec);
-static int privkey_p11_rsa_enc(int type, const unsigned char *m,
-                                unsigned char *m_length,
-                                RSA *rsa, int siglen);
+static int privkey_p11_rsa_enc(int msglen, const unsigned char *msg,
+                                unsigned char *enc,
+                                RSA *rsa, int padding);
 
 static struct priv_key_s PRIV_KEY_API = {
         .free = privkey_free,
@@ -265,7 +265,8 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
 
 static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, const char *label) {
     size_t len;
-    char *value = NULL, *a;
+    char *value = NULL;
+    const unsigned char *a;
     ASN1_OCTET_STRING *os = NULL;
 
     EC_KEY *ec = EC_KEY_new();
@@ -274,8 +275,8 @@ static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, 
         UM_LOG(WARN, "failed to load EC parameters for key id[%s] label[%s]: %d/%s", id, label, rc, p11_strerror(rc));
         goto error;
     } else {
-        a = value;
-        if (d2i_ECParameters(&ec, (const unsigned char **) &a, (long) len) == NULL) {
+        a = (const unsigned char*)value;
+        if (d2i_ECParameters(&ec, &a, (long) len) == NULL) {
             unsigned long err = ERR_get_error();
             UM_LOG(WARN, "failed to set EC parameters for key id[%s] label[%s]: %d/%s", id, label, err, ERR_lib_error_string(err));
             goto error;
@@ -290,11 +291,11 @@ static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, 
         UM_LOG(WARN, "failed to load EC point for key id[%s] label[%s]: %d/%s", id, label, rc, p11_strerror(rc));
         goto error;
     } else {
-        a = value;
-        os = d2i_ASN1_OCTET_STRING(NULL, (const unsigned char **) &a, len);
+        a = (const unsigned char*)value;
+        os = d2i_ASN1_OCTET_STRING(NULL, &a, (long)len);
         if (os) {
             a = os->data;
-            if (o2i_ECPublicKey(&ec, (const unsigned char **) &a, os->length) == NULL) {
+            if (o2i_ECPublicKey(&ec, &a, os->length) == NULL) {
                 unsigned long err = ERR_get_error();
                 UM_LOG(WARN, "failed to set EC pubkey for key id[%s] label[%s]: %d/%s", id, label, err, ERR_lib_error_string(err));
                 goto error;
@@ -302,7 +303,7 @@ static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, 
             ASN1_STRING_free(os);
             os = NULL;
         } else {
-            if(o2i_ECPublicKey(&ec, (const unsigned char **) &a, (int) len) == NULL) {
+            if(o2i_ECPublicKey(&ec, &a, (int) len) == NULL) {
                 unsigned long err = ERR_get_error();
                 UM_LOG(WARN, "failed to set EC pubkey for key id[%s] label[%s]: %d/%s", id, label, err, ERR_lib_error_string(err));
                 goto error;
@@ -470,7 +471,7 @@ static int privkey_p11_rsa_enc(int msglen, const unsigned char *msg,
     }
     int rc = p11_key_sign(p11_key, msg, msglen, enc, &siglen, mech);
 
-    return siglen;
+    return (int)siglen;
 }
 
 static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert) {
@@ -494,7 +495,7 @@ static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert) {
     size_t derlen;
 
     if (p11_get_key_cert(p11_key, &der, &derlen) == 0) {
-        const uint8_t *a = der;
+        const uint8_t *a = (const uint8_t *)der;
         X509 *c = d2i_X509(NULL, &a, (long)derlen);
         X509_STORE_CTX *store = X509_STORE_CTX_new();
         X509_STORE_CTX_set_cert(store, c);
@@ -526,13 +527,13 @@ static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert) {
     X509 *c = X509_STORE_CTX_get0_cert(store);
 
     X509_NAME *subj_name = X509_get_subject_name(c);
-    char *subj_der = NULL;
+    unsigned char *subj_der = NULL;
     int subjlen = i2d_X509_NAME(subj_name, &subj_der);
 
     char *der = NULL;
     int derlen = i2d_X509(c, (unsigned char **) &der);
 
-    int rc = p11_store_key_cert(p11_key, der, derlen, subj_der, subjlen);
+    int rc = p11_store_key_cert(p11_key, der, derlen, (char*)subj_der, subjlen);
 
     OPENSSL_free(der);
     OPENSSL_free(subj_der);

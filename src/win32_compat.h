@@ -18,6 +18,7 @@
 
 #if _WIN32
 
+#define strdup _strdup
 #define strcasecmp _stricmp
 #define strncasecmp _strnicmp
 

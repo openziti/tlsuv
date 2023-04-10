@@ -67,7 +67,7 @@ static int pubkey_pem(tlsuv_public_key_t pk, char **pem, size_t *pemlen) {
     size_t len = 1024;
     char *buf = malloc(len);
     int rc;
-    rc = mbedtls_pk_write_pubkey_pem(&pub->pkey, buf, len);
+    rc = mbedtls_pk_write_pubkey_pem(&pub->pkey, (unsigned char*)buf, len);
     if (rc != 0) {
         free(buf);
         UM_LOG(WARN, "pubkey to_pem error: %d/%s", rc, mbedtls_error(rc));
@@ -179,7 +179,7 @@ static tlsuv_public_key_t privkey_pubkey(tlsuv_private_key_t pk) {
     // but I did not find it
     uint8_t buf[4096];
     mbedtls_pk_write_pubkey_pem(&priv->pkey, buf, sizeof(buf));
-    mbedtls_pk_parse_public_key(&pub->pkey, buf, strlen(buf) + 1);
+    mbedtls_pk_parse_public_key(&pub->pkey, buf, strlen((char*)buf) + 1);
 
     return (tlsuv_public_key_t) pub;
 }
@@ -193,8 +193,8 @@ static int privkey_to_pem(tlsuv_private_key_t pk, char **pem, size_t *pemlen) {
         return ret;
     }
 
-    *pemlen = strlen(keybuf) + 1;
-    *pem = strdup(keybuf);
+    *pemlen = strlen((char*)keybuf) + 1;
+    *pem = strdup((char*)keybuf);
     return 0;
 }
 

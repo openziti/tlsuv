@@ -23,10 +23,10 @@ static void alloc_cb(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) 
 }
 
 static void ws_read_cb(uv_stream_t *h, ssize_t status, const uv_buf_t *buf) {
-    tlsuv_websocket_t *ws = h;
+    tlsuv_websocket_t *ws = (tlsuv_websocket_t *) h;
     if (status < 0) {
         fprintf(stderr, "read status = %zd\n", status);
-        exit(status);
+        exit((int)status);
     }
 
     printf("< %.*s\n", (int)status, buf->base);

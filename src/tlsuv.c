@@ -18,6 +18,10 @@
 #include <string.h>
 #include <uv.h>
 
+#if _WIN32
+#include "win32_compat.h"
+#endif
+
 #define to_str1(s) #s
 #define to_str(s) to_str1(s)
 
@@ -154,12 +158,15 @@ int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *hos
     if (!req) {
         return UV_EINVAL;
     }
+    if (port <= 0 || port > UINT16_MAX) {
+        return UV_EINVAL;
+    }
     if (clt->conn_req != NULL) {
         return UV_EALREADY;
     }
 
     char portstr[6];
-    sprintf(portstr, "%d", port);
+    snprintf(portstr, sizeof(portstr), "%d", port);
 
     req->handle = (uv_stream_t *) clt;
     req->cb = cb;

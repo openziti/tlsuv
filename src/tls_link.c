@@ -181,7 +181,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
                 case TLS_EOF: {
                     if (out_bytes > 0) {
                         uv_link_propagate_read_cb(l, out_bytes, b);
-                        uv_link_propagate_alloc_cb(l, bufsize, b);
+                        uv_link_propagate_alloc_cb(l, bufsize, (uv_buf_t *)b);
                     }
                     uv_link_propagate_read_cb(l, UV_EOF, b);
                     break;
@@ -191,7 +191,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
                     uv_link_propagate_read_cb(l, out_bytes, b);
                     inlen = 0;
                     inptr = NULL;
-                    uv_link_propagate_alloc_cb(l, bufsize, b);
+                    uv_link_propagate_alloc_cb(l, bufsize, (uv_buf_t *)b);
                     if (b->base == NULL || b->len == 0) {
                         uv_link_propagate_read_cb(l, UV_ENOBUFS, b);
                         return;
@@ -209,7 +209,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
                 default:
                     if (out_bytes > 0) {
                         uv_link_propagate_read_cb(l, out_bytes, b);
-                        uv_link_propagate_alloc_cb(l, bufsize, b);
+                        uv_link_propagate_alloc_cb(l, bufsize, (uv_buf_t*)b);
                     }
                     if (rc != TLS_ERR) {
                         UM_LOG(ERR, "aborting after unexpected TLS engine result: %d", rc);
@@ -258,7 +258,7 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
     wr->tls_buf = buf.base;
     wr->cb = cb;
     wr->ctx = arg;
-    return uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_cb, wr);
+    return uv_link_propagate_write(l->parent, l, &buf, 1, send_handle, tls_write_cb, wr);
 }
 
 static void tls_close(uv_link_t *l, uv_link_t *source, uv_link_close_cb close_cb) {

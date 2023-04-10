@@ -42,7 +42,7 @@ static void p11_rsa_free(void *ctx);
 static int get_md_prefix(mbedtls_md_type_t md, const char **prefix, size_t *len);
 
 int p11_load_rsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_context *p11) {
-    int rc;
+    CK_RV rc;
     CK_BYTE ec_param[512];
 
     CK_ATTRIBUTE pubattr[] = {
@@ -106,7 +106,7 @@ static int p11_rsa_sign(void *ctx, mbedtls_md_type_t md_alg,
                         unsigned char *sig, size_t *sig_len,
                         int (*f_rng)(void *, unsigned char *, size_t),
                         void *p_rng) {
-    int rc;
+    CK_RV rc;
 
     mp11_key_ctx *p11key = ctx;
     mp11_context *p11 = p11key->ctx;

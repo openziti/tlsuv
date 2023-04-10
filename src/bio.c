@@ -73,7 +73,7 @@ int tlsuv_BIO_put(tlsuv_BIO *bio, const uint8_t *buf, size_t len) {
     bio->available += len;
     bio->qlen += 1;
 
-    return len;
+    return 0;
 }
 
 int tlsuv_BIO_read(tlsuv_BIO *bio, uint8_t *buf, size_t len) {

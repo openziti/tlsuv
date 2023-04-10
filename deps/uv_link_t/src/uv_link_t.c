@@ -103,6 +103,7 @@ int uv_link_read_stop(uv_link_t* link) {
     return uv_link_error(link, UV_EFAULT);
   if (NULL != link->methods->read_stop)
     CLOSE_WRAP(link->methods->read_stop(link));
+  return 0;
 }
 
 
@@ -288,7 +289,7 @@ void uv_link_propagate_read_cb(uv_link_t* link,
 
   /* Prefix errors */
   if (nread < 0)
-    nread = uv_link_error(link, nread);
+    nread = uv_link_error(link, (int)nread);
 
   target->close_depth++;
   link->read_cb(target, nread, buf);
