@@ -69,8 +69,8 @@ struct mbedtls_context {
 struct mbedtls_engine {
     mbedtls_ssl_context *ssl;
     mbedtls_ssl_session *session;
-    um_BIO  *in;
-    um_BIO *out;
+    tlsuv_BIO *in;
+    tlsuv_BIO *out;
     int error;
 
     int ip_len;
@@ -285,8 +285,8 @@ tls_engine *new_mbedtls_engine(void *ctx, const char *host) {
     struct mbedtls_engine *mbed_eng = calloc(1, sizeof(struct mbedtls_engine));
     engine->engine = mbed_eng;
     mbed_eng->ssl = ssl;
-    mbed_eng->in = um_BIO_new(0);
-    mbed_eng->out = um_BIO_new(0);
+    mbed_eng->in = tlsuv_BIO_new(0);
+    mbed_eng->out = tlsuv_BIO_new(0);
     mbedtls_ssl_set_bio(ssl, mbed_eng, mbed_ssl_send, mbed_ssl_recv, NULL);
     engine->api = &mbedtls_engine_api;
 
@@ -410,8 +410,8 @@ static int mbedtls_reset(void *engine) {
 
 static void mbedtls_free(tls_engine *engine) {
     struct mbedtls_engine *e = engine->engine;
-    um_BIO_free(e->in);
-    um_BIO_free(e->out);
+    tlsuv_BIO_free(e->in);
+    tlsuv_BIO_free(e->out);
 
     mbedtls_ssl_free(e->ssl);
     if (e->ssl) {
@@ -550,7 +550,7 @@ static tls_handshake_state
 mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout) {
     struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
     if (in_bytes > 0) {
-        um_BIO_put(eng->in, (const unsigned char *)in, in_bytes);
+        tlsuv_BIO_put(eng->in, (const unsigned char *) in, in_bytes);
     }
     if (eng->ssl->MBEDTLS_PRIVATE(state) == MBEDTLS_SSL_HELLO_REQUEST && eng->session) {
         mbedtls_ssl_set_session(eng->ssl, eng->session);
@@ -559,7 +559,7 @@ mbedtls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *
     int state = mbedtls_ssl_handshake(eng->ssl);
     char err[1024];
     mbedtls_strerror(state, err, 1024);
-    *out_bytes = um_BIO_read(eng->out, (unsigned char *)out, maxout);
+    *out_bytes = tlsuv_BIO_read(eng->out, (unsigned char *) out, maxout);
 
     if (eng->ssl->MBEDTLS_PRIVATE(state) == MBEDTLS_SSL_HANDSHAKE_OVER) {
         return TLS_HS_COMPLETE;
@@ -584,15 +584,15 @@ static int mbedtls_write(void *engine, const char *data, size_t data_len, char *
         }
         wrote += rc;
     }
-    *out_bytes = um_BIO_read(eng->out, (unsigned char *)out, maxout);
-    return (int)um_BIO_available(eng->out);
+    *out_bytes = tlsuv_BIO_read(eng->out, (unsigned char *) out, maxout);
+    return (int) tlsuv_BIO_available(eng->out);
 }
 
 static int
 mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout) {
     struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
     if (ssl_in_len > 0 && ssl_in != NULL) {
-        um_BIO_put(eng->in, (const unsigned char *)ssl_in, ssl_in_len);
+        tlsuv_BIO_put(eng->in, (const unsigned char *) ssl_in, ssl_in_len);
     }
 
     int rc;
@@ -612,7 +612,7 @@ mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, siz
 
     // this indicates that more bytes are needed to complete SSL frame
     if (rc == MBEDTLS_ERR_SSL_WANT_READ) {
-        return um_BIO_available(eng->out) > 0 ? TLS_HAS_WRITE : TLS_OK;
+        return tlsuv_BIO_available(eng->out) > 0 ? TLS_HAS_WRITE : TLS_OK;
     }
 
     if (rc == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
@@ -627,7 +627,7 @@ mbedtls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, siz
         return TLS_ERR;
     }
 
-    if (um_BIO_available(eng->in) > 0 || mbedtls_ssl_check_pending(eng->ssl)) {
+    if (tlsuv_BIO_available(eng->in) > 0 || mbedtls_ssl_check_pending(eng->ssl)) {
         return TLS_MORE_AVAILABLE;
     }
 
@@ -638,22 +638,22 @@ static int mbedtls_close(void *engine, char *out, size_t *out_bytes, size_t maxo
     struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
     mbedtls_ssl_close_notify(eng->ssl); // TODO handle error
 
-    *out_bytes = um_BIO_read(eng->out, (unsigned char *)out, maxout);
+    *out_bytes = tlsuv_BIO_read(eng->out, (unsigned char *) out, maxout);
     return 0;
 }
 
 static int mbed_ssl_recv(void *ctx, uint8_t *buf, size_t len) {
     struct mbedtls_engine *eng = ctx;
-    if (um_BIO_available(eng->in) == 0) {
+    if (tlsuv_BIO_available(eng->in) == 0) {
         return MBEDTLS_ERR_SSL_WANT_READ;
     }
 
-    return um_BIO_read(eng->in, buf, len);
+    return tlsuv_BIO_read(eng->in, buf, len);
 }
 
 static int mbed_ssl_send(void *ctx, const uint8_t *buf, size_t len) {
     struct mbedtls_engine *eng = ctx;
-    um_BIO_put(eng->out, buf, len);
+    tlsuv_BIO_put(eng->out, buf, len);
     return (int) len;
 }
 
