@@ -12,28 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef UV_MBED_BIO_H
-#define UV_MBED_BIO_H
+#ifndef TLSUV_BIO_H
+#define TLSUV_BIO_H
 
 #include "tlsuv/queue.h"
 #include <stdint.h>
 
-typedef struct um_bio_s {
+typedef struct tlsuv_bio_s {
     size_t available;
     size_t headoffset;
     unsigned int qlen;
-    int zerocopy;
     STAILQ_HEAD(msgq, msg) message_q;
-} um_BIO;
+} tlsuv_BIO;
 
-// zerocopy means that buffer passed into um_BIO_put will be owned/released by BIO,
-// this avoids an extra alloc/copy operation
-um_BIO* um_BIO_new(int zerocopy);
-void um_BIO_free(um_BIO*);
+// create new BIO
+tlsuv_BIO *tlsuv_BIO_new();
+void tlsuv_BIO_free(tlsuv_BIO *bio);
 
-int um_BIO_put(um_BIO *, const uint8_t *buf, size_t len);
-int um_BIO_read(um_BIO*, uint8_t *buf, size_t len);
-size_t um_BIO_available(um_BIO*);
+int tlsuv_BIO_put(tlsuv_BIO *bio, const uint8_t *buf, size_t len);
+int tlsuv_BIO_read(tlsuv_BIO *bio, uint8_t *buf, size_t len);
+size_t tlsuv_BIO_available(tlsuv_BIO *bio);
 
-#endif //UV_MBED_BIO_H
-
+#endif//TLSUV_BIO_H

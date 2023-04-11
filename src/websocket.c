@@ -216,7 +216,7 @@ int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf,
     ptr += sizeof(mask);
 
     for (size_t i = 0; i < buf->len; i++) {
-        *((char*)ptr + i) = mask[i % 4] ^ buf->base[i];
+        *((char*)ptr + i) = (char)(mask[i % 4] ^ buf->base[i]);
     }
 
     bufs.len = headerlen + buf->len;
@@ -304,7 +304,7 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
         ws->closed = true;
         // still connecting
         if (ws->conn_req != NULL) {
-            ws->conn_req->cb(ws->conn_req, nread);
+            ws->conn_req->cb(ws->conn_req, (int)nread);
             ws->conn_req = NULL;
         } else {
             ws->read_cb((uv_stream_t *) ws, nread, buf);
@@ -347,11 +347,11 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
         return;
     }
 
-    uint8_t *frame = buf->base + processed;
-    char op = frame[0] & WS_OP_BITS;
+    char *frame = buf->base + processed;
+    char op = (char)(frame[0] & WS_OP_BITS);
     bool masked = (frame[1] & WS_MASK) != 0;
     size_t len = frame[1] & (~WS_MASK);
-    uint8_t *dp = frame + 2;
+    char *dp = frame + 2;
     if (len == 126) {
         len = be16toh(*(uint16_t *)(&frame[2]));
         dp += 2;
@@ -376,15 +376,15 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
                 buf->base[i] = (char)(*dp ^ mask[i % 4]);
                 dp++;
             }
-            ws->read_cb((uv_stream_t *) ws, len, buf);
+            ws->read_cb((uv_stream_t *) ws, (ssize_t)len, buf);
             break;
         case OpCode_Close:
             UM_LOG(TRACE, "got close");
             ws->read_cb((uv_stream_t *) ws, UV_EOF, buf);
             break;
         case OpCode_Ping:
-            UM_LOG(TRACE, "got ping masked=%d len=%d", masked, len);
-            send_pong(ws, dp, len);
+            UM_LOG(TRACE, "got ping masked=%d len=%zd", masked, len);
+            send_pong(ws, dp, (int)len);
             break;
         case OpCode_Pong:
             UM_LOG(TRACE, "got pong");
@@ -413,7 +413,7 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
 
     if (ping_data != NULL && len > 0) {
         for (size_t i = 0; i < buf.len; i++) {
-            *((char*)ptr + i) = mask[i % 4] ^ *(ping_data + i);
+            *((char*)ptr + i) = (char)(mask[i % 4] ^ *(ping_data + i));
         }
     }
 

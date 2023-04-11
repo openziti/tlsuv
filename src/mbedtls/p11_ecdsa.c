@@ -53,7 +53,7 @@ int p11_load_ecdsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_c
             {CKA_EC_POINT,  ec_point, MBEDTLS_ECP_MAX_PT_LEN},
     };
 
-    int rc = p11->funcs->C_GetAttributeValue(p11->session, p11key->pub_handle, pubattr, 2);
+    CK_RV rc = p11->funcs->C_GetAttributeValue(p11->session, p11key->pub_handle, pubattr, 2);
     if (rc != CKR_OK) {
         return MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
     }
@@ -121,7 +121,7 @@ static int p11_ecdsa_sign(void *ctx, mbedtls_md_type_t md_alg,
                           unsigned char *sig, size_t *sig_len,
                           int (*f_rng)(void *, unsigned char *, size_t),
                           void *p_rng) {
-    int rc;
+    CK_RV rc;
     mp11_key_ctx *p11key = ctx;
     mp11_context *p11 = p11key->ctx;
 
@@ -136,7 +136,7 @@ static int p11_ecdsa_sign(void *ctx, mbedtls_md_type_t md_alg,
     if (rc != CKR_OK) {
         return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
-    rc = p11->funcs->C_Sign(p11->session, hash, hash_len, rawsig, &rawsig_len);
+    rc = p11->funcs->C_Sign(p11->session, (CK_BYTE_PTR)hash, hash_len, rawsig, &rawsig_len);
     if (rc != CKR_OK) {
         return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }

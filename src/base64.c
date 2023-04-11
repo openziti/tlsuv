@@ -98,7 +98,7 @@ size_t tlsuv_base64url_decode(const char *in, char **out, size_t *out_len) {
 
     size_t len = (bufout - buf);
     *out_len = len;
-    *out = buf;
+    *out = (char*)buf;
 
     UM_LOG(DEBG, "base64url_decode len is: %zu", len);
 

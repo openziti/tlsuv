@@ -21,7 +21,6 @@
 #include <string.h>
 #include <stdarg.h>
 
-#include "../bio.h"
 #include "../um_debug.h"
 #include <tlsuv/tlsuv.h>
 
@@ -178,7 +177,7 @@ static X509_STORE_CTX * load_certs(const char *buf, size_t buf_len) {
     } else {
         // try as PEM
         BIO *crt_bio = BIO_new(BIO_s_mem());
-        BIO_write(crt_bio, buf, buf_len);
+        BIO_write(crt_bio, buf, (int)buf_len);
         while((c = PEM_read_bio_X509(crt_bio, NULL, NULL, NULL)) != NULL) {
             X509_STORE_add_cert(certs, c);
             X509_free(c);
@@ -428,7 +427,7 @@ tls_engine *new_openssl_engine(void *ctx, const char *host) {
     engine->api = &openssl_engine_api;
 
     if (context->alpn_protocols) {
-        SSL_set_alpn_protos(eng->ssl, context->alpn_protocols, strlen(context->alpn_protocols));
+        SSL_set_alpn_protos(eng->ssl, context->alpn_protocols, strlen((char*)context->alpn_protocols));
     }
 
     return engine;
@@ -537,7 +536,7 @@ static void tls_set_alpn_protocols(void *ctx, const char **protos, int len) {
     for (int i=0; i < len; i++) {
         size_t plen = strlen(protos[i]);
         *p++ = (unsigned char)plen;
-        strncpy(p, protos[i], plen);
+        strncpy((char*)p, protos[i], plen);
         p += plen;
     }
     *p = 0;
@@ -696,7 +695,7 @@ static int tls_write(void *engine, const char *data, size_t data_len, char *out,
     struct openssl_engine *eng = (struct openssl_engine *) engine;
     size_t wrote = 0;
     while (data_len > wrote) {
-        int rc = SSL_write(eng->ssl, (const unsigned char *)(data + wrote), data_len - wrote);
+        int rc = SSL_write(eng->ssl, (const unsigned char *)(data + wrote), (int)(data_len - wrote));
         if (rc < 0) {
             eng->error = rc;
             return rc;
@@ -704,7 +703,7 @@ static int tls_write(void *engine, const char *data, size_t data_len, char *out,
         wrote += rc;
     }
     if (BIO_ctrl_pending(eng->out) > 0)
-        *out_bytes = BIO_read(eng->out, (unsigned char *)out, maxout);
+        *out_bytes = BIO_read(eng->out, (unsigned char *)out, (int)maxout);
     else
         *out_bytes = 0;
 
@@ -724,7 +723,7 @@ tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t 
     uint8_t *writep = (uint8_t*)out;
     size_t total_out = 0;
 
-    while((maxout - total_out > 0) && (rc = SSL_read(eng->ssl, writep, maxout - total_out)) > 0) {
+    while((maxout - total_out > 0) && (rc = SSL_read(eng->ssl, writep, (int)(maxout - total_out))) > 0) {
         total_out += rc;
         writep += rc;
     }
@@ -761,7 +760,7 @@ static int tls_close(void *engine, char *out, size_t *out_bytes, size_t maxout) 
     struct openssl_engine *eng = (struct openssl_engine *) engine;
     SSL_shutdown(eng->ssl);
     if (BIO_ctrl_pending(eng->out) > 0)
-        *out_bytes = BIO_read(eng->out, (unsigned char *)out, maxout);
+        *out_bytes = BIO_read(eng->out, (unsigned char *)out, (int)maxout);
     else
         *out_bytes = 0;
     return 0;
@@ -769,7 +768,7 @@ static int tls_close(void *engine, char *out, size_t *out_bytes, size_t maxout) 
 
 static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7buf, size_t pkcs7len) {
 
-    BIO *buf = BIO_new_mem_buf(pkcs7buf, pkcs7len);
+    BIO *buf = BIO_new_mem_buf(pkcs7buf, (int)pkcs7len);
     BIO *b64 = BIO_new(BIO_f_base64());
     BIO_push(b64, buf);
 
@@ -822,7 +821,7 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
 
     *pemlen = BIO_ctrl_pending(pembio);
     *pem = calloc(1, *pemlen);
-    BIO_read(pembio, *pem, *pemlen);
+    BIO_read(pembio, *pem, (int)*pemlen);
 
     BIO_free_all(pembio);
     return 0;
@@ -868,7 +867,7 @@ goto on_error;            \
     } else {
         size_t len = BIO_ctrl_pending(b);
         *pem = calloc(1, len + 1);
-        BIO_read(b, *pem, len);
+        BIO_read(b, *pem, (int)len);
     }
 
     BIO_free(b);

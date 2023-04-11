@@ -255,7 +255,7 @@ static int http_status_cb(llhttp_t *parser, const char *status, size_t len) {
     UM_LOG(VERB, "status = %d %.*s", parser->status_code, (int) len, status);
     tlsuv_http_req_t *r = parser->data;
     r->resp.code = (int) parser->status_code;
-    snprintf(r->resp.http_version, sizeof(r->resp.http_version), "%d.%d", parser->http_major, parser->http_minor);
+    snprintf(r->resp.http_version, sizeof(r->resp.http_version), "%1d.%1d", parser->http_major, parser->http_minor);
     r->resp.status = calloc(1, len+1);
     strncpy(r->resp.status, status, len);
     return 0;

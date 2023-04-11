@@ -82,7 +82,7 @@ typedef enum http_request_state {
 struct tlsuv_http_resp_s {
     tlsuv_http_req_t *req;
 
-    char http_version[4];
+    char http_version[8];
     int code;
     char *status;
 
@@ -107,7 +107,7 @@ struct tlsuv_http_req_s {
 
     bool req_chunked;
     ssize_t req_body_size;
-    ssize_t body_sent_size;
+    size_t body_sent_size;
     void *req_body;
     um_header_list req_headers;
 
