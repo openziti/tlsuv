@@ -94,44 +94,55 @@ int p11_store_key_cert(p11_key_ctx *key, char *cert, size_t certlen, char *subj,
     CK_ULONG idlen;
     p11_get_obj_attr(p11, key->priv_handle, CKA_ID, &id, &idlen);
 
-    CK_ULONG cls = CKO_CERTIFICATE;
+    uint8_t *label = NULL;
+    CK_ULONG labellen;
+    p11_get_obj_attr(p11, key->priv_handle, CKA_LABEL, &label, &labellen);
+
+    CK_OBJECT_CLASS cls = CKO_CERTIFICATE;
+    CK_CERTIFICATE_TYPE cert_type = CKC_X_509;
+    CK_BBOOL private = CK_FALSE;
+    CK_BBOOL store = CK_TRUE;
 
     CK_ATTRIBUTE temp[10];
     int idx = 0;
-    temp[idx].type = CKA_CLASS;
-    temp[idx].pValue = &cls;
-    temp[idx].ulValueLen = sizeof(cls);
-    idx++;
 
-    CK_CERTIFICATE_TYPE cert_type = CKC_X_509;
-    temp[idx].type = CKA_CERTIFICATE_TYPE;
-    temp[idx].pValue = &cert_type;
-    temp[idx].ulValueLen = sizeof(cert_type);
-    idx++;
+#define set_attr_var(attr, val)             \
+    do {                                    \
+        temp[idx].type = (attr);            \
+        temp[idx].pValue = &(val);          \
+        temp[idx].ulValueLen = sizeof(val); \
+        idx++;                              \
+    } while (0)
 
-    bool private = false;
-    temp[idx].type = CKA_PRIVATE;
-    temp[idx].pValue = &private;
-    temp[idx].ulValueLen = sizeof(private);
-    idx++;
+#define set_attr_ptr(attr, p)              \
+    do {                                   \
+        if ((p) != NULL) {                 \
+            temp[idx].type = (attr);       \
+            temp[idx].pValue = (p);        \
+            temp[idx].ulValueLen = p##len; \
+            idx++;                         \
+        }                                  \
+    } while (0)
 
-    temp[idx].type = CKA_ID;
-    temp[idx].pValue = id;
-    temp[idx].ulValueLen = idlen;
-    idx++;
+    set_attr_var(CKA_CLASS, cls);
+    set_attr_var(CKA_PRIVATE, private);
+    set_attr_var(CKA_TOKEN, store);
+    set_attr_var(CKA_CERTIFICATE_TYPE, cert_type);
 
-    temp[idx].type = CKA_SUBJECT;
-    temp[idx].pValue = subj;
-    temp[idx].ulValueLen = subjlen;
-    idx++;
+    set_attr_ptr(CKA_ID, id);
+    set_attr_ptr(CKA_LABEL, label);
+    set_attr_ptr(CKA_SUBJECT, subj);
+    set_attr_ptr(CKA_VALUE, cert);
 
-    temp[idx].type = CKA_VALUE;
-    temp[idx].pValue = cert;
-    temp[idx].ulValueLen = certlen;
-    idx++;
+#undef set_attr_var
+#undef set_attr_ptr
 
     CK_OBJECT_HANDLE h;
     CK_RV rc = p11->funcs->C_CreateObject(p11->session, temp, idx, &h);
+
+    free(label);
+    free(id);
+
     if (rc != CKR_OK) {
         UM_LOG(WARN, "failed to store cert to pkcs#11 token: %d/%s", rc, p11_strerror(rc));
         return -1;

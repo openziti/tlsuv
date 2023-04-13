@@ -213,7 +213,14 @@ typedef struct {
      */
     int (*write_cert_to_pem)(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
 
-    tls_cert (*get_peer_cert)(tls_engine *engine);
+    /**
+     * Load X509 certificate from a file or in-memory PEM
+     * @param cert Certificate handle
+     * @param buf certificate source string
+     * @param buflen length of certificate string
+     * @returns 0 on success or error code
+     */
+    int (*load_cert)(tls_cert *cert, const char *buf, size_t buflen);
 
     /**
      * generate private key.

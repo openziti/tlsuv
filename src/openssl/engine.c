@@ -96,6 +96,7 @@ static int tls_verify_signature(void *cert, enum hash_algo md, const char *data,
 static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len);
 
 static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
+static int load_cert(tls_cert *cert, const char *buf, size_t buflen);
 
 static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...);
 
@@ -123,6 +124,7 @@ static tls_context_api openssl_context_api = {
         .generate_key = gen_key,
         .load_key = load_key,
         .load_pkcs11_key = load_pkcs11_key,
+        .load_cert = load_cert,
         .generate_csr_to_pem = generate_csr,
 };
 
@@ -185,6 +187,31 @@ static X509_STORE_CTX * load_certs(const char *buf, size_t buf_len) {
         BIO_free(crt_bio);
     }
     return store;
+}
+
+static int load_cert(tls_cert *cert, const char *buf, size_t buflen) {
+    X509 *c;
+    // try as file
+    FILE *crt_file = fopen(buf, "r");
+    if (crt_file != NULL) {
+        c = PEM_read_X509(crt_file, NULL, NULL, NULL);
+    } else {
+        // try as PEM
+        BIO *crt_bio = BIO_new(BIO_s_mem());
+        BIO_write(crt_bio, buf, (int)buflen);
+        c = PEM_read_bio_X509(crt_bio, NULL, NULL, NULL);
+        BIO_free(crt_bio);
+    }
+
+    if (c == NULL) {
+        return -1;
+    }
+
+    X509_STORE_CTX *store = X509_STORE_CTX_new();
+    X509_STORE_CTX_set_cert(store, c);
+
+    *cert = store;
+    return 0;
 }
 
 static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_len) {
@@ -820,7 +847,7 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
     }
 
     *pemlen = BIO_ctrl_pending(pembio);
-    *pem = calloc(1, *pemlen);
+    *pem = calloc(1, *pemlen + 1);
     BIO_read(pembio, *pem, (int)*pemlen);
 
     BIO_free_all(pembio);

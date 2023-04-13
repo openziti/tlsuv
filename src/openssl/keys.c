@@ -375,7 +375,7 @@ int load_pkcs11_key(tlsuv_private_key_t *key, const char *lib, const char *slot,
 
     int rc = p11_init(p11, lib, slot, pin);
     if (rc != 0) {
-        UM_LOG(WARN, "failed to init pkcs#11 token driver[%s] slot[%s]", lib, slot);
+        UM_LOG(WARN, "failed to init pkcs#11 token driver[%s] slot[%s]: %d/%s", lib, slot, rc, p11_strerror(rc));
         free(p11);
         return rc;
     }
