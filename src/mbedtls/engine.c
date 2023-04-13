@@ -123,6 +123,8 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
 
 static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...);
 
+static int mbedtls_load_cert(tls_cert *c, const char *cert, size_t certlen);
+
 static tls_context_api mbedtls_context_api = {
         .version = mbedtls_version,
         .strerror = mbedtls_error,
@@ -140,6 +142,7 @@ static tls_context_api mbedtls_context_api = {
         .generate_key = gen_key,
         .load_key = load_key,
         .load_pkcs11_key = load_key_p11,
+        .load_cert = mbedtls_load_cert,
         .generate_csr_to_pem = generate_csr,
 };
 
@@ -347,12 +350,16 @@ static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* d
             return -1;
     }
 
+    mbedtls_x509_crt *crt = cert;
+
     unsigned char hash[MBEDTLS_MD_MAX_SIZE];
     if (mbedtls_md(md_info, (uint8_t *)data, datalen, hash) != 0) {
         return -1;
     }
 
-    mbedtls_x509_crt *crt = cert;
+    if (mbedtls_pk_get_type(&crt->pk) == MBEDTLS_PK_ECKEY) {
+        ecdsa
+    }
     if (mbedtls_pk_verify(&crt->pk, type, hash, 0, (uint8_t *)sig, siglen) != 0) {
         return -1;
     }
@@ -461,6 +468,25 @@ static int mbedtls_set_own_key(void *ctx, tlsuv_private_key_t key) {
         }
     }
     return 0;
+}
+
+static int mbedtls_load_cert(tls_cert *c, const char *cert_buf, size_t cert_len) {
+    mbedtls_x509_crt *cert = calloc(1, sizeof(mbedtls_x509_crt));
+    if (cert_buf[cert_len - 1] != '\0') {
+        cert_len += 1;
+    }
+    int rc = mbedtls_x509_crt_parse(cert, (const unsigned char *)cert_buf, cert_len);
+    if (rc < 0) {
+        rc = mbedtls_x509_crt_parse_file(cert, cert_buf);
+        if (rc < 0) {
+            UM_LOG(WARN, "failed to load certificate");
+            mbedtls_x509_crt_free(cert);
+            free(cert);
+            cert = NULL;
+        }
+    }
+    *c = cert;
+    return rc;
 }
 
 static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len) {
