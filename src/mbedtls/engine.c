@@ -356,10 +356,7 @@ static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* d
     if (mbedtls_md(md_info, (uint8_t *)data, datalen, hash) != 0) {
         return -1;
     }
-
-    if (mbedtls_pk_get_type(&crt->pk) == MBEDTLS_PK_ECKEY) {
-        ecdsa
-    }
+    
     if (mbedtls_pk_verify(&crt->pk, type, hash, 0, (uint8_t *)sig, siglen) != 0) {
         return -1;
     }
