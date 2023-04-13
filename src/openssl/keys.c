@@ -115,10 +115,31 @@ static void pubkey_free(tlsuv_public_key_t k) {
     free(pub);
 }
 
+static int verify_ecdsa_sig(EC_KEY *ec, const EVP_MD *hash, const char* data, size_t datalen, const char* sig, size_t siglen) {
+    int rc;
+    ECDSA_SIG  *ecdsa_sig = NULL;
+    
+    EVP_MD_CTX *digestor = EVP_MD_CTX_new();
+    uint8_t digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len;
+    EVP_DigestInit(digestor, hash);
+    EVP_DigestUpdate(digestor, data, datalen);
+    rc = EVP_DigestFinal(digestor, digest, &digest_len);
+    
+    BIGNUM *r = BN_bin2bn((const uint8_t*)sig, (int)(siglen / 2), NULL);
+    BIGNUM *s = BN_bin2bn((const uint8_t*)sig + siglen/2, (int)siglen/2, NULL);
+
+    ecdsa_sig = ECDSA_SIG_new();
+    rc = ECDSA_SIG_set0(ecdsa_sig, r, s);
+    rc = ECDSA_do_verify(digest, (int)digest_len, ecdsa_sig, ec);
+
+    ECDSA_SIG_free(ecdsa_sig);
+    EVP_MD_CTX_free(digestor);
+    
+    return rc == 1 ? 0 : -1;
+}
+
 int verify_signature (EVP_PKEY *pk, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
-    int rc = 0;
-    EVP_MD_CTX *digest = EVP_MD_CTX_new();
-    EVP_PKEY_CTX *pctx = NULL;
     const EVP_MD *hash = NULL;
     switch (md) {
         case hash_SHA256: hash = EVP_sha256(); break;
@@ -127,17 +148,33 @@ int verify_signature (EVP_PKEY *pk, enum hash_algo md, const char* data, size_t 
         default:
             break;
     }
-    if (!EVP_DigestVerifyInit(digest, &pctx, hash, NULL, pk)) {
+    
+    if (EVP_PKEY_id(pk) == EVP_PKEY_EC) {
+        const uint8_t *p = sig;
+        ECDSA_SIG *ecdsa_sig = d2i_ECDSA_SIG(NULL, &p, (int) siglen);
+
+        // if signature is not DER encoded try verifying it as raw ECDSA signature (EC-point)
+        if (ecdsa_sig == NULL) {
+            return verify_ecdsa_sig(EVP_PKEY_get1_EC_KEY(pk), hash, data, datalen, sig, siglen);
+        }
+
+        ECDSA_SIG_free(ecdsa_sig);
+    }
+
+    int rc = 0;
+    EVP_MD_CTX *digestor = EVP_MD_CTX_new();
+    EVP_PKEY_CTX *pctx = NULL;
+
+    if (!EVP_DigestVerifyInit(digestor, &pctx, hash, NULL, pk)) {
         unsigned long err = ERR_get_error();
         UM_LOG(WARN, "failed to setup digest %ld/%s", err, ERR_lib_error_string(err));
         rc = -1;
-    } else if (EVP_DigestVerify(digest, (const uint8_t *) sig, siglen, (const uint8_t *) data, datalen) != 1) {
+    } else if (EVP_DigestVerify(digestor, (const uint8_t *) sig, siglen, (const uint8_t *) data, datalen) != 1) {
         unsigned long err = ERR_get_error();
         UM_LOG(WARN, "failed to verify digest %ld/%s", err, ERR_lib_error_string(err));
         rc = -1;
     }
-
-    EVP_MD_CTX_free(digest);
+    EVP_MD_CTX_free(digestor);
 
     return rc;
 }
