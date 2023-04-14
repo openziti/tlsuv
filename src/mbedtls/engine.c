@@ -25,6 +25,7 @@
 #include <mbedtls/error.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/asn1.h>
+#include <mbedtls/asn1write.h>
 #include <mbedtls/oid.h>
 #include <mbedtls/pem.h>
 #include <mbedtls/error.h>
@@ -41,7 +42,6 @@
 #pragma comment (lib, "crypt32.lib")
 #else
 
-#include <mbedtls/asn1write.h>
 #include <unistd.h>
 
 #endif
