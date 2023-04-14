@@ -25,6 +25,7 @@
 #include <mbedtls/error.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/asn1.h>
+#include <mbedtls/asn1write.h>
 #include <mbedtls/oid.h>
 #include <mbedtls/pem.h>
 #include <mbedtls/error.h>
@@ -329,6 +330,31 @@ static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert
     mbedtls_ssl_conf_verify(&c->config, cert_verify_cb, c);
 }
 
+static size_t mbedtls_sig_to_asn1(const char *sig, size_t siglen, unsigned char *asn1sig) {
+    mbedtls_mpi r, s;
+    mbedtls_mpi_init(&r);
+    mbedtls_mpi_init(&s);
+
+    CK_ULONG coordlen = siglen / 2;
+    mbedtls_mpi_read_binary(&r, (const uint8_t *)sig, coordlen);
+    mbedtls_mpi_read_binary(&s, (const uint8_t *)sig + coordlen, coordlen);
+
+    int ret;
+    unsigned char buf[MBEDTLS_ECDSA_MAX_LEN];
+    unsigned char *p = buf + sizeof(buf);
+    size_t len = 0;
+
+    MBEDTLS_ASN1_CHK_ADD(len, mbedtls_asn1_write_mpi(&p, buf, &s));
+    MBEDTLS_ASN1_CHK_ADD(len, mbedtls_asn1_write_mpi(&p, buf, &r));
+
+    MBEDTLS_ASN1_CHK_ADD(len, mbedtls_asn1_write_len(&p, buf, len));
+    MBEDTLS_ASN1_CHK_ADD(len, mbedtls_asn1_write_tag(&p, buf,
+                                                     MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE));
+
+    memcpy(asn1sig, p, len);
+    return len;
+}
+
 static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
 
     int type;
@@ -356,12 +382,21 @@ static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* d
     if (mbedtls_md(md_info, (uint8_t *)data, datalen, hash) != 0) {
         return -1;
     }
-    
-    if (mbedtls_pk_verify(&crt->pk, type, hash, 0, (uint8_t *)sig, siglen) != 0) {
-        return -1;
+
+    if (mbedtls_pk_get_type(&crt->pk) == MBEDTLS_PK_ECKEY) {
+
     }
 
-    return 0;
+    int rc = mbedtls_pk_verify(&crt->pk, type, hash, 0, (uint8_t *) sig, siglen);
+    if (rc != 0) {
+        if (mbedtls_pk_get_type(&crt->pk) == MBEDTLS_PK_ECKEY) {
+            unsigned char asn1sig[MBEDTLS_ECDSA_MAX_LEN];
+            size_t asn1len = mbedtls_sig_to_asn1(sig, siglen, asn1sig);
+
+            rc = mbedtls_pk_verify(&crt->pk, type, hash, 0, asn1sig, asn1len);
+        }
+    }
+    return rc != 0 ? -1 : 0;
 }
 
 

@@ -15,9 +15,10 @@ limitations under the License.
 */
 
 #include "catch.hpp"
+#include "tlsuv/tlsuv.h"
 
-#include <tlsuv/tls_engine.h>
 #include <cstring>
+#include <tlsuv/tls_engine.h>
 #include <uv.h>
 
 #if !defined(_WIN32)
@@ -121,6 +122,48 @@ TEST_CASE("implementation test", "[engine]") {
     FAIL("invalid engine");
 #endif
     tls->api->free_ctx(tls);
+}
+
+TEST_CASE("verify with cert", "[engine]") {
+    auto certpem = R"(-----BEGIN CERTIFICATE-----
+MIIEbDCCA1SgAwIBAgISBNRhfTk2toXqBr7/p9Sa3HQUMA0GCSqGSIb3DQEBCwUA
+MDIxCzAJBgNVBAYTAlVTMRYwFAYDVQQKEw1MZXQncyBFbmNyeXB0MQswCQYDVQQD
+EwJSMzAeFw0yMzAzMzEwMjI2NTJaFw0yMzA2MjkwMjI2NTFaMCQxIjAgBgNVBAMM
+GSouY2xpbnQuZGVtby5vcGVueml0aS5vcmcwWTATBgcqhkjOPQIBBggqhkjOPQMB
+BwNCAATwTal+n4zyp0F5unaZZSnffdbOTD1rQ24qpLWDcxyu6NIPJT3WiULnVtDF
+mX1hk0YwDjPOMkgmiJ4ELccJi7K9o4ICUzCCAk8wDgYDVR0PAQH/BAQDAgeAMB0G
+A1UdJQQWMBQGCCsGAQUFBwMBBggrBgEFBQcDAjAMBgNVHRMBAf8EAjAAMB0GA1Ud
+DgQWBBTCjyhjN24xzTXKSjV7HKXESZ3bmTAfBgNVHSMEGDAWgBQULrMXt1hWy65Q
+CUDmH6+dixTCxjBVBggrBgEFBQcBAQRJMEcwIQYIKwYBBQUHMAGGFWh0dHA6Ly9y
+My5vLmxlbmNyLm9yZzAiBggrBgEFBQcwAoYWaHR0cDovL3IzLmkubGVuY3Iub3Jn
+LzAkBgNVHREEHTAbghkqLmNsaW50LmRlbW8ub3BlbnppdGkub3JnMEwGA1UdIARF
+MEMwCAYGZ4EMAQIBMDcGCysGAQQBgt8TAQEBMCgwJgYIKwYBBQUHAgEWGmh0dHA6
+Ly9jcHMubGV0c2VuY3J5cHQub3JnMIIBAwYKKwYBBAHWeQIEAgSB9ASB8QDvAHYA
+ejKMVNi3LbYg6jjgUh7phBZwMhOFTTvSK8E6V6NS61IAAAGHNbQqKAAABAMARzBF
+AiEA0IgWiAIbVXxPjJOPzu4axySW7Gx7f393UyhC4mjIgMECIDf3it981EGTsfE6
+2Gd0Igd8s2mj/5Y7i0EJdQHph9LxAHUArfe++nz/EMiLnT2cHj4YarRnKV3PsQwk
+yoWGNOvcgooAAAGHNbQqWQAABAMARjBEAiA1YkZ+SPRvHyXZnaqG+EcnM3pfaYUT
+QFPYTal8rj1l5QIgdwxD0c4SKpnp7VT98vQMNI3xDHptDxLiyY8msERLvRQwDQYJ
+KoZIhvcNAQELBQADggEBADw8JWgREsddXUn7Ty/D2htwgOQ/mH7dCgXT5cg3l/Pu
+dY9bJAwae2XyingurwUidf1QBpxB+MywQsRyis9AicmUeS8ve4Z9B13RVIk08MFZ
+Bz0O1gFfsRY61uKLjOTcqpdfuzIY+SRmlkjbeDK/aN9834Ycfi9GleBoKqKIB5Q5
+t5neq5bl+LuqM+Gig4tR+5rUmAbTXYBlduW/o50jXwzi601RHjOQM8YT5I68/Ed8
+kG3jUp0PZP+esKmxJpNZCK86YxA5iedhI+4z/2kqrUW2quknZja7FMyjWj6Vato3
+rzqUvKOfg8HVwOSngZyPa4zgd5ieZfxcFnDc2IK4fnI=
+-----END CERTIFICATE-----
+)";
+    auto tls = default_tls_context(nullptr, 0);
+
+    tls_cert c;
+    tls->api->load_cert(&c, certpem, strlen(certpem));
+
+    auto input = "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbSI6Im90dCIsImV4cCI6MTY4MTMyNDg5OCwiaXNzIjoiaHR0cHM6Ly9jdHJsLmNsaW50LmRlbW8ub3BlbnppdGkub3JnOjg0NDEiLCJqdGkiOiI1OWQxOTgwOC0zYTEyLTQzNWEtYTM3My1iY2UwZTFmNzIxOTgiLCJzdWIiOiJ5bUxHZUlQaTQifQ";
+    auto sig = "UE6IVn1c2xxPEp93J_dIkpjwaennq2HLzi8EJKkXyugRzYXANxj_peyQxwWythI4nT9RPS_gothILTFe8B3cew";
+
+    char *sigbin = nullptr;
+    size_t sigbinlen;
+    tlsuv_base64url_decode(sig, &sigbin, &sigbinlen);
+    REQUIRE(tls->api->verify_signature(c, hash_SHA256, input, strlen(input), sigbin, sigbinlen) == 0);
 }
 
 TEST_CASE("ALPN negotiation", "[engine]") {
