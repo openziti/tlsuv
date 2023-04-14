@@ -470,7 +470,7 @@ static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
     UM_LOG(VERB, "verifying %s", n);
 
     if (c->cert_verify_f) {
-        int rc = c->cert_verify_f(crt, c->verify_ctx);
+        int rc = c->cert_verify_f(certs, c->verify_ctx);
         if (rc == 0) {
             return 1;
         } else {
