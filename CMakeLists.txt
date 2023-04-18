@@ -13,7 +13,7 @@ PROJECT("tlsuv"
 message("Project: ${PROJECT_NAME}@v${PROJECT_VERSION}")
 include(cmake/project-is-top-level.cmake)
 include(cmake/variables.cmake)
-
+include(CMakeDependentOption)
 include(GNUInstallDirs)
 
 set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls)")
