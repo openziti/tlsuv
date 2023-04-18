@@ -1,6 +1,10 @@
-CMAKE_MINIMUM_REQUIRED(VERSION 3.22)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.15)
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake;${CMAKE_MODULE_PATH}")
+
+#if (NOT CMAKE_BUILD_TYPE)
+#    set(CMAKE_BUILD_TYPE RelWithDebInfo)
+#endif ()
 
 include(cmake/version.cmake)
 get_version(${CMAKE_CURRENT_LIST_DIR}/version.txt ver)
