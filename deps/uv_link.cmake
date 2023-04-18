@@ -6,7 +6,7 @@ add_library(uv_link OBJECT
         ${uvl_src}/src/defaults.c)
 
 target_include_directories(uv_link
-        PUBLIC ${uvl_src}/include
+        PUBLIC $<BUILD_INTERFACE:${uvl_src}/include>
         PRIVATE ${uvl_src}
 )
 

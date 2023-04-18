@@ -13,8 +13,8 @@ set(package tlsuv)
 
 install(
     DIRECTORY
-    include/
-    "${PROJECT_BINARY_DIR}/export/"
+        include/
+        "${PROJECT_BINARY_DIR}/export/"
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
     COMPONENT tlsuv_Development
 )
@@ -64,6 +64,10 @@ install(
     DESTINATION "${tlsuv_INSTALL_CMAKEDIR}"
     COMPONENT tlsuv_Development
 )
+
+# this is counter-intuitive(i.e. dumb) since uv_link is an OBJECT library and has no actual component
+# https://gitlab.kitware.com/cmake/cmake/-/issues/17357
+install(TARGETS uv_link EXPORT tlsuvTargets)
 
 if(PROJECT_IS_TOP_LEVEL)
   include(CPack)
