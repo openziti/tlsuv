@@ -62,7 +62,7 @@ if (softhsm_lib)
 endif (softhsm_lib)
 
 target_link_libraries(all_tests
-        tlsuv
+        tlsuv::tlsuv
         Catch2::Catch2
         )
 

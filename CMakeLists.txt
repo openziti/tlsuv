@@ -76,16 +76,35 @@ find_package(llhttp CONFIG REQUIRED)
 
 add_subdirectory(deps)
 
-add_library(tlsuv STATIC
+add_library(tlsuv_lib STATIC
         ${tlsuv_sources}
         )
+add_library(tlsuv::tlsuv ALIAS tlsuv_lib)
 
-set_property(TARGET tlsuv PROPERTY C_STANDARD 99)
+include(GenerateExportHeader)
+generate_export_header(
+    tlsuv_lib
+    BASE_NAME tlsuv
+    EXPORT_FILE_NAME export/tlsuv/tlsuv_export.h
+)
 
-target_include_directories(tlsuv
+# just static lib for now
+target_compile_definitions(tlsuv_lib PUBLIC TLSUV_STATIC_DEFINE)
+
+set_target_properties(tlsuv_lib PROPERTIES
+        C_STANDARD 99
+        C_VISIBILITY_PRESET hidden
+        VERSION "${PROJECT_VERSION}"
+        SOVERSION "${PROJECT_VERSION_MAJOR}"
+        EXPORT_NAME tlsuv
+        OUTPUT_NAME tlsuv
+        )
+
+target_include_directories(tlsuv_lib
         PUBLIC
         $<INSTALL_INTERFACE:include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/deps/uv_link_t/include>
         PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -93,37 +112,38 @@ target_include_directories(tlsuv
 
 find_package(ZLIB REQUIRED)
 
-target_link_libraries(tlsuv
+target_link_libraries(tlsuv_lib
         PRIVATE llhttp::llhttp_static
-        PRIVATE ${TLSUV_LIBUV_LIB}
-        PUBLIC uv_link
+        PUBLIC ${TLSUV_LIBUV_LIB}
+        PUBLIC $<TARGET_OBJECTS:uv_link>
         PRIVATE ZLIB::ZLIB
         )
-TARGET_COMPILE_DEFINITIONS(tlsuv PRIVATE TLSUV_VERSION=v${PROJECT_VERSION})
+TARGET_COMPILE_DEFINITIONS(tlsuv_lib PRIVATE TLSUV_VERSION=v${PROJECT_VERSION})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    TARGET_COMPILE_DEFINITIONS(tlsuv PRIVATE _POSIX_C_SOURCE=200112 _GNU_SOURCE)
+    TARGET_COMPILE_DEFINITIONS(tlsuv_lib PRIVATE _POSIX_C_SOURCE=200112 _GNU_SOURCE)
 endif()
 
 if (USE_MBEDTLS)
     find_package(MbedTLS REQUIRED)
-    target_compile_definitions(tlsuv PRIVATE USE_MBEDTLS)
-    target_include_directories(tlsuv PUBLIC $<BUILD_INTERFACE:${MBEDTLS_INCLUDE_DIRS}>)
-    target_link_libraries(tlsuv PRIVATE ${MBEDTLS_LIBRARIES})
+    target_compile_definitions(tlsuv_lib PRIVATE USE_MBEDTLS)
+    target_include_directories(tlsuv_lib PUBLIC $<BUILD_INTERFACE:${MBEDTLS_INCLUDE_DIRS}>)
+    target_link_libraries(tlsuv_lib PRIVATE ${MBEDTLS_LIBRARIES})
 elseif(USE_OPENSSL)
     find_package(OpenSSL REQUIRED)
-    target_compile_definitions(tlsuv PRIVATE USE_OPENSSL)
-    target_link_libraries(tlsuv PRIVATE OpenSSL::SSL)
+    target_compile_definitions(tlsuv_lib PRIVATE USE_OPENSSL)
+    target_link_libraries(tlsuv_lib PRIVATE OpenSSL::SSL)
 endif()
 
 if (WIN32)
-    target_compile_definitions(tlsuv PRIVATE WIN32_LEAN_AND_MEAN)
-    target_link_libraries(tlsuv PUBLIC crypt32)
+    target_compile_definitions(tlsuv_lib PRIVATE WIN32_LEAN_AND_MEAN)
+    target_link_libraries(tlsuv_lib PUBLIC crypt32)
 endif()
 
-install(DIRECTORY include/tlsuv DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(TARGETS tlsuv
-        ARCHIVE DESTINATION lib)
+# ---- Install rules ----
 
+if(NOT CMAKE_SKIP_INSTALL_RULES)
+  include(cmake/install-rules.cmake)
+endif()
 
 if(PROJECT_IS_TOP_LEVEL)
   option(BUILD_EXAMPLES "Build examples tree." "${tlsuv_DEVELOPER_MODE}")
