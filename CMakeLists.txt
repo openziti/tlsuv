@@ -115,7 +115,7 @@ find_package(ZLIB REQUIRED)
 target_link_libraries(tlsuv_lib
         PRIVATE llhttp::llhttp_static
         PUBLIC ${TLSUV_LIBUV_LIB}
-        PUBLIC $<TARGET_OBJECTS:uv_link>
+        PRIVATE $<TARGET_OBJECTS:uv_link>
         PRIVATE ZLIB::ZLIB
         )
 TARGET_COMPILE_DEFINITIONS(tlsuv_lib PRIVATE TLSUV_VERSION=v${PROJECT_VERSION})
