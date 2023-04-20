@@ -231,6 +231,14 @@ typedef struct {
     int (*generate_key)(tlsuv_private_key_t *pk);
 
     /**
+     * generate private key on a PKCS#11 token.
+     * caller should call tls_context_api::free_key() to clear memory associated with the key
+     * @param pk (out) address where tls_private_key handle will be stored.
+     * @returns 0 on success, or error code
+     */
+    int (*generate_pkcs11_key)(tlsuv_private_key_t *pk, const char *pkcs11driver, const char *slot, const char *pin, const char *label);
+
+    /**
      * loads private key from file, or PEM/DER buffer.
      * caller should call tls_context_api::free_key() to clear memory associated with the key
      * @param pk (out) address where tls_private_key handle will be stored.
