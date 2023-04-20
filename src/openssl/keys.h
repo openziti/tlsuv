@@ -35,6 +35,7 @@ void priv_key_init(struct priv_key_s *privkey);
 
 int gen_key(tlsuv_private_key_t *key);
 int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen);
+int gen_pkcs11_key(tlsuv_private_key_t *pk, const char *pkcs11driver, const char *slot, const char *pin, const char *label);
 int load_pkcs11_key(tlsuv_private_key_t *k, const char *lib, const char *slot, const char *pin, const char *id, const char *label);
 
 

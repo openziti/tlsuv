@@ -405,6 +405,49 @@ error:
     return -1;
 }
 
+int gen_pkcs11_key(tlsuv_private_key_t *key, const char *pkcs11driver, const char *slot, const char *pin, const char *label) {
+    p11_context *p11 = calloc(1, sizeof(*p11));
+    p11_key_ctx *p11_key = NULL;
+    EVP_PKEY *pkey = NULL;
+
+    int rc = p11_init(p11, pkcs11driver, slot, pin);
+    if (rc != 0) {
+        UM_LOG(WARN, "failed to init pkcs#11 token driver[%s] slot[%s]: %d/%s", pkcs11driver, slot, rc, p11_strerror(rc));
+        free(p11);
+        return rc;
+    }
+
+    p11_key = calloc(1, sizeof(*p11_key));
+    if (p11_gen_key(p11, p11_key, label) != 0) {
+        goto error;
+    }
+
+
+    pkey = EVP_PKEY_new();
+    switch (p11_key->key_type) {
+        case CKK_EC: load_pkcs11_ec(pkey, p11_key, NULL, label); break;
+        case CKK_RSA:
+            load_pkcs11_rsa(pkey, p11_key, NULL, label);
+            break;
+        default:
+            UM_LOG(WARN, "unsupported pkcs11 key type: %d", p11_key->key_type);
+            goto error;
+    }
+
+    struct priv_key_s *private_key = calloc(1, sizeof(struct priv_key_s));
+    *private_key = PRIV_KEY_API;
+    private_key->pkey = pkey;
+    *key = (tlsuv_private_key_t)private_key;
+
+    return 0;
+
+    error:
+    free(p11_key);
+    free(p11);
+    if(pkey) EVP_PKEY_free(pkey);
+    return -1;
+}
+
 int load_pkcs11_key(tlsuv_private_key_t *key, const char *lib, const char *slot, const char *pin, const char *id, const char *label) {
     p11_context *p11 = calloc(1, sizeof(*p11));
     p11_key_ctx *p11_key = NULL;
