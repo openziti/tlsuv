@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "catch.hpp"
+#include "p11.h"
 
 #include <cstring>
 #include <tlsuv/tls_engine.h>
@@ -256,6 +257,34 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
         key->free(key);
     }
     ctx->api->free_ctx(ctx);
+}
+
+TEST_CASE("gen-pkcs11-key-internals", "[key]") {
+    p11_context p11;
+    p11_key_ctx key;
+    REQUIRE(p11_init(&p11, HSM_DRIVER, nullptr, "2222") == 0);
+    REQUIRE(p11_gen_key(&p11, &key, "test-key") == 0);
+}
+
+TEST_CASE("gen-pkcs11-key", "[key]") {
+    auto tls = default_tls_context(nullptr, 0);
+    tlsuv_private_key_t key = nullptr;
+    REQUIRE(tls->api->generate_pkcs11_key(&key, HSM_DRIVER, nullptr, "2222", "gen-key-test") == 0);
+
+    WHEN("public key PEM") {
+        char *pem = nullptr;
+        size_t pemlen;
+        auto pub = key->pubkey(key);
+        REQUIRE(pub != nullptr);
+        THEN("should work") {
+            CHECK(pub->to_pem(pub, &pem, &pemlen) == 0);
+            CHECK(pem != nullptr);
+            CHECK(pemlen > 0);
+            Catch::cout() << std::string(pem, pemlen);
+        }
+        pub->free(pub);
+        free(pem);
+    }
 }
 
 #endif
