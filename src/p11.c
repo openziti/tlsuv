@@ -37,6 +37,24 @@ if (rc != CKR_OK) { \
    }\
 } while(0)
 
+#define set_attr_var(t, attr, val)                \
+    do {                                          \
+        t##temp[t##idx].type = (attr);            \
+        t##temp[t##idx].pValue = &(val);          \
+        t##temp[t##idx].ulValueLen = sizeof(val); \
+        (t##idx)++;                               \
+    } while (0)
+
+#define set_attr_ptr(t, attr, p)                 \
+    do {                                         \
+        if ((p) != NULL) {                       \
+            t##temp[t##idx].type = (attr);       \
+            t##temp[t##idx].pValue = (void*)(p);        \
+            t##temp[t##idx].ulValueLen = p##len; \
+            t##idx++;                            \
+        }                                        \
+    } while (0)
+
 static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, uint8_t **val, size_t *len);
 
 int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pin) {
@@ -87,6 +105,136 @@ int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pi
     return 0;
 }
 
+static const unsigned char * get_ec_params(int keysize, int *ec_params_len) {
+    static unsigned char prime521v1[] = { 0x06, 0x05, 0x2B, 0x81, 0x04, 0x0, 0x23 };
+    static unsigned char prime384v1[] = { 0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22 };
+    static unsigned char prime256v1[] = { 0x06, 0x08, 0x2A, 0x86 , 0x48 , 0xCE , 0x3D, 0x03, 0x01, 0x07 };
+    static unsigned char nistp244[] = { 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x21 };
+    static unsigned char prime192v1[] = { 0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x01 };
+
+    if (keysize >= 521) {
+        *ec_params_len = sizeof(prime521v1);
+        return prime521v1;
+    }
+
+    if (keysize >= 384) {
+        *ec_params_len = sizeof(prime384v1);
+        return prime384v1;
+    }
+
+    if (keysize >= 256) {
+        *ec_params_len = sizeof(prime256v1);
+        return prime256v1;
+    }
+    if (keysize >= 244) {
+        *ec_params_len = sizeof(nistp244);
+        return nistp244;
+    }
+    if (keysize >= 192) {
+        *ec_params_len = sizeof(prime192v1);
+        return prime192v1;
+    }
+}
+
+int p11_gen_key(p11_context *p11, p11_key_ctx *p11_key, const char *label) {
+    // in the preference order
+    CK_MECHANISM_TYPE try_types[] = {
+            CKM_EC_KEY_PAIR_GEN,
+            CKM_RSA_PKCS_KEY_PAIR_GEN
+    };
+
+    CK_KEY_TYPE keytype = 0;
+    CK_MECHANISM_INFO info;
+    CK_MECHANISM mech = {0};
+    CK_ULONG keysize = 0;
+    CK_RV rv;
+    for (int i = 0; i < sizeof(try_types)/sizeof(try_types[0]); i++) {
+        rv = p11->funcs->C_GetMechanismInfo(p11->slot_id, try_types[0], &info);
+        if (rv == CKR_OK && (info.flags & CKF_GENERATE_KEY_PAIR)) {
+            mech.mechanism = try_types[i];
+            keysize = info.ulMaxKeySize;
+            switch (try_types[i]) {
+                case CKM_RSA_PKCS_KEY_PAIR_GEN: keytype = CKK_RSA; break;
+                case CKM_EC_KEY_PAIR_GEN: keytype = CKK_EC; break;
+            }
+            goto found;
+        }
+    }
+    UM_LOG(WARN, "did not find suitable key generation mechanism: %d/%s", rv, p11_strerror(rv));
+    return -1;
+
+    found:
+    UM_LOG(DEBG, "found key generation mechanism[%d] for key type[%d] size[%ld]", mech.mechanism, keytype, keysize);
+
+    int ecparamslen = 0;
+    const unsigned char *ecparams;
+
+    CK_BYTE id[8];
+    int idlen = sizeof(id);
+    p11->funcs->C_GenerateRandom(p11->session, id, sizeof(id));
+
+    CK_BYTE rsaexp[] = { 1, 0, 1};
+    int rsaexplen = sizeof(rsaexp);
+    CK_BBOOL false_val = CK_FALSE;
+    CK_BBOOL true_val = CK_TRUE;
+    CK_OBJECT_CLASS pubcls = CKO_PUBLIC_KEY, privcls = CKO_PRIVATE_KEY;
+
+    CK_ATTRIBUTE privtemp[20];
+    int prividx = 0;
+    set_attr_ptr(priv, CKA_ID, id);
+    set_attr_var(priv, CKA_CLASS, privcls);
+    set_attr_var(priv, CKA_KEY_TYPE, keytype);
+    set_attr_var(priv, CKA_PRIVATE, true_val);
+	set_attr_var(priv, CKA_TOKEN, true_val);
+	set_attr_var(priv, CKA_SENSITIVE, true_val);
+	set_attr_var(priv, CKA_DECRYPT, true_val);
+	set_attr_var(priv, CKA_SIGN, true_val);
+	set_attr_var(priv, CKA_UNWRAP, true_val);
+    if (label) {
+        size_t labellen = strlen(label);
+        set_attr_ptr(priv, CKA_LABEL, label);
+    }
+
+    CK_ATTRIBUTE pubtemp[20];
+    int pubidx = 0;
+    set_attr_ptr(pub, CKA_ID, id);
+    set_attr_var(pub, CKA_CLASS, pubcls);
+    set_attr_var(pub, CKA_KEY_TYPE, keytype);
+	set_attr_var(pub, CKA_TOKEN, true_val);
+    set_attr_var(pub, CKA_ENCRYPT, true_val);
+	set_attr_var(pub, CKA_VERIFY, true_val);
+	set_attr_var(pub, CKA_WRAP, true_val);
+    if (label) {
+        size_t labellen = strlen(label);
+        set_attr_ptr(pub, CKA_LABEL, label);
+    }
+
+    if (keytype == CKK_EC) {
+        ecparams = get_ec_params(keysize, &ecparamslen);
+        set_attr_ptr(pub, CKA_EC_PARAMS, ecparams);
+    }
+
+    if (keytype == CKK_RSA) {
+        set_attr_var(pub, CKA_MODULUS_BITS, keysize);
+        set_attr_ptr(pub, CKA_PUBLIC_EXPONENT, rsaexp);
+    }
+
+    CK_OBJECT_HANDLE pubh = 0, privh = 0;
+    rv = p11->funcs->C_GenerateKeyPair(p11->session, &mech, pubtemp, pubidx, privtemp, prividx, &pubh, &privh);
+    if (rv != CKR_OK) {
+        UM_LOG(WARN, "failed to generate key pair mech[%ld], keytype[%ld], size[%ld]: %d/%d", mech.mechanism, keytype, keysize, rv, p11_strerror(rv));
+        return -1;
+    }
+
+
+    p11_key->ctx = p11;
+    p11_key->priv_handle = privh;
+    p11_key->pub_handle = pubh;
+    p11_key->key_type = keytype;
+
+    return 0;
+}
+
 int p11_store_key_cert(p11_key_ctx *key, char *cert, size_t certlen, char *subj, size_t subjlen) {
     p11_context *p11 = key->ctx;
 
@@ -103,42 +251,22 @@ int p11_store_key_cert(p11_key_ctx *key, char *cert, size_t certlen, char *subj,
     CK_BBOOL private = CK_FALSE;
     CK_BBOOL store = CK_TRUE;
 
-    CK_ATTRIBUTE temp[10];
-    int idx = 0;
+    CK_ATTRIBUTE certtemp[10];
+    int certidx = 0;
 
-#define set_attr_var(attr, val)             \
-    do {                                    \
-        temp[idx].type = (attr);            \
-        temp[idx].pValue = &(val);          \
-        temp[idx].ulValueLen = sizeof(val); \
-        idx++;                              \
-    } while (0)
 
-#define set_attr_ptr(attr, p)              \
-    do {                                   \
-        if ((p) != NULL) {                 \
-            temp[idx].type = (attr);       \
-            temp[idx].pValue = (p);        \
-            temp[idx].ulValueLen = p##len; \
-            idx++;                         \
-        }                                  \
-    } while (0)
+    set_attr_var(cert, CKA_CLASS, cls);
+    set_attr_var(cert, CKA_PRIVATE, private);
+    set_attr_var(cert, CKA_TOKEN, store);
+    set_attr_var(cert, CKA_CERTIFICATE_TYPE, cert_type);
 
-    set_attr_var(CKA_CLASS, cls);
-    set_attr_var(CKA_PRIVATE, private);
-    set_attr_var(CKA_TOKEN, store);
-    set_attr_var(CKA_CERTIFICATE_TYPE, cert_type);
-
-    set_attr_ptr(CKA_ID, id);
-    set_attr_ptr(CKA_LABEL, label);
-    set_attr_ptr(CKA_SUBJECT, subj);
-    set_attr_ptr(CKA_VALUE, cert);
-
-#undef set_attr_var
-#undef set_attr_ptr
+    set_attr_ptr(cert, CKA_ID, id);
+    set_attr_ptr(cert, CKA_LABEL, label);
+    set_attr_ptr(cert, CKA_SUBJECT, subj);
+    set_attr_ptr(cert, CKA_VALUE, cert);
 
     CK_OBJECT_HANDLE h;
-    CK_RV rc = p11->funcs->C_CreateObject(p11->session, temp, idx, &h);
+    CK_RV rc = p11->funcs->C_CreateObject(p11->session, certtemp, certidx, &h);
 
     free(label);
     free(id);
