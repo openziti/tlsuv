@@ -41,7 +41,7 @@ if (rc != CKR_OK) { \
     do {                                          \
         t##temp[t##idx].type = (attr);            \
         t##temp[t##idx].pValue = &(val);          \
-        t##temp[t##idx].ulValueLen = sizeof(val); \
+        t##temp[t##idx].ulValueLen = (CK_ULONG)sizeof(val); \
         (t##idx)++;                               \
     } while (0)
 
@@ -50,12 +50,12 @@ if (rc != CKR_OK) { \
         if ((p) != NULL) {                       \
             t##temp[t##idx].type = (attr);       \
             t##temp[t##idx].pValue = (void*)(p);        \
-            t##temp[t##idx].ulValueLen = p##len; \
+            t##temp[t##idx].ulValueLen = (CK_ULONG)p##len; \
             t##idx++;                            \
         }                                        \
     } while (0)
 
-static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, uint8_t **val, size_t *len);
+static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, uint8_t **val, CK_ULONG *len);
 
 int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pin) {
     memset(p11, 0, sizeof(p11_context));
@@ -96,7 +96,7 @@ int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pi
     p11->slot_id = slot_id;
 
     P11(p11->funcs->C_OpenSession(slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &p11->session));
-    err = p11->funcs->C_Login(p11->session, CKU_USER, (uint8_t *) pin, strlen(pin));
+    err = p11->funcs->C_Login(p11->session, CKU_USER, (uint8_t *) pin, (CK_ULONG)strlen(pin));
     if (err != CKR_OK && err != CKR_USER_ALREADY_LOGGED_IN) {
         UM_LOG(WARN, "failed to login to pkcs#11 token: %d/%s", err, p11_strerror(err));
         return (int)err;
@@ -134,6 +134,7 @@ static const unsigned char * get_ec_params(int keysize, int *ec_params_len) {
         *ec_params_len = sizeof(prime192v1);
         return prime192v1;
     }
+    return NULL;
 }
 
 int p11_gen_key(p11_context *p11, p11_key_ctx *p11_key, const char *label) {
@@ -160,7 +161,7 @@ int p11_gen_key(p11_context *p11, p11_key_ctx *p11_key, const char *label) {
             goto found;
         }
     }
-    UM_LOG(WARN, "did not find suitable key generation mechanism: %d/%s", rv, p11_strerror(rv));
+    UM_LOG(WARN, "did not find suitable key generation mechanism");
     return -1;
 
     found:
@@ -210,7 +211,7 @@ int p11_gen_key(p11_context *p11, p11_key_ctx *p11_key, const char *label) {
     }
 
     if (keytype == CKK_EC) {
-        ecparams = get_ec_params(keysize, &ecparamslen);
+        ecparams = get_ec_params((int)keysize, &ecparamslen);
         set_attr_ptr(pub, CKA_EC_PARAMS, ecparams);
     }
 
@@ -222,7 +223,7 @@ int p11_gen_key(p11_context *p11, p11_key_ctx *p11_key, const char *label) {
     CK_OBJECT_HANDLE pubh = 0, privh = 0;
     rv = p11->funcs->C_GenerateKeyPair(p11->session, &mech, pubtemp, pubidx, privtemp, prividx, &pubh, &privh);
     if (rv != CKR_OK) {
-        UM_LOG(WARN, "failed to generate key pair mech[%ld], keytype[%ld], size[%ld]: %d/%d", mech.mechanism, keytype, keysize, rv, p11_strerror(rv));
+        UM_LOG(WARN, "failed to generate key pair mech[%ld], keytype[%ld], size[%ld]: %d/%s", mech.mechanism, keytype, keysize, rv, p11_strerror(rv));
         return -1;
     }
 
@@ -311,15 +312,25 @@ int p11_get_key_cert(p11_key_ctx *key, char **val, size_t *len) {
         return -1;
     }
 
-    return p11_get_obj_attr(p11, cert_handle, CKA_VALUE, (uint8_t **)val, len);
+    CK_ULONG ck_len;
+    int rc = p11_get_obj_attr(p11, cert_handle, CKA_VALUE, (uint8_t **)val, &ck_len);
+    if (rc == 0) {
+        *len = ck_len;
+    }
+    return rc;
 }
 
 
 int p11_get_key_attr(p11_key_ctx *key, CK_ATTRIBUTE_TYPE type, char **val, size_t *len) {
-    return p11_get_obj_attr(key->ctx, key->pub_handle, type, (uint8_t **)val, len);
+    CK_ULONG ck_len;
+    int rc = p11_get_obj_attr(key->ctx, key->pub_handle, type, (uint8_t **)val, &ck_len);
+    if (rc == 0) {
+        *len = ck_len;
+    }
+    return rc;
 }
 
-static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, uint8_t **val, size_t *len) {
+static int p11_get_obj_attr(p11_context *p11, CK_OBJECT_HANDLE h, CK_ATTRIBUTE_TYPE type, uint8_t **val, CK_ULONG *len) {
 
         // load public key
     CK_ATTRIBUTE attr[] = {
@@ -358,9 +369,9 @@ int p11_load_key(p11_context *p11, p11_key_ctx *p11_key, const char *idstr, cons
     };
 
     if (idstr && strlen(idstr) > 0) {
-        idlen = (strlen(idstr) + 1) / 2;
+        idlen = (CK_ULONG)(strlen(idstr) + 1) / 2;
 
-        for (int idx = 0; idx < idlen; idx++) {
+        for (CK_ULONG idx = 0; idx < idlen; idx++) {
             sscanf(idstr + 2 * idx, "%2hhx", &id[idx]);
         }
         // parse id
@@ -372,7 +383,7 @@ int p11_load_key(p11_context *p11, p11_key_ctx *p11_key, const char *idstr, cons
     } else if (label && strlen(label) > 0) {
         query[qcount].type = CKA_LABEL;
         query[qcount].pValue = (void*)label;
-        query[qcount].ulValueLen = strlen(label);
+        query[qcount].ulValueLen = (CK_ULONG)strlen(label);
 
         qcount++;
     } else {
@@ -419,11 +430,13 @@ int p11_key_sign(p11_key_ctx *key, const uint8_t *digest, int digest_len, uint8_
         UM_LOG(WARN, "failed to init sign op: %s", p11_strerror(rc));
         return -1;
     }
-    rc = p11->funcs->C_Sign(p11->session, (CK_BYTE_PTR)digest, digest_len, (CK_BYTE_PTR) sig, siglen);
+    CK_ULONG ck_siglen = (CK_ULONG)*siglen;
+    rc = p11->funcs->C_Sign(p11->session, (CK_BYTE_PTR)digest, digest_len, (CK_BYTE_PTR) sig, &ck_siglen);
     if (rc != CKR_OK) {
         UM_LOG(WARN, "failed to perform sign op: %s", p11_strerror(rc));
         return -1;
     }
+    *siglen = ck_siglen;
     return 0;
 }
 
