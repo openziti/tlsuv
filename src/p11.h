@@ -17,6 +17,9 @@
 #define TLSUV_P11_H
 
 #ifdef _WIN32
+
+#pragma pack(push, cryptoki, 1)
+
 #define CK_PTR *
 #define CK_DECLARE_FUNCTION(returnType, name)  returnType __declspec(dllimport) name
 #define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType __declspec(dllimport) (* name)
@@ -29,6 +32,11 @@
 #endif
 
 #include "pkcs11/pkcs11.h"
+
+#ifdef _WIN32
+#pragma pack(pop, cryptoki)
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 
