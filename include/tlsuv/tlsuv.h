@@ -43,7 +43,8 @@ int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *hos
 
 int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const struct addrinfo *addr, uv_connect_cb cb);
 
-int tlsuv_stream_read(tlsuv_stream_t *clt, uv_alloc_cb, uv_read_cb);
+int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_cb read_cb);
+int tlsuv_stream_read_stop(tlsuv_stream_t *clt);
 
 int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_write_cb cb);
 
