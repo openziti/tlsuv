@@ -61,7 +61,7 @@ void on_connect(uv_connect_t *cr, int status) {
     }
 
     tlsuv_stream_t *mbed = (tlsuv_stream_t *) cr->handle;
-    tlsuv_stream_read(mbed, alloc, on_data);
+    tlsuv_stream_read_start(mbed, alloc, on_data);
 
     uv_write_t *wr = malloc(sizeof(uv_write_t));
     char req[] = "GET / HTTP/1.1\r\n"

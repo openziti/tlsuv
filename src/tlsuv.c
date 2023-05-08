@@ -31,9 +31,7 @@
 #define TLSUV_VERS "<unknown>"
 #endif
 
-static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
 static void tcp_connect_cb(uv_connect_t* req, int status);
-static int mbed_ssl_send(void* ctx, const uint8_t *buf, size_t len);
 
 static const uv_link_methods_t mbed_methods = {
         .close = uv_link_default_close,
@@ -198,10 +196,15 @@ int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *hos
     return clt->socket->connect((tlsuv_src_t *) clt->socket, host, portstr, on_src_connect, clt);
 }
 
-int tlsuv_stream_read(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
+int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
     clt->alloc_cb = (uv_link_alloc_cb) alloc_cb;
     clt->read_cb = (uv_link_read_cb) read_cb;
+    uv_link_read_start((uv_link_t *)clt);
     return 0;
+}
+
+int tlsuv_stream_read_stop(tlsuv_stream_t *clt) {
+    return uv_link_read_stop((uv_link_t *) clt);
 }
 
 static void on_mbed_link_write(uv_link_t* l, int status, void *ctx) {
