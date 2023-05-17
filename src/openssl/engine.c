@@ -56,7 +56,7 @@ struct openssl_engine {
     char *alpn;
     BIO *in;
     BIO *out;
-    int error;
+    unsigned long error;
 };
 
 static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_len);
@@ -145,7 +145,7 @@ static const char* tls_lib_version() {
     return OpenSSL_version(OPENSSL_VERSION);
 }
 
-const char *tls_error(int code) {
+const char *tls_error(unsigned long code) {
     static char errbuf[1024];
     ERR_error_string_n(code, errbuf, sizeof(errbuf));
     return errbuf;
@@ -668,7 +668,7 @@ tls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_
     int err = SSL_get_error(eng->ssl, rc);
 
     if (rc == 0) { // handshake encountered an error and was shutdown
-        eng->error = err;
+        eng->error = ERR_get_error();
         UM_LOG(ERR, "openssl: handshake was terminated: %s", tls_error(eng->error));
         return TLS_HS_ERROR;
     }
@@ -676,8 +676,8 @@ tls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_
     if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
         return TLS_HS_CONTINUE;
     } else { // something else is wrong
-        eng->error = err;
-        UM_LOG(ERR, "openssl: handshake error: %s", tls_error(eng->error));
+        eng->error = ERR_get_error();
+        UM_LOG(ERR, "openssl: handshake was terminated: %s", tls_error(eng->error));
         return TLS_HS_ERROR;
     }
 }
@@ -701,7 +701,7 @@ static int tls_write(void *engine, const char *data, size_t data_len, char *out,
     while (data_len > wrote) {
         size_t written;
         if (!SSL_write_ex(eng->ssl, (const unsigned char *)(data + wrote), data_len - wrote, &written)) {
-            eng->error = SSL_get_error(eng->ssl, 0);
+            eng->error = ERR_get_error();
             UM_LOG(ERR, "openssl: write error: %s", tls_error(eng->error));
             return -1;
         }
@@ -753,7 +753,7 @@ tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t 
     }
 
     if (err != SSL_ERROR_NONE) {
-        eng->error = err;
+        eng->error = ERR_get_error();
         UM_LOG(ERR, "openssl read: %s", tls_error(eng->error));
         return TLS_ERR;
     }
