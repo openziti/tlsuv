@@ -49,6 +49,9 @@ struct openssl_ctx {
     int (*cert_verify_f)(void *cert, void *v_ctx);
     void *verify_ctx;
     unsigned char *alpn_protocols;
+
+    X509_STORE **ca_chains;
+    int ca_chains_count;
 };
 
 struct openssl_engine {
@@ -59,7 +62,7 @@ struct openssl_engine {
     unsigned long error;
 };
 
-static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_len);
+static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len);
 static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len);
 static int tls_set_own_key(void *ctx, tlsuv_private_key_t key);
 
@@ -160,22 +163,25 @@ tls_context *new_openssl_ctx(const char *ca, size_t ca_len) {
     tls_context *ctx = calloc(1, sizeof(tls_context));
     ctx->api = &openssl_context_api;
     struct openssl_ctx *c = calloc(1, sizeof(struct openssl_ctx));
-    init_ssl_context(&c->ctx, ca, ca_len);
+    init_ssl_context(c, ca, ca_len);
     ctx->ctx = c;
 
     return ctx;
 }
-static X509_STORE_CTX * load_certs(const char *buf, size_t buf_len) {
-    X509_STORE_CTX *store = X509_STORE_CTX_new();
-    X509_STORE_CTX_init(store, X509_STORE_new(), NULL, NULL);
-    X509_STORE *certs = X509_STORE_CTX_get0_store(store);
+
+static X509_STORE * load_certs(const char *buf, size_t buf_len) {
+    X509_STORE *certs = X509_STORE_new();
     X509 *c;
+
     // try as file
-    FILE *crt_file = fopen(buf, "r");
-    if (crt_file != NULL) {
-        while((c = PEM_read_X509(crt_file, NULL, NULL, NULL)) != NULL) {
-            X509_STORE_add_cert(certs, c);
-            X509_free(c);
+    struct stat fstat;
+    if (stat(buf, &fstat) == 0) {
+        if (fstat.st_mode & S_IFREG) {
+            if (!X509_STORE_load_file(certs, buf)) {
+                UM_LOG(ERR, "failed to load certs from [%s]", buf);
+            }
+        } else {
+            UM_LOG(ERR, "cert bundle[%s] is not a regular file", buf);
         }
     } else {
         // try as PEM
@@ -187,7 +193,7 @@ static X509_STORE_CTX * load_certs(const char *buf, size_t buf_len) {
         }
         BIO_free(crt_bio);
     }
-    return store;
+    return certs;
 }
 
 static int load_cert(tls_cert *cert, const char *buf, size_t buflen) {
@@ -215,7 +221,106 @@ static int load_cert(tls_cert *cert, const char *buf, size_t buflen) {
     return 0;
 }
 
-static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_len) {
+static int verify_peer_cb(int pre_verify, X509_STORE_CTX *s) {
+
+    if (pre_verify == 1) {
+        return 1;
+    }
+
+    int verified = 0;
+    X509 *c = X509_STORE_CTX_get_current_cert(s);
+    STACK_OF(X509) *untrusted = X509_STORE_CTX_get0_untrusted(s);
+
+    SSL *ssl = X509_STORE_CTX_get_ex_data(s, SSL_get_ex_data_X509_STORE_CTX_idx());
+    SSL_CTX *ssl_ctx = SSL_get_SSL_CTX(ssl);
+    struct openssl_ctx *ctx = SSL_CTX_get_app_data(ssl_ctx);
+
+    for (int i = 0; i < ctx->ca_chains_count; i++) {
+        UM_LOG(INFO, "checking against bundle[%d]", i);
+        X509_STORE_CTX *verifier = X509_STORE_CTX_new();
+        X509_STORE_CTX_init(verifier, ctx->ca_chains[i], c, untrusted);
+        int is_good = X509_verify_cert(verifier);
+
+        X509_STORE_CTX_free(verifier);
+
+        if (is_good) {
+            ERR_clear_error();
+            verified = 1;
+            break;
+        }
+    }
+    return verified;
+}
+
+static X509_STORE** process_chains(X509_STORE *store, int *count) {
+    STACK_OF(X509) *certs = X509_STORE_get1_all_certs(store);
+
+    STACK_OF(X509) *roots = sk_X509_new_null();
+    STACK_OF(X509) *inter = sk_X509_new_null();
+
+    while (sk_X509_num(certs) > 0) {
+        X509 *c = sk_X509_pop(certs);
+        if (X509_self_signed(c, 1)) {
+            sk_X509_push(roots, c);
+        } else {
+            sk_X509_push(inter, c);
+        }
+    }
+
+    int root_count = sk_X509_num(roots);
+    X509_STORE **stores = calloc(root_count, sizeof (X509_STORE*));
+    int idx = 0;
+    while(sk_X509_num(roots) > 0) {
+        X509 *r = sk_X509_pop(roots);
+        X509_STORE *s = X509_STORE_new();
+        X509_STORE_add_cert(s, r);
+        X509_free(r);
+
+        stores[idx++] = s;
+    }
+
+    int tries = 3;
+    while (sk_X509_num(inter) > 0 && tries > 0) {
+        for (int i = 0; i < sk_X509_num(inter);) {
+            X509 *c = sk_X509_value(inter, i);
+            int found = 0;
+            for (int n = 0; n < root_count; n++) {
+                ERR_clear_error();
+
+                X509_STORE_CTX *verifier = X509_STORE_CTX_new();
+                X509_STORE_CTX_init(verifier, stores[n], c, NULL);
+                int rc = X509_verify_cert(verifier);
+
+                X509_STORE_CTX_free(verifier);
+
+                if (rc == 1) {
+                    X509_STORE_add_cert(stores[n], c);
+                    X509_free(c);
+                    found = 1;
+                    break;
+                }
+            }
+
+            if (found) {
+                sk_X509_delete(inter, i);
+            } else {
+                i++;
+            }
+        }
+        tries--;
+    }
+    if (sk_X509_num(inter) > 0) {
+        UM_LOG(WARN, "bundle contained %d un-rooted certs", sk_X509_num(inter));
+    }
+    sk_X509_free(roots);
+    sk_X509_free(inter);
+    sk_X509_free(certs);
+    ERR_clear_error();
+    *count = root_count;
+    return stores;
+}
+
+static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len) {
     SSL_library_init();
 
     const SSL_METHOD *method = TLS_client_method();
@@ -223,15 +328,16 @@ static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_
     SSL_CONF_CTX_set_flags(conf, SSL_CONF_FLAG_CLIENT);
 
     SSL_CTX *ctx = SSL_CTX_new(method);
+    SSL_CTX_set_app_data(ctx, c);
 
     SSL_CONF_CTX_set_ssl_ctx(conf, ctx);
     SSL_CONF_CTX_finish(conf);
     SSL_CONF_CTX_free(conf);
 
     if (cabuf != NULL) {
-        X509_STORE_CTX *ca = load_certs(cabuf, cabuf_len);
-        SSL_CTX_set1_cert_store(ctx, X509_STORE_CTX_get0_store(ca));
-        X509_STORE_CTX_free(ca);
+        X509_STORE *ca = load_certs(cabuf, cabuf_len);
+        c->ca_chains = process_chains(ca, &c->ca_chains_count);
+        SSL_CTX_set0_verify_cert_store(ctx, ca);
     } else {
         // try loading default CA stores
 #if _WIN32
@@ -242,7 +348,7 @@ static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_
         SSL_CTX_set_default_verify_paths(ctx);
 #endif
     }
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_peer_cb);
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
 
@@ -252,7 +358,7 @@ static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_
         SSL_CTX_set_info_callback(ctx, info_cb);
     }
 
-    *ssl_ctx = ctx;
+    c->ctx = ctx;
 }
 
 typedef struct string_int_pair_st {
@@ -458,6 +564,8 @@ tls_engine *new_openssl_engine(void *ctx, const char *host) {
         SSL_set_alpn_protos(eng->ssl, context->alpn_protocols, strlen((char*)context->alpn_protocols));
     }
 
+    SSL_set_app_data(eng->ssl, eng);
+
     return engine;
 }
 
@@ -510,6 +618,13 @@ static void tls_free_ctx(tls_context *ctx) {
     if (c->own_key) {
         c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
         c->own_key = NULL;
+    }
+
+    if (c->ca_chains) {
+        for (int i = 0; i < c->ca_chains_count; i++) {
+            X509_STORE_free(c->ca_chains[i]);
+        }
+        free(c->ca_chains);
     }
     SSL_CTX_free(c->ctx);
     free(c);
@@ -597,11 +712,10 @@ static int tls_set_own_key(void *ctx, tlsuv_private_key_t key) {
 
     tls_cert cert;
     if (key->get_certificate(key, &cert) == 0) {
-        X509_STORE_CTX *store = cert;
-        X509 *x509 = X509_STORE_CTX_get0_cert(store);
-        c->own_cert = x509;
+        X509_STORE *store = cert;
 
-        SSL_OP_CHECK(SSL_CTX_use_certificate(c->ctx, c->own_cert), "set own cert");
+        SSL_OP_CHECK(SSL_CTX_set0_chain_cert_store(c->ctx, store), "set own cert");
+        c->own_cert = SSL_CTX_get0_certificate(c->ctx);
     }
 
     if (c->own_cert) {
@@ -614,21 +728,15 @@ static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len) {
     struct openssl_ctx *c = ctx;
     SSL_CTX *ssl = c->ctx;
 
-    X509_STORE_CTX *certs = load_certs(cert_buf, cert_len);
-    X509_STORE *store = X509_STORE_CTX_get0_store(certs);
+    X509_STORE *store = load_certs(cert_buf, cert_len);
 
-    STACK_OF(X509_OBJECT) *stack = X509_STORE_get0_objects(store);
-
-    X509_OBJECT *o = sk_X509_OBJECT_value(stack, 0);
-    X509 *crt = X509_OBJECT_get0_X509(o);
-    SSL_OP_CHECK(SSL_CTX_use_certificate(ssl, crt), "set own cert");
-    c->own_cert = crt;
+    SSL_CTX_set0_chain_cert_store(ssl, store);
+    c->own_cert = NULL;
 
     if (c->own_key) {
         SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
     }
 
-    X509_STORE_CTX_free(certs);
     X509_STORE_free(store);
     return 0;
 }
