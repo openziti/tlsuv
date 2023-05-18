@@ -56,7 +56,7 @@ struct openssl_engine {
     char *alpn;
     BIO *in;
     BIO *out;
-    int error;
+    unsigned long error;
 };
 
 static void init_ssl_context(SSL_CTX **ssl_ctx, const char *cabuf, size_t cabuf_len);
@@ -145,7 +145,7 @@ static const char* tls_lib_version() {
     return OpenSSL_version(OPENSSL_VERSION);
 }
 
-const char *tls_error(int code) {
+const char *tls_error(unsigned long code) {
     static char errbuf[1024];
     ERR_error_string_n(code, errbuf, sizeof(errbuf));
     return errbuf;
@@ -518,6 +518,8 @@ static void tls_free_ctx(tls_context *ctx) {
 
 static int tls_reset(void *engine) {
     struct openssl_engine *e = engine;
+    ERR_clear_error();
+
     if (!SSL_clear(e->ssl)) {
         int err = SSL_get_error(e->ssl, 0);
         UM_LOG(ERR, "error resetting TSL enging: %d(%s)", err, tls_error(err));
@@ -631,43 +633,6 @@ static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len) {
     return 0;
 }
 
-#if 0
-
-static int tls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
-        const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id) {
-
-    struct tls_context *c = ctx;
-    c->own_key = calloc(1, sizeof(mbedtls_pk_context));
-    int rc = mp11_load_key(c->own_key, pkcs11_lib, pin, slot, key_id);
-    if (rc != CKR_OK) {
-        fprintf(stderr, "failed to load private key - %s", p11_strerror(rc));
-        mbedtls_pk_free(c->own_key);
-        free(c->own_key);
-        c->own_key = NULL;
-        return TLS_ERR;
-    }
-
-    c->own_cert = calloc(1, sizeof(mbedtls_x509_crt));
-    rc = mbedtls_x509_crt_parse(c->own_cert, (const unsigned char *)cert_buf, cert_len);
-    if (rc < 0) {
-        rc = mbedtls_x509_crt_parse_file(c->own_cert, cert_buf);
-        if (rc < 0) {
-            fprintf(stderr, "failed to load certificate");
-            mbedtls_x509_crt_free(c->own_cert);
-            free(c->own_cert);
-            c->own_cert = NULL;
-
-            mbedtls_pk_free(c->own_key);
-            free(c->own_key);
-            c->own_key = NULL;
-            return TLS_ERR;
-        }
-    }
-
-    mbedtls_ssl_conf_own_cert(&c->config, c->own_cert, c->own_key);
-    return TLS_OK;
-}
-#endif
 
 static tls_handshake_state tls_hs_state(void *engine) {
     struct openssl_engine *eng = (struct openssl_engine *) engine;
@@ -686,24 +651,33 @@ tls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_
     if (in_bytes > 0) {
         BIO_write(eng->in, (const unsigned char *)in, (int)in_bytes);
     }
+    ERR_clear_error();
 
-    int state = SSL_do_handshake(eng->ssl);
-    int err = SSL_get_error(eng->ssl, state);
+    int rc = SSL_do_handshake(eng->ssl);
+
     if (BIO_ctrl_pending(eng->out) > 0) {
         *out_bytes = BIO_read(eng->out, (unsigned char *) out, (int)maxout);
     } else {
         *out_bytes = 0;
     }
 
-    OSSL_HANDSHAKE_STATE hs_state = SSL_get_state(eng->ssl);
-    if (hs_state == TLS_ST_OK) {
+    if (rc == 1) { // handshake completed
         return TLS_HS_COMPLETE;
     }
-    else if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-        return TLS_HS_CONTINUE;
+
+    int err = SSL_get_error(eng->ssl, rc);
+
+    if (rc == 0) { // handshake encountered an error and was shutdown
+        eng->error = ERR_get_error();
+        UM_LOG(ERR, "openssl: handshake was terminated: %s", tls_error(eng->error));
+        return TLS_HS_ERROR;
     }
-    else {
-        eng->error = state;
+
+    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+        return TLS_HS_CONTINUE;
+    } else { // something else is wrong
+        eng->error = ERR_get_error();
+        UM_LOG(ERR, "openssl: handshake was terminated: %s", tls_error(eng->error));
         return TLS_HS_ERROR;
     }
 }
@@ -721,15 +695,19 @@ static const char* tls_get_alpn(void *engine) {
 
 static int tls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout) {
     struct openssl_engine *eng = (struct openssl_engine *) engine;
+    ERR_clear_error();
+
     size_t wrote = 0;
     while (data_len > wrote) {
-        int rc = SSL_write(eng->ssl, (const unsigned char *)(data + wrote), (int)(data_len - wrote));
-        if (rc < 0) {
-            eng->error = rc;
-            return rc;
+        size_t written;
+        if (!SSL_write_ex(eng->ssl, (const unsigned char *)(data + wrote), data_len - wrote, &written)) {
+            eng->error = ERR_get_error();
+            UM_LOG(ERR, "openssl: write error: %s", tls_error(eng->error));
+            return -1;
         }
-        wrote += rc;
+        wrote += written;
     }
+
     if (BIO_ctrl_pending(eng->out) > 0)
         *out_bytes = BIO_read(eng->out, (unsigned char *)out, (int)maxout);
     else
@@ -746,18 +724,21 @@ tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t 
         BIO_write(eng->in, (const unsigned char *)ssl_in, (int)ssl_in_len);
     }
 
-    int rc;
     int err = SSL_ERROR_NONE;
     uint8_t *writep = (uint8_t*)out;
     size_t total_out = 0;
 
-    while((maxout - total_out > 0) && (rc = SSL_read(eng->ssl, writep, (int)(maxout - total_out))) > 0) {
-        total_out += rc;
-        writep += rc;
-    }
+    ERR_clear_error();
+    while(maxout - total_out > 0) {
 
-    if (rc < 0) {
-        err = SSL_get_error(eng->ssl, rc);
+        size_t read_bytes;
+        if (!SSL_read_ex(eng->ssl, writep, maxout - total_out, &read_bytes)) {
+            err = SSL_get_error(eng->ssl, 0);
+            break;
+        }
+
+        total_out += read_bytes;
+        writep += read_bytes;
     }
 
     *out_bytes = total_out;
@@ -772,8 +753,8 @@ tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t 
     }
 
     if (err != SSL_ERROR_NONE) {
-        eng->error = rc;
-        UM_LOG(ERR, "mbedTLS: %0x(%s)", rc, tls_error(eng->error));
+        eng->error = ERR_get_error();
+        UM_LOG(ERR, "openssl read: %s", tls_error(eng->error));
         return TLS_ERR;
     }
 
@@ -786,7 +767,13 @@ tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t 
 
 static int tls_close(void *engine, char *out, size_t *out_bytes, size_t maxout) {
     struct openssl_engine *eng = (struct openssl_engine *) engine;
-    SSL_shutdown(eng->ssl);
+    ERR_clear_error();
+
+    int rc = SSL_shutdown(eng->ssl);
+    if (rc < 0) {
+        int err = SSL_get_error(eng->ssl, rc);
+        UM_LOG(WARN, "openssl shutdown: %s", tls_error(err));
+    }
     if (BIO_ctrl_pending(eng->out) > 0)
         *out_bytes = BIO_read(eng->out, (unsigned char *)out, (int)maxout);
     else

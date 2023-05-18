@@ -28,7 +28,7 @@ struct priv_key_s {
     EVP_PKEY *pkey;
 };
 
-const char *tls_error(int code);
+const char *tls_error(unsigned long code);
 
 void pub_key_init(struct pub_key_s *pubkey);
 void priv_key_init(struct priv_key_s *privkey);

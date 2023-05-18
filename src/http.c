@@ -177,11 +177,13 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
             uv_async_send(&clt->proc);
             break;
 
-        case TLS_HS_ERROR:
-            UM_LOG(ERR, "handshake failed status[%d]", status);
+        case TLS_HS_ERROR: {
+            const char *err = tls->engine->api->strerror(tls->engine->engine);
+            UM_LOG(ERR, "handshake failed status[%d]: %s", status, tls->engine->api->strerror(tls->engine->engine));
             close_connection(clt);
-            fail_active_request(clt, UV_ECONNABORTED, uv_strerror(UV_ECONNABORTED));
+            fail_active_request(clt, UV_ECONNABORTED, err);
             break;
+        }
 
         default:
             UM_LOG(ERR, "unexpected handshake status[%d]", status);

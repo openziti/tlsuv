@@ -112,9 +112,9 @@ int tlsuv_stream_nodelay(tlsuv_stream_t *clt, int nodelay) {
 }
 
 static void on_tls_hs(tls_link_t *tls_link, int status) {
-    tlsuv_stream_t *mbed = tls_link->data;
+    tlsuv_stream_t *stream = tls_link->data;
 
-    uv_connect_t *req = mbed->conn_req;
+    uv_connect_t *req = stream->conn_req;
     if (req == NULL) {
         return;
     }
@@ -122,12 +122,13 @@ static void on_tls_hs(tls_link_t *tls_link, int status) {
     if (status == TLS_HS_COMPLETE) {
         req->cb(req, 0);
     } else if (status == TLS_HS_ERROR) {
+        UM_LOG(WARN, "handshake failed: %s", tls_link->engine->api->strerror(tls_link->engine->engine));
         req->cb(req, UV_ECONNABORTED);
     } else {
         UM_LOG(WARN, "unexpected handshake status[%d]", status);
         req->cb(req, UV_EINVAL);
     }
-    mbed->conn_req = NULL;
+    stream->conn_req = NULL;
 }
 
 static void on_src_connect(tlsuv_src_t *src, int status, void *ctx) {
