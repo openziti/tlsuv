@@ -107,7 +107,7 @@ static void msg_cb (int write_p, int version, int content_type, const void *buf,
 static void info_cb(const SSL *s, int where, int ret);
 
 #if _WIN32
-static X509_STORE_CTX *load_system_certs();
+static X509_STORE *load_system_certs();
 #endif
 
 static tls_context_api openssl_context_api = {
@@ -214,8 +214,9 @@ static int load_cert(tls_cert *cert, const char *buf, size_t buflen) {
         return -1;
     }
 
-    X509_STORE_CTX *store = X509_STORE_CTX_new();
-    X509_STORE_CTX_set_cert(store, c);
+    X509_STORE *store = X509_STORE_new();
+    X509_STORE_add_cert(store, c);
+    X509_free(c);
 
     *cert = store;
     return 0;
@@ -341,9 +342,8 @@ static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t ca
     } else {
         // try loading default CA stores
 #if _WIN32
-        X509_STORE_CTX *ca = load_system_certs();
-        SSL_CTX_set1_cert_store(ctx, X509_STORE_CTX_get0_store(ca));
-        X509_STORE_CTX_free(ca);
+        X509_STORE *ca = load_system_certs();
+        SSL_CTX_set0_verify_cert_store(ctx, ca);
 #else
         SSL_CTX_set_default_verify_paths(ctx);
 #endif
@@ -921,14 +921,11 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7buf, size_t pkcs7
         return -1;
     }
 
-    STACK_OF(X509) *copy = sk_X509_new_null();
-    X509_STORE_CTX *store = X509_STORE_CTX_new();
+    X509_STORE *store = X509_STORE_new();
     for (int i = 0; i < sk_X509_num(certs); i++) {
         X509 *c = sk_X509_value(certs, i);
-        sk_X509_push(copy, X509_dup(c));
+        X509_STORE_add_cert(store, c);
     }
-
-    X509_STORE_CTX_set0_verified_chain(store, copy);
 
     *chain = store;
     PKCS7_free(pkcs7);
@@ -1009,10 +1006,8 @@ goto on_error;            \
 #include <wincrypt.h>
 #pragma comment (lib, "crypt32.lib")
 
-static X509_STORE_CTX *load_system_certs() {
-    X509_STORE_CTX *store = X509_STORE_CTX_new();
-    X509_STORE_CTX_init(store, X509_STORE_new(), NULL, NULL);
-    X509_STORE *certs = X509_STORE_CTX_get0_store(store);
+static X509_STORE *load_system_certs() {
+    X509_STORE *store = X509_STORE_new();
     X509 *c;
 
     HCERTSTORE hCertStore;
@@ -1025,7 +1020,7 @@ static X509_STORE_CTX *load_system_certs() {
 
     while ((pCertContext = CertEnumCertificatesInStore(hCertStore, pCertContext)) != NULL) {
         c = d2i_X509(NULL, (const uint8_t **)&pCertContext->pbCertEncoded, (long)pCertContext->cbCertEncoded);
-        X509_STORE_add_cert(certs, c);
+        X509_STORE_add_cert(store, c);
     }
     CertFreeCertificateContext(pCertContext);
     CertCloseStore(hCertStore, 0);
