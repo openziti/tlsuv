@@ -730,14 +730,22 @@ static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len) {
 
     X509_STORE *store = load_certs(cert_buf, cert_len);
 
-    SSL_CTX_set0_chain_cert_store(ssl, store);
-    c->own_cert = NULL;
+    STACK_OF(X509) *certs = X509_STORE_get1_all_certs(store);
+    X509 *crt = sk_X509_pop(certs);
+    SSL_CTX_use_certificate(ssl, crt);
+    X509_free(crt);
+    c->own_cert = crt;
+
+    if (sk_X509_num(certs) > 0) {
+        SSL_CTX_set1_chain_cert_store(ssl, store);
+    }
+
 
     if (c->own_key) {
         SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
     }
-
     X509_STORE_free(store);
+    sk_X509_free(certs);
     return 0;
 }
 
