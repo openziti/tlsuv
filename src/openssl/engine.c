@@ -600,13 +600,15 @@ static void tls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, vo
 }
 
 static int tls_verify_signature(void *cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
-    X509_STORE_CTX *store = cert;
-    X509 *c = X509_STORE_CTX_get0_cert(store);
+    X509_STORE *store = cert;
+    STACK_OF(X509) *s = X509_STORE_get1_all_certs(store);
+    X509 *c = sk_X509_value(s, 0);
     EVP_PKEY *pk = X509_get_pubkey(c);
     if (pk == NULL) {
         unsigned long err = ERR_peek_error();
         UM_LOG(WARN, "no pub key: %ld/%s", err, ERR_lib_error_string(err));
     }
+    sk_X509_free(s);
     return verify_signature(pk, md, data, datalen, sig, siglen);
 }
 
@@ -935,19 +937,13 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7buf, size_t pkcs7
 }
 
 static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen) {
-    X509_STORE_CTX *ctx = cert;
+    X509_STORE *store = cert;
 
     BIO *pembio = BIO_new(BIO_s_mem());
     X509 *c;
-    c = X509_STORE_CTX_get0_cert(ctx);
-    if (c) {
-        PEM_write_bio_X509(pembio, c);
-    }
-
-    STACK_OF(X509) *objects = X509_STORE_CTX_get0_chain(ctx);
-    int count = sk_X509_num(objects);
-    for (int i = 0; i < count; i++) {
-        c = sk_X509_value(objects, i);
+    STACK_OF(X509) *s = X509_STORE_get1_all_certs(store);
+    for (int i = 0; i < sk_X509_num(s); i++) {
+        c = sk_X509_value(s, i);
         PEM_write_bio_X509(pembio, c);
     }
 
@@ -955,6 +951,7 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
     *pem = calloc(1, *pemlen + 1);
     BIO_read(pembio, *pem, (int)*pemlen);
 
+    sk_X509_free(s);
     BIO_free_all(pembio);
     return 0;
 }

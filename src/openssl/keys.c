@@ -154,7 +154,10 @@ int verify_signature (EVP_PKEY *pk, enum hash_algo md, const char* data, size_t 
 
         // if signature is not DER encoded try verifying it as raw ECDSA signature (EC-point)
         if (ecdsa_sig == NULL) {
-            return verify_ecdsa_sig(EVP_PKEY_get1_EC_KEY(pk), hash, data, datalen, sig, siglen);
+            EC_KEY *ec = EVP_PKEY_get1_EC_KEY(pk);
+            int verified = verify_ecdsa_sig(ec, hash, data, datalen, sig, siglen);
+            EC_KEY_free(ec);
+            return verified;
         }
 
         ECDSA_SIG_free(ecdsa_sig);
@@ -604,8 +607,10 @@ static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert) {
     if (p11_key == NULL) {
         return -1;
     }
-    X509_STORE_CTX *store = cert;
-    X509 *c = X509_STORE_CTX_get0_cert(store);
+    X509_STORE *store = cert;
+    STACK_OF(X509) *s = X509_STORE_get1_all_certs(store);
+
+    X509 *c = sk_X509_value(s, 0);
 
     X509_NAME *subj_name = X509_get_subject_name(c);
     unsigned char *subj_der = NULL;
@@ -616,6 +621,7 @@ static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert) {
 
     int rc = p11_store_key_cert(p11_key, der, derlen, (char*)subj_der, subjlen);
 
+    sk_X509_free(s);
     OPENSSL_free(der);
     OPENSSL_free(subj_der);
     return rc;
