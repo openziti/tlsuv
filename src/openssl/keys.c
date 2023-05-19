@@ -576,8 +576,10 @@ static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert) {
     if (p11_get_key_cert(p11_key, &der, &derlen) == 0) {
         const uint8_t *a = (const uint8_t *)der;
         X509 *c = d2i_X509(NULL, &a, (long)derlen);
-        X509_STORE_CTX *store = X509_STORE_CTX_new();
-        X509_STORE_CTX_set_cert(store, c);
+
+        X509_STORE *store = X509_STORE_new();
+        X509_STORE_add_cert(store, c);
+        X509_free(c);
         *cert = store;
         free(der);
         return 0;

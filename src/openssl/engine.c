@@ -655,11 +655,9 @@ static void tls_free(tls_engine *engine) {
 }
 
 static void tls_free_cert(tls_cert *cert) {
-    X509_STORE_CTX *s = *cert;
+    X509_STORE *s = *cert;
     if (s != NULL) {
-        X509 *c = X509_STORE_CTX_get0_cert(s);
-        X509_free(c);
-        X509_STORE_CTX_free(s);
+        X509_STORE_free(s);
     }
     *cert = NULL;
 }
@@ -694,6 +692,20 @@ if ((op) != 1) { \
         return TLS_ERR; \
     }} while(0)
 
+
+static X509* tls_set_cert_internal (SSL_CTX* ssl, X509_STORE *store) {
+    STACK_OF(X509) *certs = X509_STORE_get1_all_certs(store);
+    X509 *crt = sk_X509_pop(certs);
+    SSL_CTX_use_certificate(ssl, crt);
+    X509_free(crt);
+
+    if (sk_X509_num(certs) > 0) {
+        SSL_CTX_set1_chain_cert_store(ssl, store);
+    }
+    sk_X509_free(certs);
+    return crt;
+}
+
 static int tls_set_own_key(void *ctx, tlsuv_private_key_t key) {
     struct openssl_ctx *c = ctx;
     SSL_CTX *ssl = c->ctx;
@@ -713,9 +725,8 @@ static int tls_set_own_key(void *ctx, tlsuv_private_key_t key) {
     tls_cert cert;
     if (key->get_certificate(key, &cert) == 0) {
         X509_STORE *store = cert;
-
-        SSL_OP_CHECK(SSL_CTX_set0_chain_cert_store(c->ctx, store), "set own cert");
-        c->own_cert = SSL_CTX_get0_certificate(c->ctx);
+        c->own_cert = tls_set_cert_internal(c->ctx, store);
+        X509_STORE_free(store);
     }
 
     if (c->own_cert) {
@@ -730,22 +741,12 @@ static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len) {
 
     X509_STORE *store = load_certs(cert_buf, cert_len);
 
-    STACK_OF(X509) *certs = X509_STORE_get1_all_certs(store);
-    X509 *crt = sk_X509_pop(certs);
-    SSL_CTX_use_certificate(ssl, crt);
-    X509_free(crt);
-    c->own_cert = crt;
-
-    if (sk_X509_num(certs) > 0) {
-        SSL_CTX_set1_chain_cert_store(ssl, store);
-    }
-
+    c->own_cert = tls_set_cert_internal(ssl, store);
 
     if (c->own_key) {
         SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
     }
     X509_STORE_free(store);
-    sk_X509_free(certs);
     return 0;
 }
 
