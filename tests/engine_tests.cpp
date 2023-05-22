@@ -164,6 +164,9 @@ rzqUvKOfg8HVwOSngZyPa4zgd5ieZfxcFnDc2IK4fnI=
     size_t sigbinlen;
     tlsuv_base64url_decode(sig, &sigbin, &sigbinlen);
     REQUIRE(tls->api->verify_signature(c, hash_SHA256, input, strlen(input), sigbin, sigbinlen) == 0);
+    free(sigbin);
+    tls->api->free_cert(&c);
+    tls->api->free_ctx(tls);
 }
 
 TEST_CASE("ALPN negotiation", "[engine]") {

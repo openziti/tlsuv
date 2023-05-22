@@ -46,9 +46,25 @@ std::string testServerURL(const string& type) {
     return "";
 }
 
+class testServer {
+public:
+    tls_context* TLS() {
+        return tls;
+    }
+    testServer() {
+        tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+    }
+
+    ~testServer() {
+        tls->api->free_ctx(tls);
+    }
+private:
+    tls_context* tls;
+};
+
 tls_context* testServerTLS() {
-    static tls_context *tls = default_tls_context(test_server_CA, strlen(test_server_CA));
-    return tls;
+    static testServer srv;
+    return srv.TLS();
 }
 
 struct ci_less : std::binary_function<string, string, bool>

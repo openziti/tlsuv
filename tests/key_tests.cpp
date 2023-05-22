@@ -285,6 +285,8 @@ TEST_CASE("gen-pkcs11-key", "[key]") {
         pub->free(pub);
         free(pem);
     }
+    key->free(key);
+    tls->api->free_ctx(tls);
 }
 
 #endif
