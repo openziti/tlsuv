@@ -572,21 +572,21 @@ tls_engine *new_openssl_engine(void *ctx, const char *host) {
 static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
     struct openssl_ctx *c = ctx;
 
+    X509_STORE *store = X509_STORE_new();
     X509 *crt = X509_STORE_CTX_get0_cert(certs);
+    X509_STORE_add_cert(store, crt);
 
     char n[1024];
     X509_NAME_oneline(X509_get_subject_name(crt), n, 1024);
     UM_LOG(VERB, "verifying %s", n);
 
-    if (c->cert_verify_f) {
-        int rc = c->cert_verify_f(certs, c->verify_ctx);
-        if (rc == 0) {
-            return 1;
-        } else {
-            return 0;
-        }
+    int rc = 1;
+    if (c->cert_verify_f && c->cert_verify_f(store, c->verify_ctx) != 0) {
+        UM_LOG(WARN, "verify failed for certificate[%s]", n);
+        rc = 0;
     }
-    return 0;
+    X509_STORE_free(store);
+    return rc;
 }
 
 
