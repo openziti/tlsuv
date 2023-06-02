@@ -10,4 +10,5 @@ target_include_directories(uv_link
         PRIVATE ${uvl_src}
 )
 
+set_target_properties(uv_link PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(uv_link ${TLSUV_LIBUV_LIB})

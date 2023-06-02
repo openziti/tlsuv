@@ -80,7 +80,9 @@ add_library(tlsuv STATIC
         ${tlsuv_sources}
         )
 
-set_property(TARGET tlsuv PROPERTY C_STANDARD 99)
+set_target_properties(tlsuv PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        C_STANDARD 99)
 
 target_include_directories(tlsuv
         PUBLIC
