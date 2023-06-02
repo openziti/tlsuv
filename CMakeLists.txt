@@ -94,7 +94,7 @@ target_include_directories(tlsuv
 find_package(ZLIB REQUIRED)
 
 target_link_libraries(tlsuv
-        PRIVATE llhttp::llhttp_static
+        PUBLIC llhttp::llhttp_static
         PRIVATE ${TLSUV_LIBUV_LIB}
         PUBLIC uv_link
         PRIVATE ZLIB::ZLIB
