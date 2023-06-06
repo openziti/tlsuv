@@ -284,13 +284,13 @@ static X509_STORE** process_chains(X509_STORE *store, int *count) {
         }
     }
 
+    idx = 0;
     int root_count = sk_X509_num(roots);
     X509_STORE **stores = calloc(root_count, sizeof (X509_STORE*));
     while(sk_X509_num(roots) > 0) {
         X509 *r = sk_X509_pop(roots);
         X509_STORE *s = X509_STORE_new();
         X509_STORE_add_cert(s, r);
-        X509_free(r);
 
         stores[idx++] = s;
     }
@@ -311,7 +311,6 @@ static X509_STORE** process_chains(X509_STORE *store, int *count) {
 
                 if (rc == 1) {
                     X509_STORE_add_cert(stores[n], c);
-                    X509_free(c);
                     found = 1;
                     break;
                 }
@@ -712,7 +711,6 @@ static X509* tls_set_cert_internal (SSL_CTX* ssl, X509_STORE *store) {
     STACK_OF(X509_OBJECT) *certs = X509_STORE_get0_objects(store);
     X509 *crt = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, 0));
     SSL_CTX_use_certificate(ssl, crt);
-    X509_free(crt);
 
     // rest of certs go to chain
     if (sk_X509_OBJECT_num(certs) > 1) {
