@@ -28,7 +28,7 @@ struct priv_key_s {
     struct mbedtls_pk_context pkey;
 };
 
-const char *mbedtls_error(int code);
+const char *mbedtls_error(long code);
 
 void pub_key_init(struct pub_key_s *pubkey);
 void priv_key_init(struct priv_key_s *privkey);

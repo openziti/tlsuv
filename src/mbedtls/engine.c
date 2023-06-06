@@ -76,6 +76,8 @@ struct mbedtls_engine {
 
     int ip_len;
     struct in6_addr addr;
+    int (*cert_verify_f)(void *cert, void *v_ctx);
+    void *verify_ctx;
 };
 
 static void mbedtls_set_alpn_protocols(void *ctx, const char** protos, int len);
@@ -169,9 +171,9 @@ static const char* mbedtls_version() {
     return MBEDTLS_VERSION_STRING_FULL;
 }
 
-const char *mbedtls_error(int code) {
+const char *mbedtls_error(long code) {
     static char errbuf[1024];
-    mbedtls_strerror(code, errbuf, sizeof(errbuf));
+    mbedtls_strerror((int)code, errbuf, sizeof(errbuf));
     return errbuf;
 
 }
@@ -258,7 +260,7 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
     free(seed);
 }
 
-static int verify_ip(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
+static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
     struct mbedtls_engine *eng = ctx;
 
     // mbedTLS does not verify IP address SANs, here we patch the result if we find a match
@@ -272,6 +274,22 @@ static int verify_ip(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flag
                     *flags &= ~MBEDTLS_X509_BADCERT_CN_MISMATCH;
                     break;
                 }
+            }
+        }
+    }
+
+    // app wants to verify cert on its own
+    // mark intermediate certs as trusted
+    // and call app cb for the leaf (depth == 0)
+    if (eng->cert_verify_f) {
+        if (depth > 0) {
+            *flags &= ~MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+        } else {
+            int rc = eng->cert_verify_f(crt, eng->verify_ctx);
+            if (rc == 0) {
+                *flags &= ~MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+            } else {
+                *flags |= MBEDTLS_X509_BADCERT_NOT_TRUSTED;
             }
         }
     }
@@ -294,40 +312,24 @@ tls_engine *new_mbedtls_engine(void *ctx, const char *host) {
     mbedtls_ssl_set_bio(ssl, mbed_eng, mbed_ssl_send, mbed_ssl_recv, NULL);
     engine->api = &mbedtls_engine_api;
 
+    mbedtls_ssl_set_verify(ssl, internal_cert_verify, mbed_eng);
+
     if (uv_inet_pton(AF_INET6, host, &mbed_eng->addr) == 0) {
         mbed_eng->ip_len = 16;
-        mbedtls_ssl_set_verify(ssl, verify_ip, mbed_eng);
     } else if (uv_inet_pton(AF_INET, host, &mbed_eng->addr) == 0) {
         mbed_eng->ip_len = 4;
-        mbedtls_ssl_set_verify(ssl, verify_ip, mbed_eng);
     }
+
+    mbed_eng->cert_verify_f = context->cert_verify_f;
+    mbed_eng->verify_ctx = context->verify_ctx;
 
     return engine;
-}
-
-static int cert_verify_cb(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
-    struct mbedtls_context *c = ctx;
-    if (depth > 0) {
-        *flags = (*flags) & ~MBEDTLS_X509_BADCERT_NOT_TRUSTED;
-        return 0;
-    }
-
-    if (depth == 0 && c->cert_verify_f) {
-        int rc = c->cert_verify_f(crt, c->verify_ctx);
-        if (rc == 0) {
-            *flags = (*flags) & ~MBEDTLS_X509_BADCERT_NOT_TRUSTED;
-        } else {
-            return MBEDTLS_ERR_X509_CERT_VERIFY_FAILED;
-        }
-    }
-    return 0;
 }
 
 static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx) {
     struct mbedtls_context *c = ctx->ctx;
     c->cert_verify_f = verify_f;
     c->verify_ctx = v_ctx;
-    mbedtls_ssl_conf_verify(&c->config, cert_verify_cb, c);
 }
 
 static size_t mbedtls_sig_to_asn1(const char *sig, size_t siglen, unsigned char *asn1sig) {
