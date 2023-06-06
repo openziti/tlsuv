@@ -176,7 +176,7 @@ static void tcp_src_cancel(tlsuv_src_t *sl) {
     }
 
     if (tl->conn_req) {
-        uv_tcp_close_reset((uv_tcp_t *) tl->conn_req->handle, free_handle);
+        uv_close((uv_handle_t *) tl->conn_req->handle, free_handle);
         tl->conn_req->data = NULL;
         tl->conn_req = NULL;
     }

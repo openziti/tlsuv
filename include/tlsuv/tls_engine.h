@@ -264,7 +264,7 @@ typedef struct {
      * Get error message for given code
      * @param code error code
      */
-    const char *(*strerror)(int code);
+    const char *(*strerror)(long code);
 
     /**
      * Get TLS implementation and version

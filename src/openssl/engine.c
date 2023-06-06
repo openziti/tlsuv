@@ -112,7 +112,7 @@ static X509_STORE *load_system_certs();
 
 static tls_context_api openssl_context_api = {
         .version = tls_lib_version,
-        .strerror = tls_error,
+        .strerror = (const char *(*)(long)) tls_error,
         .new_engine = new_openssl_engine,
         .free_engine = tls_free,
         .free_ctx = tls_free_ctx,
@@ -177,7 +177,7 @@ static X509_STORE * load_certs(const char *buf, size_t buf_len) {
     struct stat fstat;
     if (stat(buf, &fstat) == 0) {
         if (fstat.st_mode & S_IFREG) {
-            if (!X509_STORE_load_file(certs, buf)) {
+            if (!X509_STORE_load_locations(certs, buf, NULL)) {
                 UM_LOG(ERR, "failed to load certs from [%s]", buf);
             }
         } else {
@@ -253,29 +253,44 @@ static int verify_peer_cb(int pre_verify, X509_STORE_CTX *s) {
     return verified;
 }
 
+static int is_self_signed(X509 *cert) {
+#if OPENSSL_API_LEVEL >= 30000
+    return X509_self_signed(cert, 1);
+#else
+    X509_NAME *subj = X509_get_subject_name(cert);
+    X509_NAME *issuer = X509_get_issuer_name(cert);
+    if (X509_NAME_cmp(subj, issuer) != 0) {
+        return 0;
+    }
+
+    EVP_PKEY *pub = X509_get0_pubkey(cert);
+    return X509_verify(cert, pub);
+#endif
+}
+
 static X509_STORE** process_chains(X509_STORE *store, int *count) {
-    STACK_OF(X509) *certs = X509_STORE_get1_all_certs(store);
+    STACK_OF(X509_OBJECT ) *objects = X509_STORE_get0_objects(store);
 
     STACK_OF(X509) *roots = sk_X509_new_null();
     STACK_OF(X509) *inter = sk_X509_new_null();
 
-    while (sk_X509_num(certs) > 0) {
-        X509 *c = sk_X509_pop(certs);
-        if (X509_self_signed(c, 1)) {
+    int idx;
+    for (idx = 0; idx < sk_X509_OBJECT_num(objects); idx++) {
+        X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(objects, idx));
+        if (is_self_signed(c)) {
             sk_X509_push(roots, c);
         } else {
             sk_X509_push(inter, c);
         }
     }
 
+    idx = 0;
     int root_count = sk_X509_num(roots);
     X509_STORE **stores = calloc(root_count, sizeof (X509_STORE*));
-    int idx = 0;
     while(sk_X509_num(roots) > 0) {
         X509 *r = sk_X509_pop(roots);
         X509_STORE *s = X509_STORE_new();
         X509_STORE_add_cert(s, r);
-        X509_free(r);
 
         stores[idx++] = s;
     }
@@ -296,7 +311,6 @@ static X509_STORE** process_chains(X509_STORE *store, int *count) {
 
                 if (rc == 1) {
                     X509_STORE_add_cert(stores[n], c);
-                    X509_free(c);
                     found = 1;
                     break;
                 }
@@ -315,7 +329,6 @@ static X509_STORE** process_chains(X509_STORE *store, int *count) {
     }
     sk_X509_free(roots);
     sk_X509_free(inter);
-    sk_X509_free(certs);
     ERR_clear_error();
     *count = root_count;
     return stores;
@@ -601,14 +614,13 @@ static void tls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, vo
 
 static int tls_verify_signature(void *cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
     X509_STORE *store = cert;
-    STACK_OF(X509) *s = X509_STORE_get1_all_certs(store);
-    X509 *c = sk_X509_value(s, 0);
+    STACK_OF(X509_OBJECT ) *s = X509_STORE_get0_objects(store);
+    X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
     EVP_PKEY *pk = X509_get_pubkey(c);
     if (pk == NULL) {
         unsigned long err = ERR_peek_error();
         UM_LOG(WARN, "no pub key: %ld/%s", err, ERR_lib_error_string(err));
     }
-    sk_X509_free(s);
     return verify_signature(pk, md, data, datalen, sig, siglen);
 }
 
@@ -696,15 +708,19 @@ if ((op) != 1) { \
 
 
 static X509* tls_set_cert_internal (SSL_CTX* ssl, X509_STORE *store) {
-    STACK_OF(X509) *certs = X509_STORE_get1_all_certs(store);
-    X509 *crt = sk_X509_pop(certs);
+    STACK_OF(X509_OBJECT) *certs = X509_STORE_get0_objects(store);
+    X509 *crt = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, 0));
     SSL_CTX_use_certificate(ssl, crt);
-    X509_free(crt);
 
-    if (sk_X509_num(certs) > 0) {
-        SSL_CTX_set1_chain_cert_store(ssl, store);
+    // rest of certs go to chain
+    if (sk_X509_OBJECT_num(certs) > 1) {
+        X509_STORE *chain = X509_STORE_new();
+        // skip first one
+        for (int i = 1; i < sk_X509_OBJECT_num(certs); i++) {
+            X509_STORE_add_cert(chain, X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, i)));
+        }
+        SSL_CTX_set0_chain_cert_store(ssl, chain);
     }
-    sk_X509_free(certs);
     return crt;
 }
 
@@ -938,9 +954,9 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
 
     BIO *pembio = BIO_new(BIO_s_mem());
     X509 *c;
-    STACK_OF(X509) *s = X509_STORE_get1_all_certs(store);
-    for (int i = 0; i < sk_X509_num(s); i++) {
-        c = sk_X509_value(s, i);
+    STACK_OF(X509_OBJECT) *s = X509_STORE_get0_objects(store);
+    for (int i = 0; i < sk_X509_OBJECT_num(s); i++) {
+        c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, i));
         PEM_write_bio_X509(pembio, c);
     }
 
@@ -948,7 +964,6 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
     *pem = calloc(1, *pemlen + 1);
     BIO_read(pembio, *pem, (int)*pemlen);
 
-    sk_X509_free(s);
     BIO_free_all(pembio);
     return 0;
 }

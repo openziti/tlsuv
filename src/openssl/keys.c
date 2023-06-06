@@ -608,9 +608,11 @@ static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert) {
         return -1;
     }
     X509_STORE *store = cert;
-    STACK_OF(X509) *s = X509_STORE_get1_all_certs(store);
 
-    X509 *c = sk_X509_value(s, 0);
+    STACK_OF(X509_OBJECT) *objects = X509_STORE_get0_objects(store);
+
+    X509_OBJECT *obj = sk_X509_OBJECT_value(objects, 0);
+    X509 *c = X509_OBJECT_get0_X509(obj);
 
     X509_NAME *subj_name = X509_get_subject_name(c);
     unsigned char *subj_der = NULL;
@@ -621,7 +623,6 @@ static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert) {
 
     int rc = p11_store_key_cert(p11_key, der, derlen, (char*)subj_der, subjlen);
 
-    sk_X509_free(s);
     OPENSSL_free(der);
     OPENSSL_free(subj_der);
     return rc;
