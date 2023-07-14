@@ -3,6 +3,7 @@ ENABLE_LANGUAGE(CXX)
 find_package(Catch2 CONFIG REQUIRED)
 message("catch2 is ${Catch2_CONFIG}")
 
+FILE(COPY ${CMAKE_CURRENT_SOURCE_DIR}/testdata DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/ )
 CONFIGURE_FILE(softhsm2.conf.in ${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf)
 
 if (USE_OPENSSL)
@@ -49,6 +50,7 @@ add_executable(all_tests
         all_tests.cpp ${test_srcs})
 set_property(TARGET all_tests PROPERTY CXX_STANDARD 11)
 target_compile_options(all_tests PRIVATE ${PKCS11_OPTS})
+target_compile_definitions(all_tests PRIVATE TEST_DATA_DIR=${CMAKE_CURRENT_BINARY_DIR}/testdata)
 
 target_compile_definitions(all_tests PRIVATE
         TEST_${TLSUV_TLSLIB}

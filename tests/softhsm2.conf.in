@@ -1,6 +1,6 @@
 # SoftHSM v2 configuration file
 
-directories.tokendir = @CMAKE_CURRENT_SOURCE_DIR@/testdata/softhsm
+directories.tokendir = @CMAKE_CURRENT_BINARY_DIR@/testdata/softhsm
 objectstore.backend = file
 
 # ERROR, WARNING, INFO, DEBUG

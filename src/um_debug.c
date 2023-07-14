@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
-#include <stdio.h>
 #include <stdarg.h>
+#include <stdio.h>
 
 #include "um_debug.h"
 #include <tlsuv/tlsuv.h>
@@ -29,6 +28,7 @@ void um_log(int lvl, const char* file, unsigned int line, const char *fmt,  ...)
         va_start(argp, fmt);
         vsnprintf(logbuf, sizeof(logbuf), fmt, argp);
         log_func(lvl, file, line, logbuf);
+        va_end(argp);
     }
 }
 
