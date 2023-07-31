@@ -124,13 +124,15 @@ static int verify_ecdsa_sig(EC_KEY *ec, const EVP_MD *hash, const char* data, si
     EVP_DigestInit(digestor, hash);
     EVP_DigestUpdate(digestor, data, datalen);
     rc = EVP_DigestFinal(digestor, digest, &digest_len);
-    
-    BIGNUM *r = BN_bin2bn((const uint8_t*)sig, (int)(siglen / 2), NULL);
-    BIGNUM *s = BN_bin2bn((const uint8_t*)sig + siglen/2, (int)siglen/2, NULL);
 
-    ecdsa_sig = ECDSA_SIG_new();
-    rc = ECDSA_SIG_set0(ecdsa_sig, r, s);
-    rc = ECDSA_do_verify(digest, (int)digest_len, ecdsa_sig, ec);
+    if (rc == 1) {
+        BIGNUM *r = BN_bin2bn((const uint8_t *) sig, (int) (siglen / 2), NULL);
+        BIGNUM *s = BN_bin2bn((const uint8_t *) sig + siglen / 2, (int) siglen / 2, NULL);
+
+        ecdsa_sig = ECDSA_SIG_new();
+        ECDSA_SIG_set0(ecdsa_sig, r, s);
+        rc = ECDSA_do_verify(digest, (int) digest_len, ecdsa_sig, ec);
+    }
 
     ECDSA_SIG_free(ecdsa_sig);
     EVP_MD_CTX_free(digestor);
@@ -149,7 +151,7 @@ int verify_signature (EVP_PKEY *pk, enum hash_algo md, const char* data, size_t 
     }
     
     if (EVP_PKEY_id(pk) == EVP_PKEY_EC) {
-        const uint8_t *p = sig;
+        const uint8_t *p = (const uint8_t*)sig;
         ECDSA_SIG *ecdsa_sig = d2i_ECDSA_SIG(NULL, &p, (int) siglen);
 
         // if signature is not DER encoded try verifying it as raw ECDSA signature (EC-point)
@@ -291,6 +293,8 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
 
     EVP_PKEY *pk = NULL;
     if (!PEM_read_bio_PrivateKey(kb, &pk, NULL, NULL)) {
+        unsigned long err = ERR_get_error();
+        UM_LOG(WARN, "failed to load key: %d/%s", err, ERR_lib_error_string(err));
         rc = -1;
     } else {
         struct priv_key_s *privkey = calloc(1, sizeof(struct priv_key_s));
@@ -527,11 +531,14 @@ static ECDSA_SIG *privkey_p11_sign_sig(const unsigned char *digest, int len, con
     uint8_t sig[512];
     size_t siglen = sizeof(sig);
     int rc = p11_key_sign(p11_key, digest, len, sig, &siglen, 0);
+    if (rc != 0) {
+        return NULL;
+    }
 
     BIGNUM *r = BN_bin2bn(sig, (int)siglen/2, NULL);
 	BIGNUM *s = BN_bin2bn(sig + siglen/2, (int)siglen/2, NULL);
 	ECDSA_SIG *ecdsa_sig = ECDSA_SIG_new();
-	rc = ECDSA_SIG_set0(ecdsa_sig, r, s);
+	ECDSA_SIG_set0(ecdsa_sig, r, s);
 
     return ecdsa_sig;
 }
@@ -542,7 +549,7 @@ static int privkey_p11_rsa_enc(int msglen, const unsigned char *msg,
                                 RSA *rsa, int padding) {
     p11_key_ctx *p11_key = RSA_get_ex_data(rsa, p11_rsa_idx);
 
-    CK_MECHANISM_TYPE mech;
+    CK_MECHANISM_TYPE mech = 0;
     size_t siglen = RSA_size(rsa);
     if (padding == RSA_PKCS1_PADDING) {
         mech = CKM_RSA_PKCS;
@@ -553,7 +560,7 @@ static int privkey_p11_rsa_enc(int msglen, const unsigned char *msg,
     }
     int rc = p11_key_sign(p11_key, msg, msglen, enc, &siglen, mech);
 
-    return (int)siglen;
+    return rc != 0 ? rc : (int)siglen;
 }
 
 static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert) {

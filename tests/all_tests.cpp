@@ -47,13 +47,14 @@ int main( int argc, char* argv[] ) {
     uv_os_setenv("SOFTHSM2_CONF", xstr(HSM_CONFIG));
 #endif
     uv_gettimeofday(&start);
+    long level = DEBG;
     const char* debug = getenv("TLSUV_TEST_LOG");
     if (debug) {
         // enable logging during tests
-        long level = strtol(debug, nullptr, 10);
-        tlsuv_set_debug((int) level, test_log);
-
+        level = strtol(debug, nullptr, 10);
     }
+
+    tlsuv_set_debug((int) level, test_log);
     int result = Catch::Session().run( argc, argv );
 
     return result;
