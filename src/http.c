@@ -62,6 +62,12 @@ static const uv_link_methods_t http_methods = {
         .read_cb_override = http_read_cb
 };
 
+static const char *supported_alpn[] = {
+    "http/1.1"
+};
+
+static const int supported_apln_num = sizeof(supported_alpn)/ sizeof(*supported_alpn);
+
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     tlsuv_http_t *c = link->data;
 
@@ -174,6 +180,7 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
     switch (status) {
         case TLS_HS_COMPLETE:
             clt->connected = Connected;
+            UM_LOG(TRACE, "handshake completed with alpn[%s]", clt->engine->get_alpn(clt->engine));
             uv_async_send(&clt->proc);
             break;
 
@@ -209,6 +216,7 @@ static void make_links(tlsuv_http_t *clt, uv_link_t *conn_src) {
 
         if (!clt->engine) {
             clt->engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
+            clt->engine->set_protocols(clt->engine, supported_alpn, supported_apln_num);
         }
 
         tlsuv_tls_link_init(&clt->tls_link, clt->engine, on_tls_handshake);
