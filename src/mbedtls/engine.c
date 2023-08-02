@@ -261,7 +261,7 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
             return;
         }
         while (pCertContext = CertEnumCertificatesInStore(hCertStore, pCertContext)) {
-            mbedtls_x509_crt_parse(ca, pCertContext->pbCertEncoded, pCertContext->cbCertEncoded);
+            mbedtls_x509_crt_parse(engine->ca, pCertContext->pbCertEncoded, pCertContext->cbCertEncoded);
         }
         CertFreeCertificateContext(pCertContext);
         CertCloseStore(hCertStore, 0);
