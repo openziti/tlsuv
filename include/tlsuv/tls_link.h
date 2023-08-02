@@ -22,11 +22,11 @@ typedef void (*tls_handshake_cb)(tls_link_t *l, int status);
 struct tls_link_s {
     UV_LINK_FIELDS
 
-    tls_engine *engine;
+    tlsuv_engine_t engine;
     tls_handshake_cb hs_cb;
 };
 
 
-int tlsuv_tls_link_init(tls_link_t *tls, tls_engine *engine, tls_handshake_cb cb);
+int tlsuv_tls_link_init(tls_link_t *tls, tlsuv_engine_t engine, tls_handshake_cb cb);
 
 #endif//TLSUV_TLS_LINK_H

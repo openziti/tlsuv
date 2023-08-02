@@ -134,7 +134,7 @@ struct tlsuv_http_s {
 
     bool ssl;
     tls_context *tls;
-    tls_engine *engine;
+    tlsuv_engine_t engine;
 
     um_header_list headers;
 

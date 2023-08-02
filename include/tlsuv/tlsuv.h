@@ -57,7 +57,7 @@ struct tlsuv_stream_s {
     tls_link_t tls_link;
 
     tls_context *tls;
-    tls_engine *tls_engine;
+    tlsuv_engine_t tls_engine;
 
     char *host;
     uv_connect_t *conn_req; //a place to stash a connection request

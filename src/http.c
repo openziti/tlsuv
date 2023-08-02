@@ -178,8 +178,8 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
             break;
 
         case TLS_HS_ERROR: {
-            const char *err = tls->engine->api->strerror(tls->engine->engine);
-            UM_LOG(ERR, "handshake failed status[%d]: %s", status, tls->engine->api->strerror(tls->engine->engine));
+            const char *err = tls->engine->strerror(tls->engine);
+            UM_LOG(ERR, "handshake failed status[%d]: %s", status, tls->engine->strerror(tls->engine));
             close_connection(clt);
             fail_active_request(clt, UV_ECONNABORTED, err);
             break;
@@ -202,7 +202,7 @@ static void make_links(tlsuv_http_t *clt, uv_link_t *conn_src) {
         }
 
         if (clt->host_change) {
-            clt->tls->api->free_engine(clt->engine);
+            clt->engine->free(clt->engine);
             clt->engine = NULL;
             clt->host_change = false;
         }
@@ -423,7 +423,7 @@ int tlsuv_http_close(tlsuv_http_t *clt, tlsuv_http_close_cb close_cb) {
     close_connection(clt);
 
     if (clt->engine != NULL) {
-        clt->tls->api->free_engine(clt->engine);
+        clt->engine->free(clt->engine);
         clt->engine = NULL;
     }
     clt->tls = NULL;

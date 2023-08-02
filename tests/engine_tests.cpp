@@ -182,11 +182,15 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     tls_context *tls = default_tls_context(nullptr, 0);
     printf("tls engine: %s\n", tls->api->version());
     const char *protos[] = {
-            "h2",
-            "http1.1"
+        "foo",
+        "bar",
+        "h2",
+        "http1.1"
     };
-    tls->api->set_alpn_protocols(tls->ctx, protos, 2);
-    tls_engine *engine = tls->api->new_engine(tls->ctx, host);
+    int num_protos = sizeof(protos)/sizeof(*protos);
+//    tls->api->set_alpn_protocols(tls->ctx, protos, 2);
+    tlsuv_engine_t engine = tls->api->new_engine(tls->ctx, host);
+    engine->set_protocols(engine, protos, num_protos);
 
     SOCKET sock = socket(addr->ai_family, SOCK_STREAM, 0);
 
@@ -206,8 +210,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     size_t out_bytes = 0;
 
     do {
-        tls_handshake_state state = engine->api->handshake(engine->engine, ssl_in, in_bytes, ssl_out, &out_bytes,
-                                                           sizeof(ssl_out));
+        tls_handshake_state state = engine->handshake(engine, ssl_in, in_bytes, ssl_out, &out_bytes, sizeof(ssl_out));
 
         REQUIRE(state != TLS_HS_ERROR);
 
@@ -217,16 +220,19 @@ TEST_CASE("ALPN negotiation", "[engine]") {
         }
 
         if (out_bytes > 0) {
+            printf("hs: out bytes = %zd\n", out_bytes);
             send(sock, ssl_out, out_bytes, 0);
         }
 
         in_bytes = recv(sock, ssl_in, sizeof(ssl_in), 0);
+        printf("hs: in bytes = %zd\n", in_bytes);
+
     } while (true);
 
-    const char *alpn = engine->api->get_alpn(engine->engine);
+    const char *alpn = engine->get_alpn(engine);
     CHECK_THAT(alpn, Catch::Matches("h2"));
 
-    rc = engine->api->close(engine->engine, ssl_out, &out_bytes, sizeof(ssl_out));
+    rc = engine->close(engine, ssl_out, &out_bytes, sizeof(ssl_out));
     if (rc == 0 && out_bytes > 0)
         send(sock, ssl_out, out_bytes, 0);
 
@@ -237,6 +243,6 @@ TEST_CASE("ALPN negotiation", "[engine]") {
 #endif
 
     freeaddrinfo(addr);
-    tls->api->free_engine(engine);
+    engine->free(engine);
     tls->api->free_ctx(tls);
 }

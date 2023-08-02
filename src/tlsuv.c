@@ -122,7 +122,7 @@ static void on_tls_hs(tls_link_t *tls_link, int status) {
     if (status == TLS_HS_COMPLETE) {
         req->cb(req, 0);
     } else if (status == TLS_HS_ERROR) {
-        UM_LOG(WARN, "handshake failed: %s", tls_link->engine->api->strerror(tls_link->engine->engine));
+        UM_LOG(WARN, "handshake failed: %s", tls_link->engine->strerror(tls_link->engine));
         req->cb(req, UV_ECONNABORTED);
     } else {
         UM_LOG(WARN, "unexpected handshake status[%d]", status);
@@ -136,7 +136,8 @@ static void on_src_connect(tlsuv_src_t *src, int status, void *ctx) {
 
     if (status == 0) {
         if (clt->tls_engine != NULL) {
-            clt->tls->api->free_engine(clt->tls_engine);
+            clt->tls_engine->free(clt->tls_engine);
+            clt->tls_engine = NULL;
         }
         void *data = clt->data;
         clt->tls_engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
@@ -206,7 +207,7 @@ int tlsuv_stream_free(tlsuv_stream_t *clt) {
         clt->host = NULL;
     }
     if (clt->tls_engine) {
-        clt->tls->api->free_engine(clt->tls_engine);
+        clt->tls_engine->free(clt->tls_engine);
         clt->tls_engine = NULL;
     }
     if (clt->socket) {
