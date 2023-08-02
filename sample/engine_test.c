@@ -71,6 +71,8 @@ int main(int argc, char **argv) {
 
     tls_context *tls = default_tls_context(NULL, 0);
     tlsuv_engine_t engine = tls->api->new_engine(tls->ctx, HOST);
+    const char *alpn[] = { "http/1.1" };
+    engine->set_protocols(engine, alpn, 1);
 
     SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -108,7 +110,7 @@ int main(int argc, char **argv) {
                                                            sizeof(ssl_out));
 
         if (state == TLS_HS_COMPLETE) {
-            printf("handshake complete\n");
+            printf("handshake complete alpn[%s]\n", engine->get_alpn(engine));
             break;
         }
         else if (state == TLS_HS_ERROR) {
