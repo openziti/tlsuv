@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
     printf("ip: %s\n", ip);
 
     tls_context *tls = default_tls_context(NULL, 0);
-    tls_engine *engine = tls->api->new_engine(tls->ctx, HOST);
+    tlsuv_engine_t engine = tls->api->new_engine(tls->ctx, HOST);
 
     SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -104,7 +104,7 @@ int main(int argc, char **argv) {
 
     int i = 0;
     do {
-        tls_handshake_state state = engine->api->handshake(engine->engine, ssl_in, in_bytes, ssl_out, &out_bytes,
+        tls_handshake_state state = engine->handshake(engine, ssl_in, in_bytes, ssl_out, &out_bytes,
                                                            sizeof(ssl_out));
 
         if (state == TLS_HS_COMPLETE) {
@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
                       "User-Agent: HTTPie/1.0.2\n"
                       "\n";
 
-    engine->api->write(engine->engine, req, strlen(req), ssl_out, &out_bytes, sizeof(ssl_out));
+    engine->write(engine, req, strlen(req), ssl_out, &out_bytes, sizeof(ssl_out));
     printf("writing req=%zd bytes\n", out_bytes);
 
     send(sock, ssl_out, out_bytes, 0);
@@ -152,11 +152,11 @@ int main(int argc, char **argv) {
             in_bytes = 0;
         }
 
-        read_res = engine->api->read(engine->engine, ssl_in, in_bytes, resp, &resp_read, sizeof(resp));
+        read_res = engine->read(engine, ssl_in, in_bytes, resp, &resp_read, sizeof(resp));
         printf("%*.*s", (int) resp_read, (int) resp_read, resp);
     } while (read_res == TLS_READ_AGAIN || read_res == TLS_MORE_AVAILABLE);
 
-    engine->api->close(engine->engine, ssl_out, &out_bytes, sizeof(ssl_out));
+    engine->close(engine, ssl_out, &out_bytes, sizeof(ssl_out));
     send(sock, ssl_out, out_bytes, 0);
 
     sockClose(sock);
@@ -165,6 +165,6 @@ int main(int argc, char **argv) {
     WSACleanup();
 #endif
 
-    tls->api->free_engine(engine);
+    engine->free(engine);
     tls->api->free_ctx(tls);
 }
