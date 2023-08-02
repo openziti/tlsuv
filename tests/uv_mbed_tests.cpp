@@ -112,9 +112,15 @@ static void test_alloc(uv_handle_t *s, size_t req, uv_buf_t* b) {
 TEST_CASE("read/write","[uv-mbed]") {
     UvLoopTest test;
 
+    const char* proto[] = {
+        "foo",
+        "bar",
+        "http/1.1"
+    };
     tlsuv_stream_t mbed;
     tls_context *tls = default_tls_context(nullptr, 0);
     tlsuv_stream_init(test.loop, &mbed, tls);
+    tlsuv_stream_set_protocols(&mbed, 3, proto);
 
     struct test_ctx {
         int connect_result;
@@ -131,6 +137,10 @@ TEST_CASE("read/write","[uv-mbed]") {
     int rc = tlsuv_stream_connect(&cr, &mbed, "1.1.1.1", 443, [](uv_connect_t *r, int status) {
         REQUIRE(status == 0);
         auto c = (tlsuv_stream_t *) r->handle;
+
+        auto proto = tlsuv_stream_get_protocol(c);
+        REQUIRE(proto != nullptr);
+        CHECK_THAT(proto, Catch::Equals("http/1.1"));
 
         tlsuv_stream_read(c, test_alloc, [](uv_stream_t *s, ssize_t status, const uv_buf_t *b) {
             auto c = (tlsuv_stream_t *) s;

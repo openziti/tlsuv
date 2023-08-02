@@ -111,6 +111,18 @@ int tlsuv_stream_nodelay(tlsuv_stream_t *clt, int nodelay) {
     return tcp_src_nodelay(clt->socket, nodelay);
 }
 
+int tlsuv_stream_set_protocols(tlsuv_stream_t *clt, int count, const char *protocols[]) {
+    clt->alpn_count = count;
+    clt->alpn_protocols = protocols;
+}
+
+const char* tlsuv_stream_get_protocol(tlsuv_stream_t *clt) {
+    if (clt->tls_engine) {
+        return clt->tls_engine->get_alpn(clt->tls_engine);
+    }
+    return NULL;
+}
+
 static void on_tls_hs(tls_link_t *tls_link, int status) {
     tlsuv_stream_t *stream = tls_link->data;
 
@@ -141,6 +153,9 @@ static void on_src_connect(tlsuv_src_t *src, int status, void *ctx) {
         }
         void *data = clt->data;
         clt->tls_engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
+        if (clt->alpn_protocols && clt->alpn_count > 0) {
+            clt->tls_engine->set_protocols(clt->tls_engine, clt->alpn_protocols, clt->alpn_count);
+        }
         tlsuv_tls_link_init(&clt->tls_link, clt->tls_engine, on_tls_hs);
         uv_link_init((uv_link_t *) clt, &mbed_methods);
         clt->data = data;
