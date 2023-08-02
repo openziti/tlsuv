@@ -34,6 +34,8 @@ typedef void(*tlsuv_log_func)(int level, const char *file, unsigned int line, co
 void tlsuv_set_debug(int level, tlsuv_log_func output_f);
 
 int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls);
+int tlsuv_stream_set_protocols(tlsuv_stream_t *clt, int num, const char *protocols[]);
+const char* tlsuv_stream_get_protocol(tlsuv_stream_t *clt);
 int tlsuv_stream_keepalive(tlsuv_stream_t *clt, int keepalive, unsigned int delay);
 int tlsuv_stream_nodelay(tlsuv_stream_t *clt, int nodelay);
 
@@ -58,6 +60,8 @@ struct tlsuv_stream_s {
 
     tls_context *tls;
     tlsuv_engine_t tls_engine;
+    int alpn_count;
+    const char **alpn_protocols;
 
     char *host;
     uv_connect_t *conn_req; //a place to stash a connection request
