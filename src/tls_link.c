@@ -44,7 +44,7 @@ static const int TLS_BUF_SZ = 32 * 1024;
 
 void tls_alloc(uv_link_t *l, size_t suggested, uv_buf_t *buf) {
     tls_link_t *tls_link = (tls_link_t *) l;
-    tls_handshake_state st = tls_link->engine->api->handshake_state(tls_link->engine->engine);
+    tls_handshake_state st = tls_link->engine->handshake_state(tls_link->engine);
     switch (st) {
         case TLS_HS_BEFORE:
         case TLS_HS_CONTINUE:
@@ -81,12 +81,12 @@ static void tls_write_cb(uv_link_t *source, int status, void *arg) {
 static int tls_read_start(uv_link_t *l) {
     tls_link_t *tls = (tls_link_t *) l;
 
-    tls_handshake_state st = tls->engine->api->handshake_state(tls->engine->engine);
+    tls_handshake_state st = tls->engine->handshake_state(tls->engine);
     UM_LOG(TRACE, "TLS(%p) starting handshake(st = %d)", tls, st);
     if (st == TLS_HS_CONTINUE) {
         UM_LOG(TRACE, "TLS(%p) is in the middle of handshake, resetting", tls);
-        if (tls->engine->api->reset) {
-            tls->engine->api->reset(tls->engine->engine);
+        if (tls->engine->reset) {
+            tls->engine->reset(tls->engine);
         }
     }
 
@@ -94,7 +94,7 @@ static int tls_read_start(uv_link_t *l) {
 
     uv_buf_t buf;
     buf.base = malloc(TLS_BUF_SZ);
-    st = tls->engine->api->handshake(tls->engine->engine, NULL, 0, buf.base, &buf.len,
+    st = tls->engine->handshake(tls->engine, NULL, 0, buf.base, &buf.len,
                                                          TLS_BUF_SZ);
     UM_LOG(TRACE, "TLS(%p) starting handshake(sending %zd bytes, st = %d)", tls, buf.len, st);
 
@@ -106,13 +106,13 @@ static int tls_read_start(uv_link_t *l) {
 static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     tls_link_t *tls = (tls_link_t *) l;
 
-    tls_handshake_state hs_state = tls->engine->api->handshake_state(tls->engine->engine);
+    tls_handshake_state hs_state = tls->engine->handshake_state(tls->engine);
     UM_LOG(TRACE, "TLS(%p)[%d]: %zd", tls, hs_state, nread);
 
     if (nread < 0) {
         UM_LOG(ERR, "TLS read %d(%s)", nread, uv_strerror(nread));
         if (hs_state == TLS_HS_CONTINUE) {
-            tls->engine->api->reset(tls->engine->engine);
+            tls->engine->reset(tls->engine);
             tls->hs_cb(tls, TLS_HS_ERROR);
             free(b->base);
         } else {
@@ -131,7 +131,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         uv_buf_t buf;
         buf.base = malloc(TLS_BUF_SZ);
         tls_handshake_state st =
-                tls->engine->api->handshake(tls->engine->engine, b->base, nread, buf.base, &buf.len, TLS_BUF_SZ);
+                tls->engine->handshake(tls->engine, b->base, nread, buf.base, &buf.len, TLS_BUF_SZ);
 
         UM_LOG(TRACE, "TLS(%p) continuing handshake(sending %zd bytes, st = %d)", tls, buf.len, st);
         if (buf.len > 0) {
@@ -153,8 +153,8 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         }
         else if (st == TLS_HS_ERROR) {
             const char *err = NULL;
-            if (tls->engine->api->strerror) {
-                err = tls->engine->api->strerror(tls->engine->engine);
+            if (tls->engine->strerror) {
+                err = tls->engine->strerror(tls->engine);
             }
             UM_LOG(ERR, "TLS(%p) handshake error %s", tls, err);
             tls->hs_cb(tls, st);
@@ -170,7 +170,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         enum TLS_RESULT rc = TLS_MORE_AVAILABLE;
         while(rc == TLS_MORE_AVAILABLE || rc == TLS_READ_AGAIN) {
             ssize_t out_bytes = 0;
-            rc = tls->engine->api->read(tls->engine->engine, inptr, inlen, b->base, (size_t *)&out_bytes, b->len);
+            rc = tls->engine->read(tls->engine, inptr, inlen, b->base, (size_t *)&out_bytes, b->len);
             UM_LOG(TRACE, "TLS(%p) produced %zd application byte (rc=%d)", tls, out_bytes, rc);
 
             switch (rc) {
@@ -201,7 +201,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
                 case TLS_HAS_WRITE: {
                     uv_buf_t buf;
                     buf.base = malloc(TLS_BUF_SZ);
-                    int tls_rc = tls->engine->api->write(tls->engine->engine, NULL, 0, buf.base, &buf.len, TLS_BUF_SZ);
+                    int tls_rc = tls->engine->write(tls->engine, NULL, 0, buf.base, &buf.len, TLS_BUF_SZ);
                     uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_free_cb, buf.base);
                     break;
                 }
@@ -214,7 +214,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
                     if (rc != TLS_ERR) {
                         UM_LOG(ERR, "aborting after unexpected TLS engine result: %d", rc);
                     } else {
-                        UM_LOG(ERR, "aborting after TLS engine error: %s", tls->engine->api->strerror(tls->engine->engine));
+                        UM_LOG(ERR, "aborting after TLS engine error: %s", tls->engine->strerror(tls->engine));
                     }
                     uv_link_propagate_read_cb(l, UV_ECONNABORTED, b);
                     break;
@@ -232,9 +232,9 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
     uv_buf_t buf = uv_buf_init(NULL, 0);
     int tls_rc = 0;
     for (int i = 0; i < nbufs; i++) {
-        tls_rc = tls->engine->api->write(tls->engine->engine, bufs[i].base, bufs[i].len, NULL, &buf.len, 0);
+        tls_rc = tls->engine->write(tls->engine, bufs[i].base, bufs[i].len, NULL, &buf.len, 0);
         if (tls_rc < 0) {
-            UM_LOG(ERR, "TLS(%p) engine failed to wrap: %d(%s)", tls, tls_rc, tls->engine->api->strerror(tls->engine->engine));
+            UM_LOG(ERR, "TLS(%p) engine failed to wrap: %d(%s)", tls, tls_rc, tls->engine->strerror(tls->engine));
             free(buf.base);
             return tls_rc;
         }
@@ -243,9 +243,9 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
 
     if (tls_rc > 0) {
         buf.base = malloc(tls_rc);
-        tls_rc = tls->engine->api->write(tls->engine->engine, NULL, 0, buf.base, &buf.len, tls_rc);
+        tls_rc = tls->engine->write(tls->engine, NULL, 0, buf.base, &buf.len, tls_rc);
         if (tls_rc < 0) {
-            UM_LOG(ERR, "TLS(%p) engine failed to wrap: %d(%s)", tls, tls_rc, tls->engine->api->strerror(tls->engine->engine));
+            UM_LOG(ERR, "TLS(%p) engine failed to wrap: %d(%s)", tls, tls_rc, tls->engine->strerror(tls->engine));
             free(buf.base);
             return tls_rc;
         }
@@ -264,13 +264,13 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
 static void tls_close(uv_link_t *l, uv_link_t *source, uv_link_close_cb close_cb) {
     UM_LOG(TRACE, "closing TLS link");
     tls_link_t *tls = (tls_link_t *) l;
-    if (tls->engine->api->reset) {
-        tls->engine->api->reset(tls->engine->engine);
+    if (tls->engine->reset) {
+        tls->engine->reset(tls->engine);
     }
     close_cb(source);
 }
 
-int tlsuv_tls_link_init(tls_link_t *tls, tls_engine *engine, tls_handshake_cb cb) {
+int tlsuv_tls_link_init(tls_link_t *tls, tlsuv_engine_t engine, tls_handshake_cb cb) {
     uv_link_init((uv_link_t *) tls, &tls_methods);
     tls->engine = engine;
     tls->hs_cb = cb;

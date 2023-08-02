@@ -442,7 +442,7 @@ static void on_ws_close(tlsuv_websocket_t *ws) {
         ws->host = NULL;
     }
     if (ws->tls && ws->tls_link.engine) {
-        ws->tls->api->free_engine(ws->tls_link.engine);
+        ws->tls_link.engine->free(ws->tls_link.engine);
         ws->tls_link.engine = NULL;
     }
     if (ws->src) {

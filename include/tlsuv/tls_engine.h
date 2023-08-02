@@ -48,13 +48,17 @@ enum hash_algo {
     hash_SHA512
 };
 
-typedef struct {
+typedef struct tlsuv_engine_s *tlsuv_engine_t;
 
-    tls_handshake_state (*handshake_state)(void *engine);
+struct tlsuv_engine_s {
+
+    void (*set_protocols)(tlsuv_engine_t self, const char **protocols, int len);
+
+    tls_handshake_state (*handshake_state)(tlsuv_engine_t self);
 
     /**
      * Initiates/continues TLS handshake.
-     * @param engine
+     * @param self
      * @param in data received from TSL peer
      * @param in_bytes number of bytes in inbound buffer
      * @param out data to be send to TLS peer
@@ -62,21 +66,21 @@ typedef struct {
      * @param maxout outbound buffer size
      */
     tls_handshake_state
-    (*handshake)(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
+    (*handshake)(tlsuv_engine_t self, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
 
     /**
      * Returns negotiated ALPN
-     * @param engine
+     * @param self
      */
-    const char* (*get_alpn)(void *engine);
+    const char* (*get_alpn)(tlsuv_engine_t self);
     /**
      * Genereate TSL close notify.
-     * @param engine
+     * @param self
      * @param out outbound buffer
      * @param out_bytes number of outbound bytes written
      * @param maxout size of outbound buffer
      */
-    int (*close)(void *engine, char *out, size_t *out_bytes, size_t maxout);
+    int (*close)(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout);
 
     /**
       * wraps application data into ssl stream format, out bound buffer contains bytes to be sent to TSL peer
@@ -87,7 +91,7 @@ typedef struct {
       * @param out_bytes
       * @param maxout
       */
-    int (*write)(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
+    int (*write)(tlsuv_engine_t self, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
 
     /**
      * process bytes received from TLS peer. Application data is placed in out buffer.
@@ -98,21 +102,22 @@ typedef struct {
      * @param out_bytes number of bytes received
      * @param maxout size of out buffer
      */
-    int (*read)(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
+    int (*read)(tlsuv_engine_t self, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
 
-    const char* (*strerror)(void *engine);
+    const char* (*strerror)(tlsuv_engine_t engine);
 
     /**
      * resets state of the engine so it can be used on the next connection.
      * @param engine
      */
-    int (*reset)(void *engine);
-} tls_engine_api;
+    int (*reset)(tlsuv_engine_t self);
 
-typedef struct {
-    void *engine;
-    tls_engine_api *api;
-} tls_engine;
+    /**
+     * frees the engine
+     * @param self
+     */
+    void (*free)(tlsuv_engine_t self);
+};
 
 typedef struct tls_context_s tls_context;
 typedef struct tlsuv_public_key_s *tlsuv_public_key_t;
@@ -144,15 +149,11 @@ struct tlsuv_private_key_s {
 
 typedef struct {
     /* creates new TLS engine for a host */
-    tls_engine *(*new_engine)(void *ctx, const char *host);
-
-    void (*free_engine)(tls_engine *);
+    tlsuv_engine_t (*new_engine)(void *ctx, const char *host);
 
     void (*free_ctx)(tls_context *ctx);
 
     void (*free_cert)(tls_cert *cert);
-
-    void (*set_alpn_protocols)(void *ctx, const char **protocols, int len);
 
     /**
      * (Optional): if you bring your own engine this is probably not needed.

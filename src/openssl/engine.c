@@ -55,6 +55,7 @@ struct openssl_ctx {
 };
 
 struct openssl_engine {
+    struct tlsuv_engine_s api;
     SSL *ssl;
     char *alpn;
     BIO *in;
@@ -66,28 +67,28 @@ static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t ca
 static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len);
 static int tls_set_own_key(void *ctx, tlsuv_private_key_t key);
 
-tls_engine *new_openssl_engine(void *ctx, const char *host);
-static void tls_set_alpn_protocols(void *ctx, const char **protos, int len);
+tlsuv_engine_t new_openssl_engine(void *ctx, const char *host);
+static void set_protocols(tlsuv_engine_t self, const char** protocols, int len);
 
-static tls_handshake_state tls_hs_state(void *engine);
+static tls_handshake_state tls_hs_state(tlsuv_engine_t engine);
 static tls_handshake_state
-tls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
+tls_continue_hs(tlsuv_engine_t self, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
 
-static const char* tls_get_alpn(void *engine);
+static const char* tls_get_alpn(tlsuv_engine_t self);
 
-static int tls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
+static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
 
 static int
-tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
+tls_read(tlsuv_engine_t self, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
 
-static int tls_close(void *engine, char *out, size_t *out_bytes, size_t maxout);
+static int tls_close(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout);
 
-static int tls_reset(void *engine);
+static int tls_reset(tlsuv_engine_t self);
 
 static const char* tls_lib_version();
-static const char *tls_eng_error(void *eng);
+static const char *tls_eng_error(tlsuv_engine_t self);
 
-static void tls_free(tls_engine *engine);
+static void tls_free(tlsuv_engine_t self);
 static void tls_free_ctx(tls_context *ctx);
 static void tls_free_cert(tls_cert *cert);
 
@@ -114,13 +115,11 @@ static tls_context_api openssl_context_api = {
         .version = tls_lib_version,
         .strerror = (const char *(*)(long)) tls_error,
         .new_engine = new_openssl_engine,
-        .free_engine = tls_free,
         .free_ctx = tls_free_ctx,
         .free_cert = tls_free_cert,
         .set_own_cert = tls_set_own_cert,
         .set_own_key = tls_set_own_key,
         .set_cert_verify = tls_set_cert_verify,
-        .set_alpn_protocols = tls_set_alpn_protocols,
         .verify_signature =  tls_verify_signature,
         .parse_pkcs7_certs = parse_pkcs7_certs,
         .write_cert_to_pem = write_cert_pem,
@@ -133,15 +132,17 @@ static tls_context_api openssl_context_api = {
 };
 
 
-static tls_engine_api openssl_engine_api = {
-        .handshake_state = tls_hs_state,
-        .handshake = tls_continue_hs,
-        .get_alpn = tls_get_alpn,
-        .close = tls_close,
-        .write = tls_write,
-        .read = tls_read,
-        .reset = tls_reset,
-        .strerror = tls_eng_error
+static struct tlsuv_engine_s openssl_engine_api = {
+    .set_protocols = set_protocols,
+    .handshake_state = tls_hs_state,
+    .handshake = tls_continue_hs,
+    .get_alpn = tls_get_alpn,
+    .close = tls_close,
+    .write = tls_write,
+    .read = tls_read,
+    .reset = tls_reset,
+    .free = tls_free,
+    .strerror = tls_eng_error,
 };
 
 static const char* tls_lib_version() {
@@ -154,8 +155,8 @@ const char *tls_error(unsigned long code) {
     return errbuf;
 }
 
-static const char *tls_eng_error(void *eng) {
-    struct openssl_engine *e = eng;
+static const char *tls_eng_error(tlsuv_engine_t self) {
+    struct openssl_engine *e = (struct openssl_engine *)self;
     return tls_error(e->error);
 }
 
@@ -558,28 +559,44 @@ void info_cb(const SSL *s, int where, int ret) {
     }
 }
 
-tls_engine *new_openssl_engine(void *ctx, const char *host) {
+tlsuv_engine_t new_openssl_engine(void *ctx, const char *host) {
     struct openssl_ctx *context = ctx;
 
-    tls_engine *engine = calloc(1, sizeof(tls_engine));
-    struct openssl_engine *eng = calloc(1, sizeof(struct openssl_engine));
-    engine->engine = eng;
-    eng->ssl = SSL_new(context->ctx);
-    eng->in = BIO_new(BIO_s_mem());
-    eng->out = BIO_new(BIO_s_mem());
-    SSL_set_bio(eng->ssl, eng->in, eng->out);
-    SSL_set_tlsext_host_name(eng->ssl, host);
-    SSL_set1_host(eng->ssl, host);
-    SSL_set_connect_state(eng->ssl);
-    engine->api = &openssl_engine_api;
+    struct openssl_engine *engine = calloc(1, sizeof(struct openssl_engine));
+    engine->api = openssl_engine_api;
 
-    if (context->alpn_protocols) {
-        SSL_set_alpn_protos(eng->ssl, context->alpn_protocols, strlen((char*)context->alpn_protocols));
+    engine->ssl = SSL_new(context->ctx);
+    engine->in = BIO_new(BIO_s_mem());
+    engine->out = BIO_new(BIO_s_mem());
+    SSL_set_bio(engine->ssl, engine->in, engine->out);
+    SSL_set_tlsext_host_name(engine->ssl, host);
+    SSL_set1_host(engine->ssl, host);
+    SSL_set_connect_state(engine->ssl);
+
+    SSL_set_app_data(engine->ssl, engine);
+
+    return &engine->api;
+}
+
+static void set_protocols(tlsuv_engine_t self, const char** protocols, int len) {
+    struct openssl_engine *e = (struct openssl_engine *)self;
+
+    size_t protolen = 0;
+    for (int i=0; i < len; i++) {
+        protolen += strlen(protocols[i]) + 1;
     }
 
-    SSL_set_app_data(eng->ssl, eng);
-
-    return engine;
+    unsigned char *alpn_protocols = malloc(protolen + 1);
+    unsigned char *p = alpn_protocols;
+    for (int i=0; i < len; i++) {
+        size_t plen = strlen(protocols[i]);
+        *p++ = (unsigned char)plen;
+        strncpy((char*)p, protocols[i], plen);
+        p += plen;
+    }
+    *p = 0;
+    SSL_set_alpn_protos(e->ssl, alpn_protocols, strlen((char*)alpn_protocols));
+    free(alpn_protocols);
 }
 
 static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
@@ -645,8 +662,8 @@ static void tls_free_ctx(tls_context *ctx) {
     free(ctx);
 }
 
-static int tls_reset(void *engine) {
-    struct openssl_engine *e = engine;
+static int tls_reset(tlsuv_engine_t self) {
+    struct openssl_engine *e = (struct openssl_engine *)self;
     ERR_clear_error();
 
     if (!SSL_clear(e->ssl)) {
@@ -657,15 +674,14 @@ static int tls_reset(void *engine) {
     return 0;
 }
 
-static void tls_free(tls_engine *engine) {
-    struct openssl_engine *e = engine->engine;
+static void tls_free(tlsuv_engine_t self) {
+    struct openssl_engine *e = (struct openssl_engine *)self;
     SSL_free(e->ssl);
 
     if (e->alpn) {
         free(e->alpn);
     }
     free(e);
-    free(engine);
 }
 
 static void tls_free_cert(tls_cert *cert) {
@@ -674,29 +690,6 @@ static void tls_free_cert(tls_cert *cert) {
         X509_STORE_free(s);
     }
     *cert = NULL;
-}
-
-static void tls_set_alpn_protocols(void *ctx, const char **protos, int len) {
-    struct openssl_ctx *c = ctx;
-
-    if (c->alpn_protocols) {
-        free(c->alpn_protocols);
-    }
-
-    size_t protolen = 0;
-    for (int i=0; i < len; i++) {
-        protolen += strlen(protos[i]) + 1;
-    }
-
-    c->alpn_protocols = malloc(protolen + 1);
-    unsigned char *p = c->alpn_protocols;
-    for (int i=0; i < len; i++) {
-        size_t plen = strlen(protos[i]);
-        *p++ = (unsigned char)plen;
-        strncpy((char*)p, protos[i], plen);
-        p += plen;
-    }
-    *p = 0;
 }
 
 #define SSL_OP_CHECK(op, desc) do{ \
@@ -769,7 +762,7 @@ static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len) {
 }
 
 
-static tls_handshake_state tls_hs_state(void *engine) {
+static tls_handshake_state tls_hs_state(tlsuv_engine_t engine) {
     struct openssl_engine *eng = (struct openssl_engine *) engine;
     OSSL_HANDSHAKE_STATE state = SSL_get_state(eng->ssl);
     switch (state) {
@@ -781,8 +774,8 @@ static tls_handshake_state tls_hs_state(void *engine) {
 
 
 static tls_handshake_state
-tls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout) {
-    struct openssl_engine *eng = (struct openssl_engine *) engine;
+tls_continue_hs(tlsuv_engine_t self, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout) {
+    struct openssl_engine *eng = (struct openssl_engine *) self;
     if (in_bytes > 0) {
         BIO_write(eng->in, (const unsigned char *)in, (int)in_bytes);
     }
@@ -817,8 +810,8 @@ tls_continue_hs(void *engine, char *in, size_t in_bytes, char *out, size_t *out_
     }
 }
 
-static const char* tls_get_alpn(void *engine) {
-    struct openssl_engine *eng = (struct openssl_engine *) engine;
+static const char* tls_get_alpn(tlsuv_engine_t self) {
+    struct openssl_engine *eng = (struct openssl_engine *) self;
     const unsigned char *proto;
     unsigned int protolen;
     SSL_get0_alpn_selected(eng->ssl, &proto, &protolen);
@@ -828,8 +821,8 @@ static const char* tls_get_alpn(void *engine) {
     return eng->alpn;
 }
 
-static int tls_write(void *engine, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout) {
-    struct openssl_engine *eng = (struct openssl_engine *) engine;
+static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout) {
+    struct openssl_engine *eng = (struct openssl_engine *) self;
     ERR_clear_error();
 
     size_t wrote = 0;
@@ -853,8 +846,8 @@ static int tls_write(void *engine, const char *data, size_t data_len, char *out,
 
 
 static int
-tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout) {
-    struct openssl_engine *eng = (struct openssl_engine *) engine;
+tls_read(tlsuv_engine_t self, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout) {
+    struct openssl_engine *eng = (struct openssl_engine *) self;
     if (ssl_in_len > 0 && ssl_in != NULL) {
         BIO_write(eng->in, (const unsigned char *)ssl_in, (int)ssl_in_len);
     }
@@ -900,8 +893,8 @@ tls_read(void *engine, const char *ssl_in, size_t ssl_in_len, char *out, size_t 
     return BIO_ctrl_pending(eng->out) > 0 ? TLS_HAS_WRITE : TLS_OK;
 }
 
-static int tls_close(void *engine, char *out, size_t *out_bytes, size_t maxout) {
-    struct openssl_engine *eng = (struct openssl_engine *) engine;
+static int tls_close(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout) {
+    struct openssl_engine *eng = (struct openssl_engine *) self;
     ERR_clear_error();
 
     int rc = SSL_shutdown(eng->ssl);
@@ -971,7 +964,7 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
 static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...) {
     struct priv_key_s *privkey = (struct priv_key_s *) key;
     int ret = 0;
-    const char* op = "";
+    const char* op;
     EVP_PKEY *pk = privkey->pkey;
     X509_REQ *req = X509_REQ_new();
     X509_NAME *subj = X509_REQ_get_subject_name(req);
