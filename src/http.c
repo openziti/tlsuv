@@ -205,7 +205,7 @@ static void make_links(tlsuv_http_t *clt, uv_link_t *conn_src) {
     if (clt->ssl) {
         if (clt->tls == NULL) {
             clt->tls = get_default_tls();
-            UM_LOG(VERB, "using TLS[%s]", clt->tls->api->version());
+            UM_LOG(VERB, "using TLS[%s]", clt->tls->version());
         }
 
         if (clt->host_change) {
@@ -215,7 +215,7 @@ static void make_links(tlsuv_http_t *clt, uv_link_t *conn_src) {
         }
 
         if (!clt->engine) {
-            clt->engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
+            clt->engine = clt->tls->new_engine(clt->tls, clt->host);
             clt->engine->set_protocols(clt->engine, supported_alpn, supported_apln_num);
         }
 

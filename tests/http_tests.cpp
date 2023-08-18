@@ -56,7 +56,7 @@ public:
     }
 
     ~testServer() {
-        tls->api->free_ctx(tls);
+        tls->free_ctx(tls);
     }
 private:
     tls_context* tls;
@@ -329,9 +329,9 @@ TEST_CASE("pkcs11_client_cert_test","[http]") {
 
         std::string keyName = "test-" + keyType;
         tlsuv_private_key_t pk;
-        int rc = tls->api->load_pkcs11_key(&pk, to_str(HSM_LIB), nullptr, "2222", nullptr, keyName.c_str());
+        int rc = tls->load_pkcs11_key(&pk, to_str(HSM_LIB), nullptr, "2222", nullptr, keyName.c_str());
         REQUIRE(rc == 0);
-        CHECK(tls->api->set_own_key(tls->ctx, pk) == 0);
+        CHECK(tls->set_own_key(tls, pk) == 0);
 
         test.run();
 
@@ -342,7 +342,7 @@ TEST_CASE("pkcs11_client_cert_test","[http]") {
 
     tlsuv_http_close(&clt, nullptr);
     if (tls)
-        tls->api->free_ctx(tls);
+        tls->free_ctx(tls);
 }
 #endif
 
@@ -435,10 +435,12 @@ TEST_CASE("client_cert_test","[http]") {
                       "GTH3fhaM/pZZGdIC75x/69Y=\n"
                       "-----END PRIVATE KEY-----";
         tlsuv_private_key_t pk;
-        int rc = tls->api->load_key(&pk, key, strlen(key) + 1);
+        int rc = tls->load_key(&pk, key, strlen(key) + 1);
         REQUIRE(rc == 0);
-        CHECK(tls->api->set_own_cert(tls->ctx, cert, strlen(cert) + 1) == 0);
-        CHECK(tls->api->set_own_key(tls->ctx, pk) == 0);
+        tls_cert c = nullptr;
+        CHECK(tls->load_cert(&c, cert, strlen(cert)) == 0);
+        CHECK(tls->set_own_cert(tls, c) == 0);
+        CHECK(tls->set_own_key(tls, pk) == 0);
 
         test.run();
 
@@ -450,7 +452,7 @@ TEST_CASE("client_cert_test","[http]") {
 
     tlsuv_http_close(&clt, nullptr);
     if (tls)
-        tls->api->free_ctx(tls);
+        tls->free_ctx(tls);
 }
 
 const int ONE_SECOND = 1000000;
@@ -740,7 +742,7 @@ typedef struct verify_ctx_s {
 int cert_verify(tls_cert crt, void *ctx) {
     auto vtx = (verify_ctx *)ctx;
 
-    int rc = vtx->tls->api->verify_signature(crt, hash_SHA256, vtx->data, vtx->datalen, vtx->sig, vtx->siglen);
+    int rc = vtx->tls->verify_signature(crt, hash_SHA256, vtx->data, vtx->datalen, vtx->sig, vtx->siglen);
     return rc;
 }
 
@@ -805,7 +807,7 @@ TEST_CASE("TLS verify with JWT", "[http]") {
     vtx.datalen = dot - jwt;
     tlsuv_base64url_decode(dot + 1, &vtx.sig, &vtx.siglen);
 
-    tls->api->set_cert_verify(tls, cert_verify, &vtx);
+    tls->set_cert_verify(tls, cert_verify, &vtx);
     tlsuv_http_init(test.loop, &clt, "https://demo4.ziti.netfoundry.io");
     tlsuv_http_set_ssl(&clt, tls);
 
@@ -820,7 +822,7 @@ TEST_CASE("TLS verify with JWT", "[http]") {
     tlsuv_http_close(&clt, nullptr);
 
     free(vtx.sig);
-    tls->api->free_ctx(tls);
+    tls->free_ctx(tls);
 }
 
 TEST_CASE("TLS to IP address", "[http]") {
