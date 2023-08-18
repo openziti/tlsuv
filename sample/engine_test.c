@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
     printf("ip: %s\n", ip);
 
     tls_context *tls = default_tls_context(NULL, 0);
-    tlsuv_engine_t engine = tls->api->new_engine(tls->ctx, HOST);
+    tlsuv_engine_t engine = tls->new_engine(tls, HOST);
     const char *alpn[] = { "http/1.1" };
     engine->set_protocols(engine, alpn, 1);
 
@@ -168,5 +168,5 @@ int main(int argc, char **argv) {
 #endif
 
     engine->free(engine);
-    tls->api->free_ctx(tls);
+    tls->free_ctx(tls);
 }

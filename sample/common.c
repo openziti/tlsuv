@@ -28,7 +28,7 @@ void logger(int level, const char *file, unsigned int line, const char *msg) {
 
 void resp_cb(tlsuv_http_resp_t *resp, void *data) {
     if (resp->req->client->tls) {
-            printf("Using %s\n", resp->req->client->tls->api->version());
+            printf("Using %s\n", resp->req->client->tls->version());
     }
     if (resp->code < 0) {
         fprintf(stderr, "ERROR: %d(%s)", resp->code, uv_strerror(resp->code));
