@@ -147,7 +147,7 @@ struct tlsuv_private_key_s {
     TLSUV_PRIVKEY_API
 };
 
-typedef struct {
+struct tls_context_s {
     /* creates new TLS engine for a host */
     tlsuv_engine_t (*new_engine)(void *ctx, const char *host);
 
@@ -159,7 +159,7 @@ typedef struct {
      * (Optional): if you bring your own engine this is probably not needed.
      * This method is provided to set client/server side cert on the default TLS context.
      */
-    int (*set_own_cert)(void *ctx, const char *cert_buf, size_t cert_len);
+    int (*set_own_cert)(tls_context *ctx, tls_cert cer);
 
     /**
      * set client auth key.
@@ -167,7 +167,7 @@ typedef struct {
      * It also sets client certificate if the key has associated cert (pkcs11 keys)
      * @param key
      */
-    int (*set_own_key)(void *ctx, tlsuv_private_key_t key);
+    int (*set_own_key)(tls_context *ctx, tlsuv_private_key_t key);
 
     /**
      * Sets custom server cert validation function.
@@ -272,11 +272,6 @@ typedef struct {
      */
      const char *(*version)();
 
-} tls_context_api;
-
-struct tls_context_s {
-    void *ctx;
-    tls_context_api *api;
 };
 
 typedef tls_context *(*tls_context_factory)(const char* ca, size_t ca_len);

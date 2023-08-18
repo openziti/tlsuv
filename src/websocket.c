@@ -159,7 +159,7 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
     req->cb = conn_cb;
 
     if (ws->tls != NULL) {
-        tlsuv_tls_link_init(&ws->tls_link, ws->tls->api->new_engine(ws->tls->ctx, host), tls_hs_cb);
+        tlsuv_tls_link_init(&ws->tls_link, ws->tls->new_engine(ws->tls, host), tls_hs_cb);
     }
 
     const char *path = DEFAULT_PATH;

@@ -47,7 +47,7 @@ static tls_context *DEFAULT_TLS = NULL;
 
 static void free_default_tls() {
     if (DEFAULT_TLS) {
-        DEFAULT_TLS->api->free_ctx(DEFAULT_TLS);
+        DEFAULT_TLS->free_ctx(DEFAULT_TLS);
         DEFAULT_TLS = NULL;
     }
 }
@@ -152,7 +152,7 @@ static void on_src_connect(tlsuv_src_t *src, int status, void *ctx) {
             clt->tls_engine = NULL;
         }
         void *data = clt->data;
-        clt->tls_engine = clt->tls->api->new_engine(clt->tls->ctx, clt->host);
+        clt->tls_engine = clt->tls->new_engine(clt->tls, clt->host);
         if (clt->alpn_protocols && clt->alpn_count > 0) {
             clt->tls_engine->set_protocols(clt->tls_engine, clt->alpn_protocols, clt->alpn_count);
         }

@@ -52,7 +52,7 @@ TEST_CASE("uv-mbed connect fail", "[uv-mbed]") {
     }
 
     tlsuv_stream_free(&mbed);
-    tls->api->free_ctx(tls);
+    tls->free_ctx(tls);
 }
 
 TEST_CASE("cancel connect", "[uv-mbed]") {
@@ -101,7 +101,7 @@ TEST_CASE("cancel connect", "[uv-mbed]") {
     CHECK(test_ctx.connect_result == UV_ECANCELED);
 
     tlsuv_stream_free(&mbed);
-    tls->api->free_ctx(tls);
+    tls->free_ctx(tls);
 }
 
 static void test_alloc(uv_handle_t *s, size_t req, uv_buf_t* b) {
@@ -177,5 +177,5 @@ accept: application/dns-json
 
     tlsuv_stream_free(&mbed);
 
-    tls->api->free_ctx(tls);
+    tls->free_ctx(tls);
 }

@@ -63,6 +63,7 @@ const char *const caFiles[] = {
 #define NUM_CAFILES (sizeof(caFiles) / sizeof(char *))
 
 struct mbedtls_context {
+    tls_context api;
 //    mbedtls_ssl_config config;
     char *ca;
     size_t ca_len;
@@ -93,8 +94,8 @@ struct mbedtls_engine {
 };
 
 static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** protos, int len);
-static int mbedtls_set_own_key(void *ctx, tlsuv_private_key_t key);
-static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len);
+static int mbedtls_set_own_key(tls_context *ctx, tlsuv_private_key_t key);
+static int mbedtls_set_own_cert(tls_context *ctx, tls_cert cert);
 static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
             const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
 
@@ -140,7 +141,7 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
 
 static int mbedtls_load_cert(tls_cert *c, const char *cert, size_t certlen);
 
-static tls_context_api mbedtls_context_api = {
+static tls_context mbedtls_context_api = {
         .version = mbedtls_version,
         .strerror = mbedtls_error,
         .new_engine = new_mbedtls_engine,
@@ -197,18 +198,15 @@ static const char *mbedtls_eng_error(tlsuv_engine_t eng) {
 }
 
 tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len) {
-    tls_context *ctx = calloc(1, sizeof(tls_context));
-    ctx->api = &mbedtls_context_api;
     struct mbedtls_context *c = calloc(1, sizeof(struct mbedtls_context));
+    c->api = mbedtls_context_api;
     if (ca && ca_len > 0) {
         c->ca_len = ca_len;
         c->ca = calloc(1, ca_len + 1);
         memcpy(c->ca, ca, ca_len);
     }
 
-    ctx->ctx = c;
-
-    return ctx;
+    return &c->api;
 }
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
@@ -352,7 +350,7 @@ tlsuv_engine_t new_mbedtls_engine(void *ctx, const char *host) {
 }
 
 static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx) {
-    struct mbedtls_context *c = ctx->ctx;
+    struct mbedtls_context *c = ctx;
     c->cert_verify_f = verify_f;
     c->verify_ctx = v_ctx;
 }
@@ -428,7 +426,7 @@ static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* d
 
 
 static void mbedtls_free_ctx(tls_context *ctx) {
-    struct mbedtls_context *c = ctx->ctx;
+    struct mbedtls_context *c = ctx;
     if (c->own_key) {
         c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
         c->own_key = NULL;
@@ -442,7 +440,6 @@ static void mbedtls_free_ctx(tls_context *ctx) {
     free(c->ca);
 
     free(c);
-    free(ctx);
 }
 
 static int mbedtls_reset(tlsuv_engine_t engine) {
@@ -507,7 +504,7 @@ static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** proto
     mbedtls_ssl_conf_alpn_protocols(&e->config, e->protocols);
 }
 
-static int mbedtls_set_own_key(void *ctx, tlsuv_private_key_t key) {
+static int mbedtls_set_own_key(tls_context *ctx, tlsuv_private_key_t key) {
     struct mbedtls_context *c = ctx;
     c->own_key = (struct priv_key_s *) key;
     return 0;
@@ -532,30 +529,16 @@ static int mbedtls_load_cert(tls_cert *c, const char *cert_buf, size_t cert_len)
     return rc;
 }
 
-static int mbedtls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len) {
+static int mbedtls_set_own_cert(tls_context *ctx, tls_cert cert) {
     struct mbedtls_context *c = ctx;
     int rc;
 //    rc = load_key((tlsuv_private_key_t *) &c->own_key, key_buf, key_len);
 //    if (rc != 0) return rc;
 //
 
-    c->own_cert = calloc(1, sizeof(mbedtls_x509_crt));
-    rc = mbedtls_x509_crt_parse(c->own_cert, (const unsigned char *)cert_buf, cert_len);
-    if (rc < 0) {
-        rc = mbedtls_x509_crt_parse_file(c->own_cert, cert_buf);
-        if (rc < 0) {
-            fprintf(stderr, "failed to load certificate");
-            mbedtls_x509_crt_free(c->own_cert);
-            free(c->own_cert);
-            c->own_cert = NULL;
+    c->own_cert = cert;
 
-            c->own_key->free((tlsuv_private_key_t)c->own_key);
-            c->own_key = NULL;
-            return rc;
-        }
-    }
-
-    return rc;
+    return 0;
 }
 
 static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,

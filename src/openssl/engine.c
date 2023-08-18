@@ -43,6 +43,7 @@ const char *const caFiles[] = {
 #define NUM_CAFILES (sizeof(caFiles) / sizeof(char *))
 
 struct openssl_ctx {
+    tls_context api;
     SSL_CTX *ctx;
     struct priv_key_s *own_key;
     X509 *own_cert;
@@ -64,8 +65,8 @@ struct openssl_engine {
 };
 
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len);
-static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len);
-static int tls_set_own_key(void *ctx, tlsuv_private_key_t key);
+static int tls_set_own_cert(tls_context *ctx, tls_cert cert);
+static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key);
 
 tlsuv_engine_t new_openssl_engine(void *ctx, const char *host);
 static void set_protocols(tlsuv_engine_t self, const char** protocols, int len);
@@ -111,7 +112,7 @@ static void info_cb(const SSL *s, int where, int ret);
 static X509_STORE *load_system_certs();
 #endif
 
-static tls_context_api openssl_context_api = {
+static tls_context openssl_context_api = {
         .version = tls_lib_version,
         .strerror = (const char *(*)(long)) tls_error,
         .new_engine = new_openssl_engine,
@@ -161,13 +162,11 @@ static const char *tls_eng_error(tlsuv_engine_t self) {
 }
 
 tls_context *new_openssl_ctx(const char *ca, size_t ca_len) {
-    tls_context *ctx = calloc(1, sizeof(tls_context));
-    ctx->api = &openssl_context_api;
     struct openssl_ctx *c = calloc(1, sizeof(struct openssl_ctx));
+    c->api = openssl_context_api;
     init_ssl_context(c, ca, ca_len);
-    ctx->ctx = c;
 
-    return ctx;
+    return &c->api;
 }
 
 static X509_STORE * load_certs(const char *buf, size_t buf_len) {
@@ -622,7 +621,7 @@ static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
 
 
 static void tls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx) {
-    struct openssl_ctx *c = ctx->ctx;
+    struct openssl_ctx *c = ctx;
     c->cert_verify_f = verify_f;
     c->verify_ctx = v_ctx;
     SSL_CTX_set_verify(c->ctx, SSL_VERIFY_PEER, NULL);
@@ -642,7 +641,7 @@ static int tls_verify_signature(void *cert, enum hash_algo md, const char* data,
 }
 
 static void tls_free_ctx(tls_context *ctx) {
-    struct openssl_ctx *c = ctx->ctx;
+    struct openssl_ctx *c = ctx;
     if (c->alpn_protocols) {
         free(c->alpn_protocols);
     }
@@ -659,7 +658,6 @@ static void tls_free_ctx(tls_context *ctx) {
     }
     SSL_CTX_free(c->ctx);
     free(c);
-    free(ctx);
 }
 
 static int tls_reset(tlsuv_engine_t self) {
@@ -717,7 +715,7 @@ static X509* tls_set_cert_internal (SSL_CTX* ssl, X509_STORE *store) {
     return crt;
 }
 
-static int tls_set_own_key(void *ctx, tlsuv_private_key_t key) {
+static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key) {
     struct openssl_ctx *c = ctx;
     SSL_CTX *ssl = c->ctx;
 
@@ -746,18 +744,17 @@ static int tls_set_own_key(void *ctx, tlsuv_private_key_t key) {
     return 0;
 }
 
-static int tls_set_own_cert(void *ctx, const char *cert_buf, size_t cert_len) {
+static int tls_set_own_cert(tls_context *ctx, tls_cert cert) {
     struct openssl_ctx *c = ctx;
     SSL_CTX *ssl = c->ctx;
 
-    X509_STORE *store = load_certs(cert_buf, cert_len);
+    X509_STORE *store = cert;
 
     c->own_cert = tls_set_cert_internal(ssl, store);
 
     if (c->own_key) {
         SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
     }
-    X509_STORE_free(store);
     return 0;
 }
 

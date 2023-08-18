@@ -98,30 +98,30 @@ fcwJ0v2IisYTCMavk0DJSj9Hd+coMSyTa7ghp8ja/0PSoQAxAA==
 
     tls_context *ctx = default_tls_context(nullptr, 0);
     tls_cert chain;
-    REQUIRE(ctx->api->parse_pkcs7_certs(&chain, pkcs7, strlen(pkcs7)) == 0);
+    REQUIRE(ctx->parse_pkcs7_certs(&chain, pkcs7, strlen(pkcs7)) == 0);
 
     char *pem;
     size_t pemlen;
-    REQUIRE(ctx->api->write_cert_to_pem(chain, 1, &pem, &pemlen) == 0);
+    REQUIRE(ctx->write_cert_to_pem(chain, 1, &pem, &pemlen) == 0);
     CHECK(pem != nullptr);
     CHECK(pemlen > 0);
     printf("\n%.*s\n", (int)pemlen, pem);
 
     free(pem);
-    ctx->api->free_cert(&chain);
-    ctx->api->free_ctx(ctx);
+    ctx->free_cert(&chain);
+    ctx->free_ctx(ctx);
 }
 
 TEST_CASE("implementation test", "[engine]") {
     tls_context *tls = default_tls_context(nullptr, 0);
 #if defined(TEST_mbedtls)
-    REQUIRE_THAT(tls->api->version(), Catch::Matchers::StartsWith("mbed TLS"));
+    REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("mbed TLS"));
 #elif defined(TEST_openssl)
-    REQUIRE_THAT(tls->api->version(), Catch::Matchers::StartsWith("OpenSSL"));
+    REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("OpenSSL"));
 #else
     FAIL("invalid engine");
 #endif
-    tls->api->free_ctx(tls);
+    tls->free_ctx(tls);
 }
 
 TEST_CASE("verify with cert", "[engine]") {
@@ -155,7 +155,7 @@ rzqUvKOfg8HVwOSngZyPa4zgd5ieZfxcFnDc2IK4fnI=
     auto tls = default_tls_context(nullptr, 0);
 
     tls_cert c;
-    tls->api->load_cert(&c, certpem, strlen(certpem));
+    tls->load_cert(&c, certpem, strlen(certpem));
 
     auto input = "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbSI6Im90dCIsImV4cCI6MTY4MTMyNDg5OCwiaXNzIjoiaHR0cHM6Ly9jdHJsLmNsaW50LmRlbW8ub3BlbnppdGkub3JnOjg0NDEiLCJqdGkiOiI1OWQxOTgwOC0zYTEyLTQzNWEtYTM3My1iY2UwZTFmNzIxOTgiLCJzdWIiOiJ5bUxHZUlQaTQifQ";
     auto sig = "UE6IVn1c2xxPEp93J_dIkpjwaennq2HLzi8EJKkXyugRzYXANxj_peyQxwWythI4nT9RPS_gothILTFe8B3cew";
@@ -163,10 +163,10 @@ rzqUvKOfg8HVwOSngZyPa4zgd5ieZfxcFnDc2IK4fnI=
     char *sigbin = nullptr;
     size_t sigbinlen;
     tlsuv_base64url_decode(sig, &sigbin, &sigbinlen);
-    REQUIRE(tls->api->verify_signature(c, hash_SHA256, input, strlen(input), sigbin, sigbinlen) == 0);
+    REQUIRE(tls->verify_signature(c, hash_SHA256, input, strlen(input), sigbin, sigbinlen) == 0);
     free(sigbin);
-    tls->api->free_cert(&c);
-    tls->api->free_ctx(tls);
+    tls->free_cert(&c);
+    tls->free_ctx(tls);
 }
 
 TEST_CASE("ALPN negotiation", "[engine]") {
@@ -180,7 +180,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     }
 
     tls_context *tls = default_tls_context(nullptr, 0);
-    printf("tls engine: %s\n", tls->api->version());
+    printf("tls engine: %s\n", tls->version());
     const char *protos[] = {
         "foo",
         "bar",
@@ -189,7 +189,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     };
     int num_protos = sizeof(protos)/sizeof(*protos);
 //    tls->api->set_alpn_protocols(tls->ctx, protos, 2);
-    tlsuv_engine_t engine = tls->api->new_engine(tls->ctx, host);
+    tlsuv_engine_t engine = tls->new_engine(tls, host);
     engine->set_protocols(engine, protos, num_protos);
 
     SOCKET sock = socket(addr->ai_family, SOCK_STREAM, 0);
@@ -244,5 +244,5 @@ TEST_CASE("ALPN negotiation", "[engine]") {
 
     freeaddrinfo(addr);
     engine->free(engine);
-    tls->api->free_ctx(tls);
+    tls->free_ctx(tls);
 }

@@ -28,7 +28,7 @@ TEST_CASE("key gen", "[key]") {
     tls_context *ctx = default_tls_context(nullptr, 0);
 
     tlsuv_private_key_t key;
-    REQUIRE(ctx->api->generate_key(&key) == 0);
+    REQUIRE(ctx->generate_key(&key) == 0);
 
     char *pem;
     size_t pemlen;
@@ -37,7 +37,7 @@ TEST_CASE("key gen", "[key]") {
 
     tlsuv_private_key_t k1;
     char *pem2;
-    REQUIRE(ctx->api->load_key(&k1, pem, pemlen) == 0);
+    REQUIRE(ctx->load_key(&k1, pem, pemlen) == 0);
     REQUIRE(k1 != nullptr);
     REQUIRE(k1->to_pem(k1, &pem2, &pemlen) == 0);
 
@@ -46,7 +46,7 @@ TEST_CASE("key gen", "[key]") {
     free(pem2);
     key->free(key);
     k1->free(k1);
-    ctx->api->free_ctx(ctx);
+    ctx->free_ctx(ctx);
 }
 
 static void check_key(tlsuv_private_key_t key) {
@@ -88,7 +88,7 @@ TEST_CASE("key-tests", "[key]") {
 
     tlsuv_private_key_t key = nullptr;
     WHEN("generated key") {
-        REQUIRE(ctx->api->generate_key(&key) == 0);
+        REQUIRE(ctx->generate_key(&key) == 0);
         check_key(key);
     }
 
@@ -122,7 +122,7 @@ HPTg+5/ajKpw0iEAW/s/1mcWh1SX0KGydBAErdBtAoGBAIdjLkZBr4vybsUh8lof
 iemZJfIkLzyuwra/o7WkK+hK
 -----END PRIVATE KEY-----
 )";
-        REQUIRE(0 == ctx->api->load_key(&key, pem, strlen(pem)));
+        REQUIRE(0 == ctx->load_key(&key, pem, strlen(pem)));
         check_key(key);
     }
 
@@ -133,11 +133,11 @@ AwEHoUQDQgAEozzayHZuK1VKSJdnSlQtMWF0iLIkqGxbxWCL6/QlGAATbNSkcW8b
 lAkOwU8XOpspVUfYbwPSVSoS2NXn1rE7iA==
 -----END EC PRIVATE KEY-----
 )";
-        REQUIRE(0 == ctx->api->load_key(&key, pem, strlen(pem)));
+        REQUIRE(0 == ctx->load_key(&key, pem, strlen(pem)));
         check_key(key);
     }
     key->free(key);
-    ctx->api->free_ctx(ctx);
+    ctx->free_ctx(ctx);
 }
 
 
@@ -145,11 +145,11 @@ TEST_CASE("gen csr", "[engine]") {
     tls_context *ctx = default_tls_context(nullptr, 0);
 
     tlsuv_private_key_t key;
-    REQUIRE(ctx->api->generate_key(&key) == 0);
+    REQUIRE(ctx->generate_key(&key) == 0);
 
     char *pem;
     size_t pemlen;
-    REQUIRE(ctx->api->generate_csr_to_pem(key, &pem, &pemlen,
+    REQUIRE(ctx->generate_csr_to_pem(key, &pem, &pemlen,
                                           "C", "US",
                                           "O", "OpenZiti",
                                           "OU", "Developers",
@@ -158,7 +158,7 @@ TEST_CASE("gen csr", "[engine]") {
     printf("CSR:\n%.*s\n", (int)pemlen, pem);
 
     key->free(key);
-    ctx->api->free_ctx(ctx);
+    ctx->free_ctx(ctx);
     free(pem);
 }
 
@@ -167,14 +167,14 @@ TEST_CASE("gen csr", "[engine]") {
 
 TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
     tls_context *ctx = default_tls_context(nullptr, 0);
-    REQUIRE(ctx->api->load_pkcs11_key != nullptr);
+    REQUIRE(ctx->load_pkcs11_key != nullptr);
 
     std::string keyType = GENERATE("ec", "rsa");
     std::string keyLabel = "test-" + keyType;
     tlsuv_private_key_t key = nullptr;
 
     int rc = 0;
-    rc = ctx->api->load_pkcs11_key(&key, HSM_DRIVER, nullptr, "2222", nullptr, keyLabel.c_str());
+    rc = ctx->load_pkcs11_key(&key, HSM_DRIVER, nullptr, "2222", nullptr, keyLabel.c_str());
     CHECK(rc == 0);
     REQUIRE(key != nullptr);
 
@@ -211,7 +211,7 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
         CHECK(key->get_certificate(key, &cert) == 0);
 
         THEN("should be able to write cert to PEM") {
-            CHECK(ctx->api->write_cert_to_pem(cert, 1, &pem, &pemlen) == 0);
+            CHECK(ctx->write_cert_to_pem(cert, 1, &pem, &pemlen) == 0);
             CHECK(pemlen > 0);
             CHECK(pem != nullptr);
             Catch::cout() << std::string(pem, pemlen) << std::endl;
@@ -229,9 +229,9 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
             size_t siglen = sizeof(sig);
 
             CHECK(0 == key->sign(key, hash_SHA256, data, datalen, sig, &siglen));
-            CHECK(0 == ctx->api->verify_signature(cert, hash_SHA256, data, datalen, sig, siglen));
+            CHECK(0 == ctx->verify_signature(cert, hash_SHA256, data, datalen, sig, siglen));
         }
-        ctx->api->free_cert(&cert);
+        ctx->free_cert(&cert);
     }
 
     WHEN(keyType << ": sign and verify") {
@@ -256,7 +256,7 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
     if (key) {
         key->free(key);
     }
-    ctx->api->free_ctx(ctx);
+    ctx->free_ctx(ctx);
 }
 
 TEST_CASE("gen-pkcs11-key-internals", "[key]") {
@@ -269,7 +269,7 @@ TEST_CASE("gen-pkcs11-key-internals", "[key]") {
 TEST_CASE("gen-pkcs11-key", "[key]") {
     auto tls = default_tls_context(nullptr, 0);
     tlsuv_private_key_t key = nullptr;
-    REQUIRE(tls->api->generate_pkcs11_key(&key, HSM_DRIVER, nullptr, "2222", "gen-key-test") == 0);
+    REQUIRE(tls->generate_pkcs11_key(&key, HSM_DRIVER, nullptr, "2222", "gen-key-test") == 0);
 
     WHEN("public key PEM") {
         char *pem = nullptr;
@@ -286,7 +286,7 @@ TEST_CASE("gen-pkcs11-key", "[key]") {
         free(pem);
     }
     key->free(key);
-    tls->api->free_ctx(tls);
+    tls->free_ctx(tls);
 }
 
 #endif
