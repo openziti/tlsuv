@@ -102,9 +102,8 @@ int main(int argc, char **argv) {
 
         if (cert && key) {
             tls->load_key(&tlsKey, key, strlen(key));
-            tls->set_own_key(tls, tlsKey);
             tls->load_cert(&tlsCert, cert, strlen(cert));
-            tls->set_own_cert(tls, tlsCert);
+            tls->set_own_cert(tls, tlsKey, tlsCert);
         }
         tlsuv_http_set_ssl(&app.clt, tls);
     }

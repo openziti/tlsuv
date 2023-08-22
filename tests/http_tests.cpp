@@ -331,7 +331,7 @@ TEST_CASE("pkcs11_client_cert_test","[http]") {
         tlsuv_private_key_t pk;
         int rc = tls->load_pkcs11_key(&pk, to_str(HSM_LIB), nullptr, "2222", nullptr, keyName.c_str());
         REQUIRE(rc == 0);
-        CHECK(tls->set_own_key(tls, pk) == 0);
+        CHECK(tls->set_own_cert(tls, pk, NULL) == 0);
 
         test.run();
 
@@ -439,8 +439,7 @@ TEST_CASE("client_cert_test","[http]") {
         REQUIRE(rc == 0);
         tls_cert c = nullptr;
         CHECK(tls->load_cert(&c, cert, strlen(cert)) == 0);
-        CHECK(tls->set_own_cert(tls, c) == 0);
-        CHECK(tls->set_own_key(tls, pk) == 0);
+        CHECK(tls->set_own_cert(tls, pk, c) == 0);
 
         test.run();
 

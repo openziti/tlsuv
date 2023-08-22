@@ -65,7 +65,8 @@ struct openssl_engine {
 };
 
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len);
-static int tls_set_own_cert(tls_context *ctx, tls_cert cert);
+static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
+                            tls_cert cert);
 static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key);
 
 tlsuv_engine_t new_openssl_engine(void *ctx, const char *host);
@@ -119,7 +120,6 @@ static tls_context openssl_context_api = {
         .free_ctx = tls_free_ctx,
         .free_cert = tls_free_cert,
         .set_own_cert = tls_set_own_cert,
-        .set_own_key = tls_set_own_key,
         .set_cert_verify = tls_set_cert_verify,
         .verify_signature =  tls_verify_signature,
         .parse_pkcs7_certs = parse_pkcs7_certs,
@@ -744,17 +744,54 @@ static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key) {
     return 0;
 }
 
-static int tls_set_own_cert(tls_context *ctx, tls_cert cert) {
+static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
+                            tls_cert cert) {
     struct openssl_ctx *c = ctx;
     SSL_CTX *ssl = c->ctx;
 
-    X509_STORE *store = cert;
+    if (key == NULL) {
+        SSL_CTX_use_PrivateKey(ssl, NULL);
+        if (c->own_key) {
+            c->own_key->free(c->own_key);
+        }
+        c->own_key = NULL;
 
-    c->own_cert = tls_set_cert_internal(ssl, store);
-
-    if (c->own_key) {
-        SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
+        SSL_CTX_use_certificate(ssl, NULL);
+        SSL_CTX_clear_chain_certs(ssl);
+        if (c->own_cert) {
+            X509_free(c->own_cert);
+            c->own_cert = NULL;
+        }
+        return 0;
     }
+
+    X509_STORE *store = cert;
+    if (cert == NULL) {
+        if(key->get_certificate) {
+            if (key->get_certificate(key, &cert) != 0) {
+                return -1;
+            }
+            store = cert;
+        }
+    } else {
+        // owned by the caller
+        X509_STORE_up_ref(store);
+    }
+
+    if (cert == NULL) {
+        return -1;
+    }
+
+    // OpenSSL requires setting certificate before private key
+    // https://www.openssl.org/docs/man3.0/man3/SSL_CTX_use_PrivateKey.html
+    struct priv_key_s *pk = key;
+    c->own_cert = tls_set_cert_internal(ssl, store);
+    X509_STORE_free(store);
+
+    SSL_OP_CHECK(X509_check_private_key(c->own_cert, pk->pkey), "verify key/cert combo");
+
+    c->own_key = pk;
+    SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, c->own_key->pkey), "set private key");
     return 0;
 }
 
