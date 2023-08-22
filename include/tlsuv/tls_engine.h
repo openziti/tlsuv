@@ -156,18 +156,19 @@ struct tls_context_s {
     void (*free_cert)(tls_cert *cert);
 
     /**
+     * \brief set client certfificate credentials.
+     *
      * (Optional): if you bring your own engine this is probably not needed.
      * This method is provided to set client/server side cert on the default TLS context.
-     */
-    int (*set_own_cert)(tls_context *ctx, tls_cert cer);
-
-    /**
-     * set client auth key.
      *
-     * It also sets client certificate if the key has associated cert (pkcs11 keys)
-     * @param key
+     * @param ctx TLS context
+     * @param key private key, use NULL to clear client auth
+     * @param cert x509 certificate corresponding to the key,
+     *        may be NULL if private key implementation provides certificate (pkcs11)
+     *
+     * @return 0 for success, -1 on error (mismatched key/cert, or cert is not provided)
      */
-    int (*set_own_key)(tls_context *ctx, tlsuv_private_key_t key);
+    int (*set_own_cert)(tls_context *ctx, tlsuv_private_key_t key, tls_cert cert);
 
     /**
      * Sets custom server cert validation function.
