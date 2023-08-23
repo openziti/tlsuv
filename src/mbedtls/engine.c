@@ -94,7 +94,6 @@ struct mbedtls_engine {
 };
 
 static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** protos, int len);
-static int mbedtls_set_own_key(tls_context *ctx, tlsuv_private_key_t key);
 static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tls_cert cert);
 static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
             const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
@@ -349,7 +348,7 @@ tlsuv_engine_t new_mbedtls_engine(void *ctx, const char *host) {
 }
 
 static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx) {
-    struct mbedtls_context *c = ctx;
+    struct mbedtls_context *c = (struct mbedtls_context *)ctx;
     c->cert_verify_f = verify_f;
     c->verify_ctx = v_ctx;
 }
@@ -425,7 +424,7 @@ static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* d
 
 
 static void mbedtls_free_ctx(tls_context *ctx) {
-    struct mbedtls_context *c = ctx;
+    struct mbedtls_context *c = (struct mbedtls_context *)ctx;
     if (c->own_key) {
         c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
         c->own_key = NULL;
@@ -500,13 +499,7 @@ static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** proto
     for (int i = 0; i < len; i++) {
         e->protocols[i] = strdup(protos[i]);
     }
-    mbedtls_ssl_conf_alpn_protocols(&e->config, e->protocols);
-}
-
-static int mbedtls_set_own_key(tls_context *ctx, tlsuv_private_key_t key) {
-    struct mbedtls_context *c = ctx;
-    c->own_key = (struct priv_key_s *) key;
-    return 0;
+    mbedtls_ssl_conf_alpn_protocols(&e->config, (const char **)e->protocols);
 }
 
 static int mbedtls_load_cert(tls_cert *c, const char *cert_buf, size_t cert_len) {
@@ -529,8 +522,8 @@ static int mbedtls_load_cert(tls_cert *c, const char *cert_buf, size_t cert_len)
 }
 
 static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tls_cert cert) {
-    struct mbedtls_context *c = ctx;
-    int rc;
+    struct mbedtls_context *c = (struct mbedtls_context *)ctx;
+    int rc = 0;
 
     if (key == NULL) {
         c->own_key = NULL;
@@ -551,14 +544,31 @@ static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tls_c
     struct priv_key_s *pk = (struct priv_key_s *)key;
     mbedtls_x509_crt *x509 = cert;
 
+#if MBEDTLS_VERSION_MAJOR == 3
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_ctr_drbg_init(&ctr_drbg);
+
+    mbedtls_entropy_context entropy;
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
+    mbedtls_entropy_free(&entropy);
+
+    if (mbedtls_pk_check_pair(&x509->pk, &pk->pkey, mbedtls_ctr_drbg_random, &ctr_drbg) != 0) {
+#else
     if (mbedtls_pk_check_pair(&x509->pk, &pk->pkey) != 0) {
-        return -1;
+#endif
+        rc = -1;
+    } else {
+        c->own_cert = cert;
+        c->own_key = pk;
     }
 
-    c->own_cert = cert;
-    c->own_key = pk;
+#if MBEDTLS_VERSION_MAJOR == 3
+    mbedtls_entropy_free(&entropy);
+    mbedtls_ctr_drbg_free(&ctr_drbg);
+#endif
 
-    return 0;
+    return rc;
 }
 
 static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
