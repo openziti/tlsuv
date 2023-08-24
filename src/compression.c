@@ -60,7 +60,7 @@ static void comp_free(void *ctx, void *p) {
 
 #endif
 
-static void init() {
+static void init(void) {
 
 #if _WIN32
     // on WIN32 zlib is not usually available
@@ -106,7 +106,7 @@ goto on_error;           \
     return;
 }
 
-const char *um_available_encoding() {
+const char *um_available_encoding(void) {
     uv_once(&init_guard, init);
     return encodings;
 }

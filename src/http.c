@@ -25,7 +25,7 @@
 
 #define DEFAULT_IDLE_TIMEOUT 0
 
-extern tls_context *get_default_tls();
+extern tls_context *get_default_tls(void);
 
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
 
@@ -496,7 +496,7 @@ int tlsuv_http_set_url(tlsuv_http_t *clt, const char *url) {
         port = u.port;
     }
 
-    sprintf(clt->port, "%d", port);
+    snprintf(clt->port, sizeof(clt->port), "%d", port);
 
     if (u.path != NULL) {
         http_set_prefix(clt, u.path, u.path_len);

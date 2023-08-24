@@ -117,7 +117,7 @@ static int mbedtls_close(tlsuv_engine_t engine, char *out, size_t *out_bytes, si
 
 static int mbedtls_reset(tlsuv_engine_t engine);
 
-static const char *mbedtls_version();
+static const char *mbedtls_version(void);
 
 static const char *mbedtls_eng_error(tlsuv_engine_t engine);
 
@@ -179,7 +179,7 @@ static int mbed_ssl_recv(void *ctx, uint8_t *buf, size_t len);
 
 static int mbed_ssl_send(void *ctx, const uint8_t *buf, size_t len);
 
-static const char* mbedtls_version() {
+static const char* mbedtls_version(void) {
     return MBEDTLS_VERSION_STRING_FULL;
 }
 

@@ -26,7 +26,7 @@ typedef struct tlsuv_bio_s {
 } tlsuv_BIO;
 
 // create new BIO
-tlsuv_BIO *tlsuv_BIO_new();
+tlsuv_BIO *tlsuv_BIO_new(void);
 void tlsuv_BIO_free(tlsuv_BIO *bio);
 
 int tlsuv_BIO_put(tlsuv_BIO *bio, const uint8_t *buf, size_t len);
