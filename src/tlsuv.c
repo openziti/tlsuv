@@ -45,14 +45,14 @@ static const uv_link_methods_t mbed_methods = {
 
 static tls_context *DEFAULT_TLS = NULL;
 
-static void free_default_tls() {
+static void free_default_tls(void) {
     if (DEFAULT_TLS) {
         DEFAULT_TLS->free_ctx(DEFAULT_TLS);
         DEFAULT_TLS = NULL;
     }
 }
 
-tls_context *get_default_tls() {
+tls_context *get_default_tls(void) {
     if (DEFAULT_TLS == NULL) {
         DEFAULT_TLS = default_tls_context(NULL, 0);
         atexit(free_default_tls);
@@ -60,7 +60,7 @@ tls_context *get_default_tls() {
     return DEFAULT_TLS;
 }
 
-const char* tlsuv_version() {
+const char* tlsuv_version(void) {
     return TLSUV_VERS;
 }
 
@@ -114,6 +114,7 @@ int tlsuv_stream_nodelay(tlsuv_stream_t *clt, int nodelay) {
 int tlsuv_stream_set_protocols(tlsuv_stream_t *clt, int count, const char *protocols[]) {
     clt->alpn_count = count;
     clt->alpn_protocols = protocols;
+    return 0;
 }
 
 const char* tlsuv_stream_get_protocol(tlsuv_stream_t *clt) {

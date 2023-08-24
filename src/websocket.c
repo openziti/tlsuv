@@ -42,7 +42,7 @@ typedef struct ws_write_s {
 
 } ws_write_t;
 
-extern tls_context *get_default_tls();
+extern tls_context *get_default_tls(void);
 
 static void src_connect_cb(tlsuv_src_t *sl, int status, void *connect_ctx);
 static void ws_read_cb(uv_link_t* link,

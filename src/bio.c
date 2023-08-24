@@ -29,7 +29,7 @@ struct msg {
     STAILQ_ENTRY(msg) next;
 };
 
-tlsuv_BIO *tlsuv_BIO_new() {
+tlsuv_BIO *tlsuv_BIO_new(void) {
     tlsuv_BIO * bio = calloc(1, sizeof(tlsuv_BIO));
     bio->available = 0;
     bio->headoffset = 0;

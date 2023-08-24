@@ -147,7 +147,7 @@ size_t http_req_write(tlsuv_http_req_t *req, char *buf, size_t maxlen) {
             }
             req->req_body_size = req_len;
             char length_str[16];
-            sprintf(length_str, "%ld", req_len);
+            snprintf(length_str, sizeof(length_str), "%ld", req_len);
             set_http_header(&req->req_headers, "Content-Length", length_str);
         }
     }

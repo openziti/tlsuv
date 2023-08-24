@@ -36,7 +36,7 @@ extern "C" {
 #endif
 typedef void (*data_cb)(void *ct, const char* data, ssize_t datalen);
 
-extern const char *um_available_encoding();
+extern const char *um_available_encoding(void);
 extern http_inflater_t* um_get_inflater(const char *encoding, data_cb cb, void *ctx);
 extern int um_inflate_state(http_inflater_t *inflater);
 extern void um_free_inflater(http_inflater_t *inflater);
