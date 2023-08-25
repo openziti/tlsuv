@@ -30,10 +30,10 @@
 
 
 #define P11(op) do {\
-int rc; rc = (op); \
+CK_RV rc; rc = (op); \
 if (rc != CKR_OK) { \
             UM_LOG(WARN, "%s => %d/%s", #op, rc, p11_strerror(rc));\
-            return rc; \
+            return (int)rc; \
    }\
 } while(0)
 

@@ -26,8 +26,8 @@
 #include <string.h>
 
 #define P11(op) do {\
-int rc; rc = (op); \
-if (rc != CKR_OK) return rc; \
+CK_RV rc; rc = (op); \
+if (rc != CKR_OK) return (int)rc; \
 } while(0)
 
 
