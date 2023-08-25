@@ -177,7 +177,7 @@ void uv_link_propagate_close(uv_link_t* link, uv_link_t* source,
 
 
 static void uv_link_recalculate_prefixes(uv_link_t* link) {
-  unsigned short prev;
+  unsigned prev;
 
   prev = link->parent->err_prefix >> kErrorPrefixShift;
   for (; link != NULL; link = link->child)

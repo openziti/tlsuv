@@ -335,7 +335,7 @@ static void send_body(tlsuv_http_req_t *req) {
             }
         }
         else {
-            buf = uv_buf_init((char*)b->chunk, b->len);
+            buf = uv_buf_init((char*)b->chunk, (unsigned int)b->len);
             uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, req_write_body_cb, b);
             if (req->body_sent_size > req->req_body_size) {
                 UM_LOG(WARN, "Supplied data[%ld] is larger than provided Content-Length[%ld]",

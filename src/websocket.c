@@ -70,7 +70,7 @@ int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_
     ws->req = calloc(1, sizeof(tlsuv_http_req_t));
 
     time_t t;
-    srand(time(&t));
+    srand((unsigned)time(&t));
     char key[25];
     for (int i = 0; i < 22; i++) {
         int v = rand() & 0x3f;

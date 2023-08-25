@@ -143,7 +143,7 @@ void um_free_inflater(http_inflater_t *inflater) {
 
 int um_inflate(http_inflater_t *inflater, const char *compressed, size_t len) {
     inflater->s.next_in = (uint8_t *)compressed;
-    inflater->s.avail_in = len;
+    inflater->s.avail_in = (uInt)len;
     uint8_t decompressed[32 * 1024];
     while(inflater->s.avail_in > 0) {
         inflater->s.next_out = decompressed;

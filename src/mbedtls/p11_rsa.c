@@ -158,7 +158,7 @@ static int p11_rsa_verify(void *ctx, mbedtls_md_type_t md_alg,
     mp11_key_ctx *p11key = ctx;
 
 #if MBEDTLS_VERSION_MAJOR == 3
-    return mbedtls_rsa_rsassa_pkcs1_v15_verify(p11key->pub, md_alg, hash_len, hash, sig);
+    return mbedtls_rsa_rsassa_pkcs1_v15_verify(p11key->pub, md_alg, (unsigned)hash_len, hash, sig);
 #else
     return mbedtls_rsa_rsassa_pkcs1_v15_verify(p11key->pub, NULL, NULL, MBEDTLS_RSA_PUBLIC, md_alg, hash_len, hash, sig);
 #endif
