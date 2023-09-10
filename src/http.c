@@ -94,11 +94,11 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
                 fail_active_request(c, UV_EINVAL, "failed to parse HTTP response");
                 close_connection(c);
                 free(buf->base);
-
+                return;
             }
         }
 
-		if (c->active->state == completed) {
+        if (c->active->state == completed) {
             tlsuv_http_req_t *hr = c->active;
             c->active = NULL;
 
@@ -119,8 +119,7 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 
             if (!keep_alive) {
                 close_connection(c);
-            }
-            else {
+            } else {
                 uv_async_send(&c->proc);
             }
         }
