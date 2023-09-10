@@ -65,6 +65,8 @@ const char* tlsuv_version(void) {
 }
 
 int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
+    *clt = (tlsuv_stream_t){0};
+
     clt->loop = l;
 
     clt->socket = calloc(1, sizeof(*clt->socket));
@@ -72,10 +74,6 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
 
     uv_link_init((uv_link_t *) clt, &mbed_methods);
     clt->tls = tls != NULL ? tls : get_default_tls();
-    clt->tls_engine = NULL;
-    clt->host = NULL;
-    clt->conn_req = NULL;
-    clt->close_cb = NULL;
 
     return 0;
 }
