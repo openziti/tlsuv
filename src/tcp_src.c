@@ -94,6 +94,7 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
 static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr) {
     tcp_src_t *sl = req->data;
 
+    sl->resolve_req = NULL;
     if (sl != NULL) {
         UM_LOG(TRACE, "resolved status = %d", status);
         uv_tcp_t *conn = NULL;
@@ -110,7 +111,6 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
 
         if (status != 0) {
             UM_LOG(ERR, "connect failed: %d(%s)", status, uv_strerror(status));
-            sl->connect_cb((tlsuv_src_t *) sl, status, sl->connect_ctx);
             if (sl->conn_req) {
                 free(sl->conn_req);
                 sl->conn_req = NULL;
@@ -118,9 +118,9 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
                     uv_close((uv_handle_t *) conn, free_handle);
                 }
             }
+            sl->connect_cb((tlsuv_src_t *) sl, status, sl->connect_ctx);
         }
 
-        sl->resolve_req = NULL;
     }
 
     uv_freeaddrinfo(addr);

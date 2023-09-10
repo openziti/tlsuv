@@ -428,10 +428,6 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
 static void on_ws_close(tlsuv_websocket_t *ws) {
     if (ws == NULL) return;
 
-    if (!ws->closed && ws->close_cb) {
-        ws->close_cb((uv_handle_t *) ws);
-    }
-
     if (ws->req) {
         http_req_free(ws->req);
         free(ws->req);
@@ -450,20 +446,24 @@ static void on_ws_close(tlsuv_websocket_t *ws) {
         tcp_src_free((tcp_src_t *) ws->src);
         ws->src = NULL;
     }
-    ws->closed = true;
+
+    if (ws->close_cb) {
+        ws->close_cb((uv_handle_t *) ws);
+    }
 }
+
 static void ws_close_cb(uv_link_t *l) {
     tlsuv_websocket_t *ws = l->data;
-    on_ws_close(ws);
     l->data = NULL;
+
+    on_ws_close(ws);
 }
 
 int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
     ws->close_cb = cb;
     if (ws->ws_link.data != NULL) {
         uv_link_close(&ws->ws_link, ws_close_cb);
-    }
-    else {
+    } else {
         on_ws_close(ws);
     }
     return 0;
