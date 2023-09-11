@@ -40,7 +40,7 @@ set(test_srcs
         http_tests.cpp
         ws_tests.cpp
         engine_tests.cpp
-        uv_mbed_tests.cpp
+        stream_tests.cpp
         compression_tests.cpp
         key_tests.cpp
         )
@@ -80,4 +80,4 @@ add_test(key_tests all_tests [key])
 add_test(engine_tests all_tests [engine])
 add_test(http_tests all_tests [http])
 add_test(ws_tests all_tests [websocket])
-add_test(uv_mbed all_tests [uv-mbed])
+add_test(uv_mbed all_tests [stream])
