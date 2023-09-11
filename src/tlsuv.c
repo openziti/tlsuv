@@ -34,11 +34,12 @@
 static void tcp_connect_cb(uv_connect_t* req, int status);
 
 static const uv_link_methods_t mbed_methods = {
-        .close = uv_link_default_close,
-        .read_start = uv_link_default_read_start,
-        .write = uv_link_default_write,
-        .alloc_cb_override = uv_link_default_alloc_cb_override,
-        .read_cb_override = uv_link_default_read_cb_override,
+    .close = uv_link_default_close,
+    .read_start = uv_link_default_read_start,
+    .read_stop = uv_link_default_read_stop,
+    .write = uv_link_default_write,
+    .alloc_cb_override = uv_link_default_alloc_cb_override,
+    .read_cb_override = uv_link_default_read_cb_override,
 };
 
 static tls_context *DEFAULT_TLS = NULL;
@@ -72,6 +73,8 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
 
     uv_link_init((uv_link_t *) clt, &mbed_methods);
     clt->tls = tls != NULL ? tls : get_default_tls();
+    clt->read_cb = NULL;
+    clt->alloc_cb = NULL;
 
     return 0;
 }
@@ -129,6 +132,7 @@ static void on_tls_hs(tls_link_t *tls_link, int status) {
     }
 
     if (status == TLS_HS_COMPLETE) {
+        tlsuv_stream_read_stop(stream);
         req->cb(req, 0);
     } else if (status == TLS_HS_ERROR) {
         UM_LOG(WARN, "handshake failed: %s", tls_link->engine->strerror(tls_link->engine));
@@ -197,13 +201,32 @@ int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *hos
 }
 
 int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
-    clt->alloc_cb = (uv_link_alloc_cb) alloc_cb;
-    clt->read_cb = (uv_link_read_cb) read_cb;
-    uv_link_read_start((uv_link_t *)clt);
-    return 0;
+    if (clt == NULL || alloc_cb == NULL || read_cb == NULL) {
+        return UV_EINVAL;
+    }
+
+    if (clt->read_cb) {
+        return UV_EALREADY;
+    }
+
+    int rc = uv_link_read_start((uv_link_t *)clt);
+    if (rc == 0) {
+        clt->alloc_cb = (uv_link_alloc_cb) alloc_cb;
+        clt->read_cb = (uv_link_read_cb) read_cb;
+    }
+    return rc;
 }
 
 int tlsuv_stream_read_stop(tlsuv_stream_t *clt) {
+    if (clt == NULL) {
+        return UV_EINVAL;
+    }
+
+    if (clt->read_cb == NULL) {
+        return 0;
+    }
+    clt->read_cb = NULL;
+    clt->alloc_cb = NULL;
     return uv_link_read_stop((uv_link_t *) clt);
 }
 

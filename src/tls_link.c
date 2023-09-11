@@ -26,11 +26,12 @@ static int tls_write(uv_link_t *link, uv_link_t *source, const uv_buf_t bufs[],
 static void tls_close(uv_link_t *link, uv_link_t *source, uv_link_close_cb cb);
 
 static const uv_link_methods_t tls_methods = {
-        .close = tls_close,
-        .read_start = tls_read_start,
-        .write = tls_write,
-        .alloc_cb_override = tls_alloc,
-        .read_cb_override = tls_read_cb
+    .close = tls_close,
+    .read_start = tls_read_start,
+    .read_stop = uv_link_default_read_stop,
+    .write = tls_write,
+    .alloc_cb_override = tls_alloc,
+    .read_cb_override = tls_read_cb
 };
 
 typedef struct tls_link_write_s {
