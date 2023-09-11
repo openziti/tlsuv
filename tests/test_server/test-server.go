@@ -53,6 +53,43 @@ func runClientAuth(port int, keyFile, certFile string) chan error {
 	return done
 }
 
+func runEchoServer(port int, keyFile, certFile string) chan error {
+	done := make(chan error)
+	cfg := &tls.Config{}
+	cert, _ := tls.LoadX509KeyPair(certFile, keyFile)
+	cfg.Certificates = append(cfg.Certificates, cert)
+
+	go func() {
+		server, err := tls.Listen("tcp", fmt.Sprintf(":%d", port), cfg)
+		if err != nil {
+			done <- err
+			return
+		}
+
+		for {
+			clt, err := server.Accept()
+			if err != nil {
+				done <- err
+				return
+			}
+
+			go func() {
+				for {
+					buf := make([]byte, 1024)
+					n, err := clt.Read(buf)
+					if err != nil {
+						return
+					}
+					if wc, err := clt.Write(buf[:n]); err != nil || wc != n {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return done
+}
+
 var keyFile string
 var certFile string
 
@@ -70,6 +107,7 @@ func main() {
 	case err = <-runHTTP(8080, httpb):
 	case err = <-runHTTPS(8443, httpb, keyFile, certFile):
 	case err = <-runClientAuth(9443, keyFile, certFile):
+	case err = <-runEchoServer(7443, keyFile, certFile):
 	}
 
 	fmt.Println(err)
