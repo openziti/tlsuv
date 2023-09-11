@@ -9,6 +9,7 @@ The test server opens the following endpoints:
 | 8080 | HTTP test endpoint (httpbin API)                         |
 | 8443 | HTTPS test endpoint (httpbin API)                        |
 | 9443 | client auth endpoint: checks supplied client certificate |
+| 7443 | TLS echo server                                          |
 
 
 Start test server:
