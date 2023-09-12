@@ -148,14 +148,25 @@ TEST_CASE("gen csr", "[engine]") {
     REQUIRE(ctx->generate_key(&key) == 0);
 
     char *pem;
-    size_t pemlen;
-    REQUIRE(ctx->generate_csr_to_pem(key, &pem, &pemlen,
-                                          "C", "US",
-                                          "O", "OpenZiti",
-                                          "OU", "Developers",
-                                          "CN", "CSR test",
-                                          NULL) == 0);
+    size_t pemlen = 0;
+    CHECK(ctx->generate_csr_to_pem(key, &pem, &pemlen,
+                                   "C", "US",
+                                   "O", "OpenZiti",
+                                   "OU", "Developers",
+                                   "CN", "CSR test",
+                                   NULL) == 0);
+    CHECK(pemlen == strlen(pem));
     printf("CSR:\n%.*s\n", (int)pemlen, pem);
+    free(pem);
+    pem = nullptr;
+
+    CHECK(ctx->generate_csr_to_pem(key, &pem, nullptr,
+                                   "C", "US",
+                                   "O", "OpenZiti",
+                                   "OU", "Developers",
+                                   "CN", "CSR test",
+                                   NULL) == 0);
+    printf("CSR:\n%s\n", pem);
 
     key->free(key);
     ctx->free_ctx(ctx);

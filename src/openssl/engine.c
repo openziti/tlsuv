@@ -1036,6 +1036,9 @@ goto on_error;            \
         size_t len = BIO_ctrl_pending(b);
         *pem = calloc(1, len + 1);
         BIO_read(b, *pem, (int)len);
+        if (pemlen) {
+            *pemlen = len;
+        }
     }
 
     BIO_free(b);
