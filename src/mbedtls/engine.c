@@ -957,13 +957,15 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
     mbedtls_x509write_csr_set_key(&csr, pk);
     uint8_t pembuf[4096];
     if ((ret = mbedtls_x509write_csr_pem(&csr, pembuf, sizeof(pembuf), mbedtls_ctr_drbg_random, &ctr_drbg)) < 0) {
-        UM_LOG(ERR, "mbedtls_x509write_csr_pem returned %d", ret);
+        UM_LOG(ERR, "mbedtls_x509write_csr_pem returned %d/%s", ret, mbedtls_error(ret));
         goto on_error;
     }
     on_error:
     if (ret == 0) {
         *pem = strdup((const char*)pembuf);
-        *pemlen = strlen((const char*)pembuf) + 1;
+        if (pemlen) {
+            *pemlen = strlen((const char *)pembuf);
+        }
     }
     mbedtls_x509write_csr_free(&csr);
     return ret;
