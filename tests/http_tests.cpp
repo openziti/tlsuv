@@ -67,22 +67,22 @@ tls_context* testServerTLS() {
     return srv.TLS();
 }
 
-struct ci_less : std::binary_function<string, string, bool>
-{
-    // case-independent (ci) compare_less binary function
-    struct nocase_compare : public std::binary_function<unsigned char,unsigned char,bool>
-    {
-      bool operator() (const unsigned char& c1, const unsigned char& c2) const {
-          return tolower (c1) < tolower (c2);
-      }
-    };
-    bool operator() (const std::string & s1, const std::string & s2) const {
-      return std::lexicographical_compare
-        (s1.begin (), s1.end (),   // source range
-        s2.begin (), s2.end (),   // dest range
-        nocase_compare ());  // comparison
-    }
-};
+//struct ci_less : std::binary_function<string, string, bool>
+//{
+//    // case-independent (ci) compare_less binary function
+//    struct nocase_compare : public std::binary_function<unsigned char,unsigned char,bool>
+//    {
+//      bool operator() (const unsigned char& c1, const unsigned char& c2) const {
+//          return tolower (c1) < tolower (c2);
+//      }
+//    };
+//    bool operator() (const std::string & s1, const std::string & s2) const {
+//      return std::lexicographical_compare
+//        (s1.begin (), s1.end (),   // source range
+//        s2.begin (), s2.end (),   // dest range
+//        nocase_compare ());  // comparison
+//    }
+//};
 
 class resp_capture {
 public:
@@ -95,7 +95,7 @@ public:
     string http_version;
     ssize_t code;
     string status;
-    map<string, string, ci_less> headers;
+    map<string, string> headers;
 
     string body;
     string req_body;
