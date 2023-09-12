@@ -48,7 +48,7 @@ set(test_srcs
 
 add_executable(all_tests
         all_tests.cpp ${test_srcs})
-set_property(TARGET all_tests PROPERTY CXX_STANDARD 11)
+set_property(TARGET all_tests PROPERTY CXX_STANDARD 20)
 target_compile_options(all_tests PRIVATE ${PKCS11_OPTS})
 target_compile_definitions(all_tests PRIVATE TEST_DATA_DIR=${CMAKE_CURRENT_BINARY_DIR}/testdata)
 
