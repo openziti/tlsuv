@@ -1060,7 +1060,7 @@ static X509_STORE *load_system_certs() {
     PCCERT_CONTEXT pCertContext = NULL;
 
     if (!(hCertStore = CertOpenSystemStore(0, "ROOT"))) {
-        UM_LOG(ERROR, "The first system store did not open.");
+        UM_LOG(ERR, "The first system store did not open.");
         return store;
     }
 
