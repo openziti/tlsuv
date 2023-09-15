@@ -402,7 +402,7 @@ static void process_requests(uv_async_t *ar) {
             uv_buf_t req;
             req.base = malloc(8196);
             req.len = http_req_write(c->active, req.base, 8196);
-            UM_LOG(TRACE, "writing request >>> %*.*s", req.len, req.len, req.base);
+            UM_LOG(TRACE, "writing request >>> %.*s", (int)req.len, req.base);
             uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_cb, req.base);
             c->active->state = headers_sent;
         }
@@ -477,7 +477,7 @@ int tlsuv_http_set_url(tlsuv_http_t *clt, const char *url) {
         port = 443;
         clt->ssl = true;
     } else {
-        UM_LOG(ERR, "scheme(%*.*s) is not supported", u.scheme_len, u.scheme);
+        UM_LOG(ERR, "scheme(%.*s) is not supported", (int)u.scheme_len, u.scheme);
         return UV_EINVAL;
     }
 

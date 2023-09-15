@@ -28,7 +28,6 @@
 #include <mbedtls/asn1write.h>
 #include <mbedtls/oid.h>
 #include <mbedtls/pem.h>
-#include <mbedtls/error.h>
 #include <mbedtls/version.h>
 
 #include "../bio.h"
@@ -95,10 +94,6 @@ struct mbedtls_engine {
 
 static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** protos, int len);
 static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tls_cert cert);
-static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
-            const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id);
-
-static int mbedtls_load_key_p11(tlsuv_private_key_t *key, const char *string, const char *string1, const char *string2, const char *string3, const char *string4);
 
 tlsuv_engine_t new_mbedtls_engine(void *ctx, const char *host);
 
@@ -138,7 +133,7 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
 
 static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...);
 
-static int mbedtls_load_cert(tls_cert *c, const char *cert, size_t certlen);
+static int mbedtls_load_cert(tls_cert *c, const char *cert_buf, size_t cert_len);
 
 static tls_context mbedtls_context_api = {
         .version = mbedtls_version,
@@ -170,8 +165,6 @@ static struct tlsuv_engine_s mbedtls_engine_api = {
     .strerror = mbedtls_eng_error,
     .free = mbedtls_free,
 };
-
-static const char* NO_PROTOCOL[] = { NULL };
 
 static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *ca, size_t cabuf_len);
 
@@ -571,43 +564,9 @@ static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tls_c
     return rc;
 }
 
-static int mbedtls_set_own_cert_p11(void *ctx, const char *cert_buf, size_t cert_len,
-        const char *pkcs11_lib, const char *pin, const char *slot, const char *key_id) {
-
-    struct mbedtls_context *c = ctx;
-    c->own_key = calloc(1, sizeof(*c->own_key));
-    int rc = mp11_load_key(&c->own_key->pkey, pkcs11_lib, pin, slot, key_id);
-    if (rc != CKR_OK) {
-        fprintf(stderr, "failed to load private key - %s", p11_strerror(rc));
-        mbedtls_pk_free(&c->own_key->pkey);
-        free(c->own_key);
-        c->own_key = NULL;
-        return TLS_ERR;
-    }
-
-    c->own_cert = calloc(1, sizeof(mbedtls_x509_crt));
-    rc = mbedtls_x509_crt_parse(c->own_cert, (const unsigned char *)cert_buf, cert_len);
-    if (rc < 0) {
-        rc = mbedtls_x509_crt_parse_file(c->own_cert, cert_buf);
-        if (rc < 0) {
-            fprintf(stderr, "failed to load certificate");
-            mbedtls_x509_crt_free(c->own_cert);
-            free(c->own_cert);
-            c->own_cert = NULL;
-
-            c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
-            c->own_key = NULL;
-            return TLS_ERR;
-        }
-    }
-
-    return TLS_OK;
-}
-
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str) {
-    ((void) level);
-    printf("%s:%04d: %s", file, line, str);
-    fflush(stdout);
+    ((void) ctx);
+    um_log(level, file, line, "%s", str);
 }
 
 static tls_handshake_state mbedtls_hs_state(tlsuv_engine_t engine) {
@@ -740,10 +699,6 @@ static int mbed_ssl_send(void *ctx, const uint8_t *buf, size_t len) {
 #define OID_PKCS7 MBEDTLS_OID_PKCS "\x07"
 #define OID_PKCS7_DATA OID_PKCS7 "\x02"
 #define OID_PKCS7_SIGNED_DATA OID_PKCS7 "\x01"
-
-#define MBEDTLS_OID_CMP_PRIVATE(oid_str, oid_buf)                                   \
-                ( ( MBEDTLS_OID_SIZE(oid_str) != (oid_buf)->MBEDTLS_PRIVATE(len) ) ||                \
-                  memcmp( (oid_str), (oid_buf)->MBEDTLS_PRIVATE(p), (oid_buf)->MBEDTLS_PRIVATE(len)) != 0 )
 
 static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len) {
     size_t der_len;
@@ -899,7 +854,7 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
 static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...) {
     struct priv_key_s *k = (struct priv_key_s *) key;
 
-    int ret = 1;
+    int ret;
     mbedtls_pk_context *pk = &k->pkey;
     mbedtls_ctr_drbg_context ctr_drbg;
     char buf[1024];

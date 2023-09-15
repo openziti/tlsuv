@@ -128,7 +128,7 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
             ssl = true;
         }
         else {
-            UM_LOG(ERR, "scheme(%.*s) is not supported", u.scheme_len, u.scheme);
+            UM_LOG(ERR, "scheme(%.*s) is not supported", (int)u.scheme_len, u.scheme);
             return UV_EINVAL;
         }
     }
@@ -288,7 +288,7 @@ int ws_read_start(uv_link_t *l) {
     buf.base = malloc(8196);
     buf.len = http_req_write(ws->req, buf.base, 8196);
 
-    UM_LOG(VERB, "starting WebSocket handshake(sending %zd bytes)[%.*s]", buf.len, buf.len, buf.base);
+    UM_LOG(VERB, "starting WebSocket handshake(sending %zd bytes)[%.*s]", buf.len, (int)buf.len, buf.base);
 
     ws_write_t *ws_wreq = calloc(1, sizeof(ws_write_t));
     ws_wreq->bufs = malloc(sizeof(uv_buf_t));
@@ -390,7 +390,7 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
             UM_LOG(TRACE, "got pong");
             break;
         default:
-            UM_LOG(INFO, "got unsupported frame %h", op);
+            UM_LOG(INFO, "got unsupported frame %hd", op);
     }
 
     free(buf->base);

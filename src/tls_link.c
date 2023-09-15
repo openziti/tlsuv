@@ -111,7 +111,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     UM_LOG(TRACE, "TLS(%p)[%d]: %zd", tls, hs_state, nread);
 
     if (nread < 0) {
-        UM_LOG(ERR, "TLS read %d(%s)", nread, uv_strerror((int)nread));
+        UM_LOG(ERR, "TLS read %zd(%s)", nread, uv_strerror((int)nread));
         if (hs_state == TLS_HS_CONTINUE) {
             tls->engine->reset(tls->engine);
             tls->hs_cb(tls, TLS_HS_ERROR);

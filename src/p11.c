@@ -32,7 +32,7 @@
 #define P11(op) do {\
 CK_RV rc; rc = (op); \
 if (rc != CKR_OK) { \
-            UM_LOG(WARN, "%s => %d/%s", #op, rc, p11_strerror(rc));\
+            UM_LOG(WARN, "%s => %ld/%s", #op, (long)rc, p11_strerror(rc));\
             return (int)rc; \
    }\
 } while(0)
@@ -98,7 +98,7 @@ int p11_init(p11_context *p11, const char *lib, const char *slot, const char *pi
     P11(p11->funcs->C_OpenSession(slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &p11->session));
     err = p11->funcs->C_Login(p11->session, CKU_USER, (uint8_t *) pin, (CK_ULONG)strlen(pin));
     if (err != CKR_OK && err != CKR_USER_ALREADY_LOGGED_IN) {
-        UM_LOG(WARN, "failed to login to pkcs#11 token: %d/%s", err, p11_strerror(err));
+        UM_LOG(WARN, "failed to login to pkcs#11 token: %lu/%s", err, p11_strerror(err));
         return (int)err;
     }
 
@@ -165,7 +165,7 @@ int p11_gen_key(p11_context *p11, p11_key_ctx *p11_key, const char *label) {
     return -1;
 
     found:
-    UM_LOG(DEBG, "found key generation mechanism[%d] for key type[%d] size[%ld]", mech.mechanism, keytype, keysize);
+    UM_LOG(DEBG, "found key generation mechanism[%lu] for key type[%lu] size[%ld]", mech.mechanism, keytype, keysize);
 
     int ecparamslen = 0;
     const unsigned char *ecparams;
@@ -223,7 +223,7 @@ int p11_gen_key(p11_context *p11, p11_key_ctx *p11_key, const char *label) {
     CK_OBJECT_HANDLE pubh = 0, privh = 0;
     rv = p11->funcs->C_GenerateKeyPair(p11->session, &mech, pubtemp, pubidx, privtemp, prividx, &pubh, &privh);
     if (rv != CKR_OK) {
-        UM_LOG(WARN, "failed to generate key pair mech[%ld], keytype[%ld], size[%ld]: %d/%s", mech.mechanism, keytype, keysize, rv, p11_strerror(rv));
+        UM_LOG(WARN, "failed to generate key pair mech[%ld], keytype[%ld], size[%ld]: %lu/%s", mech.mechanism, keytype, keysize, rv, p11_strerror(rv));
         return -1;
     }
 
@@ -273,7 +273,7 @@ int p11_store_key_cert(p11_key_ctx *key, char *cert, size_t certlen, char *subj,
     free(id);
 
     if (rc != CKR_OK) {
-        UM_LOG(WARN, "failed to store cert to pkcs#11 token: %d/%s", rc, p11_strerror(rc));
+        UM_LOG(WARN, "failed to store cert to pkcs#11 token: %lu/%s", rc, p11_strerror(rc));
         return -1;
     }
     return 0;
@@ -397,7 +397,7 @@ int p11_load_key(p11_context *p11, p11_key_ctx *p11_key, const char *idstr, cons
     P11(p11->funcs->C_FindObjectsFinal(p11->session));
 
     if (objc == 0) {
-        UM_LOG(WARN, "key not found with following attributes: id[%d] label[%s]", idstr, label);
+        UM_LOG(WARN, "key not found with following attributes: id[%s] label[%s]", idstr, label);
         return CKR_KEY_NEEDED;
     }
 

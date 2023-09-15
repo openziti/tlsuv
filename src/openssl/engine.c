@@ -379,6 +379,7 @@ typedef struct string_int_pair_st {
     int retval;
 } OPT_PAIR, STRINT_PAIR;
 
+typedef struct openssl_ctx openssl_ctx;
 static const char *lookup(int val, const STRINT_PAIR* list, const char* def)
 {
     for ( ; list->name; ++list)
@@ -621,7 +622,7 @@ static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
 
 
 static void tls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx) {
-    struct openssl_ctx *c = ctx;
+    struct openssl_ctx *c = (struct openssl_ctx*)ctx;
     c->cert_verify_f = verify_f;
     c->verify_ctx = v_ctx;
     SSL_CTX_set_verify(c->ctx, SSL_VERIFY_PEER, NULL);
@@ -641,7 +642,7 @@ static int tls_verify_signature(void *cert, enum hash_algo md, const char* data,
 }
 
 static void tls_free_ctx(tls_context *ctx) {
-    struct openssl_ctx *c = ctx;
+    struct openssl_ctx *c = (struct openssl_ctx*)ctx;
     if (c->alpn_protocols) {
         free(c->alpn_protocols);
     }
@@ -716,7 +717,7 @@ static X509* tls_set_cert_internal (SSL_CTX* ssl, X509_STORE *store) {
 }
 
 static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key) {
-    struct openssl_ctx *c = ctx;
+    struct openssl_ctx *c = (struct openssl_ctx*)ctx;
     SSL_CTX *ssl = c->ctx;
 
     // sanity check
@@ -746,13 +747,13 @@ static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key) {
 
 static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
                             tls_cert cert) {
-    struct openssl_ctx *c = ctx;
+    struct openssl_ctx *c = (struct openssl_ctx*)ctx;
     SSL_CTX *ssl = c->ctx;
 
     if (key == NULL) {
         SSL_CTX_use_PrivateKey(ssl, NULL);
         if (c->own_key) {
-            c->own_key->free(c->own_key);
+            c->own_key->free((struct tlsuv_private_key_s *)c->own_key);
         }
         c->own_key = NULL;
 
@@ -784,7 +785,7 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
 
     // OpenSSL requires setting certificate before private key
     // https://www.openssl.org/docs/man3.0/man3/SSL_CTX_use_PrivateKey.html
-    struct priv_key_s *pk = key;
+    struct priv_key_s *pk = (struct priv_key_s*)key;
     c->own_cert = tls_set_cert_internal(ssl, store);
     X509_STORE_free(store);
 

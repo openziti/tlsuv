@@ -78,7 +78,7 @@ ssize_t http_req_process(tlsuv_http_req_t *req, const char* buf, ssize_t len) {
     ssize_t processed = -1;
     if (err == HPE_OK) {
         processed = len;
-        UM_LOG(VERB, "processed %z of %zd", processed, len);
+        UM_LOG(VERB, "processed %zd of %zd", processed, len);
     } else if (err == HPE_PAUSED_UPGRADE) {
         processed = llhttp_get_error_pos(&req->parser) - buf;
         UM_LOG(VERB, "websocket upgrade: processed %zd out of %zd", processed, len);

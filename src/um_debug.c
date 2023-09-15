@@ -18,7 +18,7 @@
 #include "um_debug.h"
 #include <tlsuv/tlsuv.h>
 
-int um_log_level = ERR;
+int um_log_level = TLSUV_ERR;
 static tlsuv_log_func log_func = NULL;
 
 void um_log(int lvl, const char* file, unsigned int line, const char *fmt,  ...) {

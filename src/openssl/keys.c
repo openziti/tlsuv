@@ -248,7 +248,7 @@ static int privkey_to_pem(tlsuv_private_key_t pk, char **pem, size_t *pemlen) {
 
     if (!PEM_write_bio_PKCS8PrivateKey(b, privkey->pkey, NULL, NULL, 0, NULL, NULL)) {
         unsigned long err = ERR_get_error();
-        UM_LOG(WARN, "failed to generate PEM for private key: %d/%s", err, ERR_lib_error_string(err));
+        UM_LOG(WARN, "failed to generate PEM for private key: %ld/%s", err, ERR_lib_error_string(err));
     } else {
         size_t len = BIO_ctrl_pending(b);
         *pem = calloc(1, len + 1);
@@ -269,7 +269,7 @@ static int pubkey_to_pem(tlsuv_public_key_t pub, char **pem, size_t *pemlen) {
 
     if (!PEM_write_bio_PUBKEY(b, pubkey->pkey)) {
         unsigned long err = ERR_get_error();
-        UM_LOG(WARN, "failed to generate PEM for public key: %d/%s", err, ERR_lib_error_string(err));
+        UM_LOG(WARN, "failed to generate PEM for public key: %ld/%s", err, ERR_lib_error_string(err));
     } else {
         size_t len = BIO_ctrl_pending(b);
         *pem = calloc(1, len + 1);
@@ -294,7 +294,7 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
     EVP_PKEY *pk = NULL;
     if (!PEM_read_bio_PrivateKey(kb, &pk, NULL, NULL)) {
         unsigned long err = ERR_get_error();
-        UM_LOG(WARN, "failed to load key: %d/%s", err, ERR_lib_error_string(err));
+        UM_LOG(WARN, "failed to load key: %ld/%s", err, ERR_lib_error_string(err));
         rc = -1;
     } else {
         struct priv_key_s *privkey = calloc(1, sizeof(struct priv_key_s));
@@ -321,7 +321,7 @@ static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, 
         a = (const unsigned char*)value;
         if (d2i_ECParameters(&ec, &a, (long) len) == NULL) {
             unsigned long err = ERR_get_error();
-            UM_LOG(WARN, "failed to set EC parameters for key id[%s] label[%s]: %d/%s", id, label, err, ERR_lib_error_string(err));
+            UM_LOG(WARN, "failed to set EC parameters for key id[%s] label[%s]: %ld/%s", id, label, err, ERR_lib_error_string(err));
             goto error;
         }
 
@@ -340,7 +340,7 @@ static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, 
             a = os->data;
             if (o2i_ECPublicKey(&ec, &a, os->length) == NULL) {
                 unsigned long err = ERR_get_error();
-                UM_LOG(WARN, "failed to set EC pubkey for key id[%s] label[%s]: %d/%s", id, label, err, ERR_lib_error_string(err));
+                UM_LOG(WARN, "failed to set EC pubkey for key id[%s] label[%s]: %ld/%s", id, label, err, ERR_lib_error_string(err));
                 goto error;
             }
             ASN1_STRING_free(os);
@@ -348,7 +348,7 @@ static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, 
         } else {
             if(o2i_ECPublicKey(&ec, &a, (int) len) == NULL) {
                 unsigned long err = ERR_get_error();
-                UM_LOG(WARN, "failed to set EC pubkey for key id[%s] label[%s]: %d/%s", id, label, err, ERR_lib_error_string(err));
+                UM_LOG(WARN, "failed to set EC pubkey for key id[%s] label[%s]: %ld/%s", id, label, err, ERR_lib_error_string(err));
                 goto error;
             }
         }
@@ -360,7 +360,7 @@ static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, 
 
     if (!EVP_PKEY_set1_EC_KEY(pkey, ec)) {
         unsigned long err = ERR_get_error();
-        UM_LOG(WARN, "failed to set EC pubkey for key id[%s] label[%s]: %d/%s", id, label, err, ERR_lib_error_string(err));
+        UM_LOG(WARN, "failed to set EC pubkey for key id[%s] label[%s]: %ld/%s", id, label, err, ERR_lib_error_string(err));
         goto error;
     }
     EC_KEY_free(ec); // decrease refcount
@@ -436,7 +436,7 @@ int gen_pkcs11_key(tlsuv_private_key_t *key, const char *pkcs11driver, const cha
             load_pkcs11_rsa(pkey, p11_key, NULL, label);
             break;
         default:
-            UM_LOG(WARN, "unsupported pkcs11 key type: %d", p11_key->key_type);
+            UM_LOG(WARN, "unsupported pkcs11 key type: %lu", p11_key->key_type);
             goto error;
     }
 
@@ -480,7 +480,7 @@ int load_pkcs11_key(tlsuv_private_key_t *key, const char *lib, const char *slot,
             load_pkcs11_rsa(pkey, p11_key, id, label);
             break;
         default:
-            UM_LOG(WARN, "unsupported pkcs11 key type: %d", p11_key->key_type);
+            UM_LOG(WARN, "unsupported pkcs11 key type: %lu", p11_key->key_type);
             goto error;
     }
 
