@@ -186,11 +186,11 @@ int p11_gen_key(p11_context *p11, p11_key_ctx *p11_key, const char *label) {
     set_attr_var(priv, CKA_CLASS, privcls);
     set_attr_var(priv, CKA_KEY_TYPE, keytype);
     set_attr_var(priv, CKA_PRIVATE, true_val);
-	set_attr_var(priv, CKA_TOKEN, true_val);
-	set_attr_var(priv, CKA_SENSITIVE, true_val);
-	set_attr_var(priv, CKA_DECRYPT, true_val);
-	set_attr_var(priv, CKA_SIGN, true_val);
-	set_attr_var(priv, CKA_UNWRAP, true_val);
+    set_attr_var(priv, CKA_TOKEN, true_val);
+    set_attr_var(priv, CKA_SENSITIVE, true_val);
+    set_attr_var(priv, CKA_DECRYPT, true_val);
+    set_attr_var(priv, CKA_SIGN, true_val);
+    set_attr_var(priv, CKA_UNWRAP, true_val);
     if (label) {
         size_t labellen = strlen(label);
         set_attr_ptr(priv, CKA_LABEL, label);
@@ -201,10 +201,10 @@ int p11_gen_key(p11_context *p11, p11_key_ctx *p11_key, const char *label) {
     set_attr_ptr(pub, CKA_ID, id);
     set_attr_var(pub, CKA_CLASS, pubcls);
     set_attr_var(pub, CKA_KEY_TYPE, keytype);
-	set_attr_var(pub, CKA_TOKEN, true_val);
+    set_attr_var(pub, CKA_TOKEN, true_val);
     set_attr_var(pub, CKA_ENCRYPT, true_val);
-	set_attr_var(pub, CKA_VERIFY, true_val);
-	set_attr_var(pub, CKA_WRAP, true_val);
+    set_attr_var(pub, CKA_VERIFY, true_val);
+    set_attr_var(pub, CKA_WRAP, true_val);
     if (label) {
         size_t labellen = strlen(label);
         set_attr_ptr(pub, CKA_LABEL, label);

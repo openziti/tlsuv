@@ -160,9 +160,9 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *d
     mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
 
 #if MBEDTLS_VERSION_MAJOR == 3
-    if (mbedtls_pk_sign(&priv->pkey, type, hash, mbedtls_md_get_size(md_info), (uint8_t *)sig, *siglen, siglen, mbedtls_ctr_drbg_random, &ctr_drbg) != 0) {
+    if (mbedtls_pk_sign(&priv->pkey, type, hash, size, (uint8_t *)sig, *siglen, siglen, mbedtls_ctr_drbg_random, &ctr_drbg) != 0) {
 #else
-    if (mbedtls_pk_sign(&priv->pkey, type, hash, mbedtls_md_get_size(md_info), (uint8_t *)sig, siglen, mbedtls_ctr_drbg_random, &ctr_drbg) != 0) {
+    if (mbedtls_pk_sign(&priv->pkey, type, hash, size, (uint8_t *)sig, siglen, mbedtls_ctr_drbg_random, &ctr_drbg) != 0) {
 #endif
         return -1;
     }

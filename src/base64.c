@@ -68,7 +68,11 @@ static size_t base64url_decode_len(const char *bufcoded) {
 size_t tlsuv_base64url_decode(const char *in, char **out, size_t *out_len) {
 
     *out_len = base64url_decode_len(in);
-    unsigned char *buf = malloc(*out_len);
+    if (*out_len == 0) {
+        *out = NULL;
+        return 0;
+    }
+    unsigned char *buf = calloc(*out_len + 1, 1);
 
     register const unsigned char *bufin;
     register unsigned char *bufout;
