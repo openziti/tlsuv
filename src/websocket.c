@@ -69,11 +69,11 @@ int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_
     ws->src = src;
     ws->req = calloc(1, sizeof(tlsuv_http_req_t));
 
-    time_t t;
-    srand((unsigned)time(&t));
+    char randbuf[24];
+    uv_random(NULL, NULL, randbuf, sizeof(randbuf), 0, NULL);
     char key[25];
     for (int i = 0; i < 22; i++) {
-        int v = rand() & 0x3f;
+        int v = randbuf[i] & 0x3f;
         if (v < 26) {
             key[i] = (char)('A' + v);
         } else if (v < 52) {
@@ -194,7 +194,7 @@ int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf,
         headerlen += 6;
     }
     uint8_t mask[4];
-    *(int*)&mask = rand();
+    uv_random(NULL, NULL, mask, sizeof(mask), 0, NULL);
     char *frame = malloc(headerlen + buf->len);
 
     frame[0] = WS_FIN | OpCode_BIN;
@@ -407,7 +407,7 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
     buf.base[1] = (char)(WS_MASK | (0x7f & len));
 
     char *ptr = buf.base + 2;
-    *(int*)&mask = rand();
+    uv_random(NULL, NULL, mask, sizeof(mask), 0, NULL);
     memcpy(ptr, mask, sizeof(mask));
     ptr += sizeof(mask);
 

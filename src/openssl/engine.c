@@ -722,7 +722,7 @@ static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key) {
 
     // sanity check
     struct priv_key_s *pk = (struct priv_key_s *) key;
-    if (key == NULL && pk->pkey == NULL) {
+    if (key == NULL || pk->pkey == NULL) {
         return -1;
     }
 
@@ -1008,7 +1008,6 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
 
     va_list va;
     va_start(va, pemlen);
-    bool first = true;
     while (true) {
         char *id = va_arg(va, char*);
         if (id == NULL) { break; }
@@ -1018,6 +1017,7 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
 
         X509_NAME_add_entry_by_txt(subj, id, MBSTRING_ASC, val, -1, -1, 0);
     }
+    va_end(va);
 
 #define ssl_check(OP) do{ \
 op = #OP;                 \

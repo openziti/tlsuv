@@ -202,7 +202,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
                 case TLS_HAS_WRITE: {
                     uv_buf_t buf;
                     buf.base = malloc(TLS_BUF_SZ);
-                    int tls_rc = tls->engine->write(tls->engine, NULL, 0, buf.base, &buf.len, TLS_BUF_SZ);
+                    tls->engine->write(tls->engine, NULL, 0, buf.base, &buf.len, TLS_BUF_SZ);
                     uv_link_propagate_write(l->parent, l, &buf, 1, NULL, tls_write_free_cb, buf.base);
                     break;
                 }

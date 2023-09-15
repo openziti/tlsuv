@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
     char ip[1000];
     struct in_addr **addr = (struct in_addr **) he->h_addr_list;
     for (int i = 0; addr[i] != NULL; i++) {
-        strcpy(ip, inet_ntoa(*addr[i]));
+        strncpy(ip, inet_ntoa(*addr[i]), sizeof(ip));
     }
 
     printf("ip: %s\n", ip);
