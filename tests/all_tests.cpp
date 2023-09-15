@@ -47,7 +47,7 @@ int main( int argc, char* argv[] ) {
     uv_os_setenv("SOFTHSM2_CONF", xstr(HSM_CONFIG));
 #endif
     uv_gettimeofday(&start);
-    long level = DEBG;
+    long level = TLSUV_DEBG;
     const char* debug = getenv("TLSUV_TEST_LOG");
     if (debug) {
         // enable logging during tests
