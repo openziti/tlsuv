@@ -19,6 +19,7 @@ jobs:
     - name: Install tools
       if: matrix.os == 'ubuntu'
       run: |
+        sudo apt update
         sudo apt install -y valgrind softhsm
 
     - name: Install tools
