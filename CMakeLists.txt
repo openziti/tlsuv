@@ -101,6 +101,14 @@ target_link_libraries(tlsuv
         PUBLIC uv_link
         PRIVATE ZLIB::ZLIB
         )
+
+if (APPLE)
+    target_link_libraries(tlsuv PRIVATE
+            "-framework Security"
+            "-framework CoreFoundation"
+    )
+endif (APPLE)
+
 TARGET_COMPILE_DEFINITIONS(tlsuv PRIVATE TLSUV_VERSION=v${PROJECT_VERSION})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     TARGET_COMPILE_DEFINITIONS(tlsuv PRIVATE _POSIX_C_SOURCE=200112 _GNU_SOURCE)
