@@ -36,6 +36,10 @@
 #include "mbed_p11.h"
 #include <tlsuv/tlsuv.h>
 
+#if defined(__APPLE__)
+#include <Security/Security.h>
+#endif
+
 #if _WIN32
 #include <wincrypt.h>
 #pragma comment (lib, "crypt32.lib")
@@ -255,11 +259,17 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
         CertFreeCertificateContext(pCertContext);
         CertCloseStore(hCertStore, 0);
 #else
+        const char* sys_bundle = NULL;
         for (size_t i = 0; i < NUM_CAFILES; i++) {
             if (access(caFiles[i], R_OK) != -1) {
+                sys_bundle = caFiles[i];
+                UM_LOG(INFO, "using system CA bundle[%s]", sys_bundle);
                 mbedtls_x509_crt_parse_file(engine->ca, caFiles[i]);
                 break;
             }
+        }
+        if (sys_bundle == NULL) {
+            UM_LOG(WARN, "failed to find any of the system CA bundles");
         }
 #endif
     }
@@ -287,6 +297,42 @@ static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uin
         }
     }
 
+#if defined(__APPLE__)
+    if (*flags & MBEDTLS_X509_BADCERT_NOT_TRUSTED) {
+        CFMutableArrayRef certs = CFArrayCreateMutable(kCFAllocatorDefault, 1, NULL);
+        mbedtls_x509_crt *c1 = crt;
+        while(c1) {
+            CFDataRef raw = CFDataCreate(kCFAllocatorDefault, c1->raw.p, (CFIndex)c1->raw.len);
+            SecCertificateRef c = SecCertificateCreateWithData(kCFAllocatorDefault, raw);
+
+            CFArrayAppendValue(certs, c);
+            c1 = c1->next;
+        }
+
+        SecPolicyRef x509policy = SecPolicyCreateBasicX509();
+        SecTrustRef trust;
+        OSStatus status = SecTrustCreateWithCertificates(certs, x509policy, &trust);
+        if (status == errSecSuccess) {
+            CFErrorRef err = 0;
+            if (SecTrustEvaluateWithError(trust, &err)) {
+                *flags &= ~MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+            } else {
+                CFStringRef e = CFErrorCopyDescription(err);
+                char errbuf[1024];
+                CFStringGetCString(e, errbuf, 1024, kCFStringEncodingUTF8);
+                UM_LOG(WARN, "certificate verify failed: %s", errbuf);
+            }
+            CFRelease(trust);
+        } else {
+            CFStringRef error = SecCopyErrorMessageString(status, NULL);
+            char err[128];
+            CFStringGetCString(error, err, 128, kCFStringEncodingASCII);
+            UM_LOG(WARN, "failed to create Trust object: %s", err);
+        }
+        CFRelease(certs);
+    }
+#endif
+    
     // app wants to verify cert on its own
     // mark intermediate certs as trusted
     // and call app cb for the leaf (depth == 0)
