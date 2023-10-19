@@ -16,7 +16,7 @@ include(cmake/variables.cmake)
 include(CMakeDependentOption)
 include(GNUInstallDirs)
 
-set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls)")
+set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls|apple)")
 
 if(NOT (TLSUV_TLSLIB STREQUAL "openssl" OR TLSUV_TLSLIB STREQUAL "mbedtls"))
     message(FATAL_ERROR "`${TLSUV_TLSLIB}' TLS library is not supported")
