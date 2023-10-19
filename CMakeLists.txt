@@ -30,7 +30,7 @@ endif ()
 option(TLSUV_HTTP "enable HTTP/websocket support" ON)
 
 set(supported_tls_libs openssl mbedtls)
-set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls)")
+set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls|apple)")
 
 if(NOT TLSUV_TLSLIB IN_LIST supported_tls_libs)
     message(FATAL_ERROR "`${TLSUV_TLSLIB}' TLS library is not supported")
