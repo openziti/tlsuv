@@ -299,14 +299,18 @@ static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uin
 
 #if defined(__APPLE__)
     if (*flags & MBEDTLS_X509_BADCERT_NOT_TRUSTED) {
-        CFMutableArrayRef certs = CFArrayCreateMutable(kCFAllocatorDefault, 1, NULL);
+        CFMutableArrayRef certs = CFArrayCreateMutable(kCFAllocatorDefault, 1, &kCFTypeArrayCallBacks);
         mbedtls_x509_crt *c1 = crt;
+        SecCertificateRef c;
         while(c1) {
             CFDataRef raw = CFDataCreate(kCFAllocatorDefault, c1->raw.p, (CFIndex)c1->raw.len);
-            SecCertificateRef c = SecCertificateCreateWithData(kCFAllocatorDefault, raw);
+            c = SecCertificateCreateWithData(kCFAllocatorDefault, raw);
 
             CFArrayAppendValue(certs, c);
             c1 = c1->next;
+
+            CFRelease(c);
+            CFRelease(raw);
         }
 
         SecPolicyRef x509policy = SecPolicyCreateBasicX509();
@@ -321,6 +325,8 @@ static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uin
                 char errbuf[1024];
                 CFStringGetCString(e, errbuf, 1024, kCFStringEncodingUTF8);
                 UM_LOG(WARN, "certificate verify failed: %s", errbuf);
+                CFRelease(e);
+                CFRelease(err);
             }
             CFRelease(trust);
         } else {
@@ -328,6 +334,7 @@ static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uin
             char err[128];
             CFStringGetCString(error, err, 128, kCFStringEncodingASCII);
             UM_LOG(WARN, "failed to create Trust object: %s", err);
+            CFRelease(error);
         }
         CFRelease(certs);
     }
