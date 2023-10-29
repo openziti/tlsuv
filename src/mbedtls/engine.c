@@ -40,6 +40,7 @@
 
 #if defined(__APPLE__)
 #include <Security/Security.h>
+#include <Network/Network.h>
 #endif
 
 #if _WIN32

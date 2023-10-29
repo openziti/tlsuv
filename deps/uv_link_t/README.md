@@ -108,5 +108,5 @@ USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 [0]: https://github.com/libuv/libuv
 [1]: https://github.com/indutny/uv_link_t/blob/master/include/uv_link_t.h
-[2]: https://github.com/indutny/uv_link_t/blob/master/docs/api.md
+[2]: https://github.com/indutny/uv_link_t/blob/master/docs/ctx_api.md
 [3]: https://github.com/indutny/uv_link_t/blob/master/docs/implementation-guide.md

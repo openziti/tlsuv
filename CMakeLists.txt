@@ -16,14 +16,21 @@ include(cmake/variables.cmake)
 include(CMakeDependentOption)
 include(GNUInstallDirs)
 
-set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls|apple)")
+if(APPLE)
+    set(tlsuv_default_ssl "applesec")
+else ()
+    set(tlsuv_default_ssl "openssl")
+endif ()
 
-if(NOT (TLSUV_TLSLIB STREQUAL "openssl" OR TLSUV_TLSLIB STREQUAL "mbedtls"))
+set(TLSUV_TLSLIB ${tlsuv_default_ssl} CACHE STRING "TLS implementation library (openssl|mbedtls|apple)")
+
+if(NOT (TLSUV_TLSLIB STREQUAL "openssl" OR TLSUV_TLSLIB STREQUAL "mbedtls" OR TLSUV_TLSLIB STREQUAL "applesec"))
     message(FATAL_ERROR "`${TLSUV_TLSLIB}' TLS library is not supported")
 endif()
 
 cmake_dependent_option(USE_OPENSSL "Use OpenSSL" ON "TLSUV_TLSLIB STREQUAL openssl; NOT USE_MBEDTLS" OFF)
 cmake_dependent_option(USE_MBEDTLS "Use mbedTLS" ON "TLSUV_TLSLIB STREQUAL mbedtls" OFF)
+cmake_dependent_option(USE_APPLESEC "Use Apple Security Framework" ON "TLSUV_TLSLIB STREQUAL applesec; APPLE" OFF)
 
 set(tlsuv_sources
         src/tlsuv.c
@@ -47,19 +54,20 @@ set(tlsuv_sources
 if(USE_OPENSSL)
     set(tlsImpl openssl)
     FILE(GLOB ssl_files src/openssl/*)
-    LIST(APPEND tlsuv_sources
-            ${ssl_files}
-            )
 endif()
 
 if(USE_MBEDTLS)
     set(tlsImpl mbedtls)
     FILE(GLOB ssl_files src/mbedtls/*)
 
-    LIST(APPEND tlsuv_sources
-            ${ssl_files}
-            )
 endif()
+
+if(USE_APPLESEC)
+    set(tlsImpl "applesec")
+    FILE(GLOB ssl_files src/apple/*)
+endif ()
+
+LIST(APPEND tlsuv_sources ${ssl_files})
 
 find_package(libuv CONFIG QUIET)
 if (libuv_FOUND)
@@ -129,6 +137,8 @@ elseif(USE_OPENSSL)
     find_package(OpenSSL REQUIRED)
     target_compile_definitions(tlsuv PRIVATE USE_OPENSSL)
     target_link_libraries(tlsuv PRIVATE OpenSSL::SSL)
+elseif (USE_APPLESEC)
+    target_compile_definitions(tlsuv PRIVATE USE_APPLESEC)
 endif()
 
 if (WIN32)

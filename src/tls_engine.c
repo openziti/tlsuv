@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <tlsuv/tls_engine.h>
+#include <assert.h>
 #include "um_debug.h"
 
 #ifdef USE_MBEDTLS
@@ -21,7 +22,11 @@ static tls_context_factory factory = new_mbedtls_ctx;
 #elif USE_OPENSSL
 extern tls_context* new_openssl_ctx(const char* ca, size_t ca_len);
 static tls_context_factory factory = new_openssl_ctx;
+#elif USE_APPLESEC
+extern tls_context* new_applesec_ctx(const char* ca, size_t ca_len);
+static tls_context_factory factory = new_applesec_ctx;
 #else
+#warning "no default TLS is configured"
 static tls_context_factory factory = NULL;
 #endif
 
@@ -30,6 +35,7 @@ void set_default_tls_impl(tls_context_factory f) {
 }
 
 tls_context *default_tls_context(const char *ca, size_t ca_len) {
+    assert(factory != NULL);
     if (factory == NULL) {
         UM_LOG(ERR, "FATAL error no default TLS engine is set");
         return NULL;
