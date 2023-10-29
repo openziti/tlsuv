@@ -42,6 +42,7 @@
 #include <TargetConditionals.h>
 #if TARGET_OS_IOS
 #include <Security/Security.h>
+#include <Network/Network.h>
 #endif
 #endif
 

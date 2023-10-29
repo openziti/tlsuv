@@ -11,6 +11,13 @@
       "dependencies": [
         {
           "name": "tlsuv",
+          "platform": "osx | ios",
+          "default-features": false,
+          "features": [ "applesec" ]
+        },
+        {
+          "name": "tlsuv",
+          "platform": "!(osx | ios)",
           "default-features": false,
           "features": [ "openssl" ]
         }
@@ -20,7 +27,6 @@
       "description": "use OpenSSL",
       "dependencies": [ "openssl" ]
     },
-
     "mbedtls": {
       "description": "use mbedTLS",
       "dependencies": [ "mbedtls" ]
@@ -31,6 +37,10 @@
         "zlib",
         "llhttp"
       ]
+    },
+    "applesec": {
+      "description": "Apple SSL support",
+      "supports": "osx | ios"
     },
     "test": {
       "description": "Dependencies for testing",
