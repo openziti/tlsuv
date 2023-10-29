@@ -122,7 +122,7 @@ int main(int argc, char **argv) {
 
     const char *req = "GET " PATH " HTTP/1.1\n"
                       "Accept: */*\n"
-                      "Accept-Enconding: plain\n"
+                      "Accept-Encoding: plain\n"
                       "Connection: keep-alive\n"
                       "Host: " HOST "\n"
                       "User-Agent: HTTPie/1.0.2\n"
@@ -135,6 +135,7 @@ int main(int argc, char **argv) {
 
     int read_res = 0;
     do {
+        resp_read = 0;
         fprintf(stderr, "reading(%d)...\n", read_res);
         read_res = engine->read(engine, resp, &resp_read, sizeof(resp));
         fprintf(stderr, "read(%d,%zd)...\n", read_res, resp_read);
