@@ -14,7 +14,7 @@ or [OpenSSL](https://www.openssl.org/)
 * [pkcs#11](https://en.wikipedia.org/wiki/PKCS_11) support with default(OpenSSL) engine
 
 ## API
-API is attempted to be consistent with [libuv API](http://docs.libuv.org/en/v1.x/api.html)
+API is attempted to be consistent with [libuv API](http://docs.libuv.org/en/v1.x/ctx_api.html)
 
 ## Supported Platforms
 * Linux

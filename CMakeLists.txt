@@ -29,6 +29,12 @@ if(tlsuv_DEVELOPER_MODE)
 endif ()
 option(TLSUV_HTTP "enable HTTP/websocket support" ON)
 
+if(APPLE)
+    set(tlsuv_default_ssl "applesec")
+else ()
+    set(tlsuv_default_ssl "openssl")
+endif ()
+
 set(supported_tls_libs openssl mbedtls)
 set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls|apple)")
 

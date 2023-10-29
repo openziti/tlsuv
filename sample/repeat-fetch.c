@@ -27,7 +27,7 @@ uv_timer_t time_timer;
 static void timer_cb(uv_timer_t *timer) {
     if (count-- > 0) {
         printf(">>> calling time service count left = %d\n\n", count);
-        tlsuv_http_req_t *req = tlsuv_http_req(&time_clt, "GET", "/api/timezone/EST", resp_cb, NULL);
+        tlsuv_http_req_t *req = tlsuv_http_req(&time_clt, "GET", "/ctx_api/timezone/EST", resp_cb, NULL);
         req->resp.body_cb = body_cb;
     } else {
         uv_timer_stop(timer);

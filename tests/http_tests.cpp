@@ -584,6 +584,30 @@ TEST_CASE("basic_test", "[http]") {
     test.run();
 }
 
+TEST_CASE("basic_test2", "[http]") {
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    resp_capture resp(resp_body_cb);
+    tlsuv_http_init(test.loop, &clt, "https://fd200fd3-a2d9-457f-bc0b-f9b8ee7d2898.production.netfoundry.io");
+    auto ca_file = "/Users/eugene/work/temp/nibbler-ca.pem";
+    auto tls = default_tls_context(ca_file, strlen(ca_file));
+    tlsuv_http_set_ssl(&clt, testServerTLS());
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
+
+    test.run();
+
+    THEN("request should be fast and then idle for 5 seconds") {
+        CHECK(resp.code == HTTP_STATUS_OK);
+        CHECK_THAT(resp.http_version, Equals("1.1"));
+        CHECK_THAT(resp.status, Equals("OK"));
+
+        CHECK_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
+    }
+
+    tlsuv_http_close(&clt, nullptr);
+}
+
 TEST_CASE("invalid CA", "[http]") {
     UvLoopTest test;
 
