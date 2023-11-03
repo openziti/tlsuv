@@ -27,8 +27,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <tlsuv/tlsuv.h>
+#include "common.h"
 
-#define HOST "wttr.in"
+#define HOST "httpbingo.org"
+#define PATH "/json"
 
 int sockClose(SOCKET sock)
 {
@@ -46,6 +48,7 @@ int sockClose(SOCKET sock)
 
 
 int main(int argc, char **argv) {
+    tlsuv_set_debug(5, logger);
 
 #if _WIN32
     //changes the output to UTF-8 so that the windows output looks correct and not all jumbly
@@ -98,16 +101,11 @@ int main(int argc, char **argv) {
         printf("connected\n");
     }
 
-    // do handshake
-    char ssl_in[32 * 1024];
-    char ssl_out[32 * 1024];
-    size_t in_bytes = 0;
-    size_t out_bytes = 0;
+    engine->set_io_fd(engine, sock);
 
-    int i = 0;
+    // do handshake
     do {
-        tls_handshake_state state = engine->handshake(engine, ssl_in, in_bytes, ssl_out, &out_bytes,
-                                                           sizeof(ssl_out));
+        tls_handshake_state state = engine->handshake(engine);
 
         if (state == TLS_HS_COMPLETE) {
             printf("handshake complete alpn[%s]\n", engine->get_alpn(engine));
@@ -117,18 +115,9 @@ int main(int argc, char **argv) {
             fprintf(stderr, "handshake failed\n");
             exit(1);
         }
-
-        printf("hs: out_bytes=%zd, state=%x\n", out_bytes, state);
-        if (out_bytes > 0) {
-            size_t wrote = send(sock, ssl_out, out_bytes, 0);
-            printf("hs: wrote_bytes=%zd\n", wrote);
-        }
-
-        in_bytes = recv(sock, ssl_in, sizeof(ssl_in), 0);
-        printf("hs: in_bytes=%zd\n", in_bytes);
     } while (true);
 
-    const char *req = "GET /Charlotte HTTP/1.1\n"
+    const char *req = "GET " PATH " HTTP/1.1\n"
                       "Accept: */*\n"
                       "Accept-Enconding: plain\n"
                       "Connection: keep-alive\n"
@@ -136,30 +125,28 @@ int main(int argc, char **argv) {
                       "User-Agent: HTTPie/1.0.2\n"
                       "\n";
 
-    engine->write(engine, req, strlen(req), ssl_out, &out_bytes, sizeof(ssl_out));
-    printf("writing req=%zd bytes\n", out_bytes);
+    engine->write(engine, req, strlen(req));
 
-    send(sock, ssl_out, out_bytes, 0);
-
-    char resp[128];
+    char resp[12800];
     size_t resp_read = 0;
 
     int read_res = 0;
     do {
-        if (read_res == 0 || read_res == TLS_READ_AGAIN) {
-            in_bytes = recv(sock, ssl_in, sizeof(ssl_in), 0);
-            printf("read resp=%zd bytes\n", in_bytes);
-        }
-        else {
-            in_bytes = 0;
-        }
+        fprintf(stderr, "reading(%d)...\n", read_res);
+        read_res = engine->read(engine, resp, &resp_read, sizeof(resp));
+        fprintf(stderr, "read(%d,%zd)...\n", read_res, resp_read);
 
-        read_res = engine->read(engine, ssl_in, in_bytes, resp, &resp_read, sizeof(resp));
-        printf("%*.*s", (int) resp_read, (int) resp_read, resp);
-    } while (read_res == TLS_READ_AGAIN || read_res == TLS_MORE_AVAILABLE);
+        if (resp_read > 0) {
+            printf("%.*s", (int) resp_read, resp);
+            fflush(stdout);
+        }
+        else
+            fprintf(stderr, "read_res = %d\n", read_res);
+    } while (read_res != TLS_EOF && read_res != TLS_ERR);
 
-    engine->close(engine, ssl_out, &out_bytes, sizeof(ssl_out));
-    send(sock, ssl_out, out_bytes, 0);
+    printf("closing \n");
+
+    engine->close(engine);
 
     sockClose(sock);
 

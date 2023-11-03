@@ -18,12 +18,15 @@
 
 typedef struct tls_link_s tls_link_t;
 typedef void (*tls_handshake_cb)(tls_link_t *l, int status);
-
+typedef struct ssl_buf_s ssl_buf_t;
 struct tls_link_s {
     UV_LINK_FIELDS
 
     tlsuv_engine_t engine;
     tls_handshake_cb hs_cb;
+
+    ssl_buf_t *ssl_in;  // buffer holding inbound ssl bytes
+    ssl_buf_t *ssl_out; // buffer holding outbound ssl_bytes
 };
 
 
