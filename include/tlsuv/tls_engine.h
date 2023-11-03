@@ -19,7 +19,10 @@
 #include <stdio.h>
 
 #if _WIN32
+#include <uv/win.h>
 #pragma comment (lib, "crypt32.lib")
+#else
+#include <uv/unix.h>
 #endif
 
 #ifdef __cplusplus
@@ -37,7 +40,8 @@ enum TLS_RESULT {
     TLS_OK = 0,
     TLS_ERR = -1,
     TLS_EOF = -2,
-    TLS_READ_AGAIN = -3,
+    TLS_AGAIN = -3,
+
     TLS_MORE_AVAILABLE = -4,
     TLS_HAS_WRITE = -5,
 };
@@ -50,8 +54,34 @@ enum hash_algo {
 
 typedef struct tlsuv_engine_s *tlsuv_engine_t;
 
+typedef void* io_ctx;
+typedef ssize_t (*io_read)(io_ctx, char *buf, size_t len);
+typedef ssize_t (*io_write)(io_ctx, const char *buf, size_t len);
+
 struct tlsuv_engine_s {
 
+    /**
+     * set TLS engine abstract IO
+     * @param self engine
+     * @param io_ctx IO object passed into [io_read] and [io_write] callbacks
+     * @param io_read read callback, called when TLS engine requires input SSL bytes
+     * @param io_write write callback, called when TLS engine requires output SSL bytes
+     */
+    void (*set_io)(tlsuv_engine_t self, io_ctx, io_read, io_write);
+
+    /**
+     * sets TLS engine file descriptor IO (usually socket)
+     * @param self engine
+     * @param fd file descriptor
+     */
+    void (*set_io_fd)(tlsuv_engine_t self, uv_os_fd_t fd);
+
+    /**
+     * set requested ALPN protocols
+     * @param self
+     * @param protocols
+     * @param len
+     */
     void (*set_protocols)(tlsuv_engine_t self, const char **protocols, int len);
 
     tls_handshake_state (*handshake_state)(tlsuv_engine_t self);
@@ -59,50 +89,43 @@ struct tlsuv_engine_s {
     /**
      * Initiates/continues TLS handshake.
      * @param self
-     * @param in data received from TSL peer
-     * @param in_bytes number of bytes in inbound buffer
-     * @param out data to be send to TLS peer
-     * @param out_bytes number of bytes to be sent
-     * @param maxout outbound buffer size
      */
-    tls_handshake_state
-    (*handshake)(tlsuv_engine_t self, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
+    tls_handshake_state (*handshake)(tlsuv_engine_t self);
 
     /**
      * Returns negotiated ALPN
      * @param self
      */
     const char* (*get_alpn)(tlsuv_engine_t self);
-    /**
-     * Genereate TSL close notify.
-     * @param self
-     * @param out outbound buffer
-     * @param out_bytes number of outbound bytes written
-     * @param maxout size of outbound buffer
-     */
-    int (*close)(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout);
 
     /**
-      * wraps application data into ssl stream format, out bound buffer contains bytes to be sent to TSL peer
+     * Generate TSL close notify.
+     * @param self
+     */
+    int (*close)(tlsuv_engine_t self);
+
+    /**
+      * writes application data into ssl stream
       * @param engine
       * @param data
       * @param data_len
-      * @param out
-      * @param out_bytes
-      * @param maxout
+      * @return number of written bytes or error
       */
-    int (*write)(tlsuv_engine_t self, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
+    int (*write)(tlsuv_engine_t self, const char *data, size_t data_len);
 
     /**
-     * process bytes received from TLS peer. Application data is placed in out buffer.
+     * read application bytes from ssl stream.
      * @param engine
-     * @param ssl_in bytes received from TLS peer
-     * @param ssl_in_len number of bytes received
      * @param out buffer for application data
      * @param out_bytes number of bytes received
      * @param maxout size of out buffer
+     * @return [TLS_OK] - successful read, no more data for reading
+     *         [TLS_MORE_AVAILABLE] - successful read, more data available for reading
+     *         [TLS_AGAIN] - no more data is available from underlying IO
+     *         [TLS_EOF] - peer send close notify
+     *         [TLS_ERR] - TLS engine encountered a TLS error
      */
-    int (*read)(tlsuv_engine_t self, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
+    int (*read)(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout);
 
     const char* (*strerror)(tlsuv_engine_t engine);
 

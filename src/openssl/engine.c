@@ -27,6 +27,7 @@
 #include <openssl/x509.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <assert.h>
 
 #include "keys.h"
 
@@ -59,8 +60,12 @@ struct openssl_engine {
     struct tlsuv_engine_s api;
     SSL *ssl;
     char *alpn;
-    BIO *in;
-    BIO *out;
+
+    BIO *bio;
+    io_ctx io;
+    io_read read_f;
+    io_write write_f;
+
     unsigned long error;
 };
 
@@ -70,20 +75,22 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
 static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key);
 
 tlsuv_engine_t new_openssl_engine(void *ctx, const char *host);
+static void set_io(tlsuv_engine_t , io_ctx , io_read , io_write);
+static void set_io_fd(tlsuv_engine_t , uv_os_fd_t);
 static void set_protocols(tlsuv_engine_t self, const char** protocols, int len);
 
 static tls_handshake_state tls_hs_state(tlsuv_engine_t engine);
 static tls_handshake_state
-tls_continue_hs(tlsuv_engine_t self, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout);
+tls_continue_hs(tlsuv_engine_t self);
 
 static const char* tls_get_alpn(tlsuv_engine_t self);
 
-static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout);
+static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len);
 
 static int
-tls_read(tlsuv_engine_t self, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout);
+tls_read(tlsuv_engine_t self, char *ssl_in, size_t *ssl_in_len, size_t out);
 
-static int tls_close(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout);
+static int tls_close(tlsuv_engine_t self);
 
 static int tls_reset(tlsuv_engine_t self);
 
@@ -108,6 +115,9 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
 
 static void msg_cb (int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg);
 static void info_cb(const SSL *s, int where, int ret);
+
+static BIO_METHOD *BIO_s_engine(void);
+
 
 #if _WIN32
 static X509_STORE *load_system_certs();
@@ -134,16 +144,18 @@ static tls_context openssl_context_api = {
 
 
 static struct tlsuv_engine_s openssl_engine_api = {
-    .set_protocols = set_protocols,
-    .handshake_state = tls_hs_state,
-    .handshake = tls_continue_hs,
-    .get_alpn = tls_get_alpn,
-    .close = tls_close,
-    .write = tls_write,
-    .read = tls_read,
-    .reset = tls_reset,
-    .free = tls_free,
-    .strerror = tls_eng_error,
+        .set_io = set_io,
+        .set_io_fd = set_io_fd,
+        .set_protocols = set_protocols,
+        .handshake_state = tls_hs_state,
+        .handshake = tls_continue_hs,
+        .get_alpn = tls_get_alpn,
+        .close = tls_close,
+        .write = tls_write,
+        .read = tls_read,
+        .reset = tls_reset,
+        .free = tls_free,
+        .strerror = tls_eng_error,
 };
 
 static const char* tls_lib_version() {
@@ -566,9 +578,14 @@ tlsuv_engine_t new_openssl_engine(void *ctx, const char *host) {
     engine->api = openssl_engine_api;
 
     engine->ssl = SSL_new(context->ctx);
-    engine->in = BIO_new(BIO_s_mem());
-    engine->out = BIO_new(BIO_s_mem());
-    SSL_set_bio(engine->ssl, engine->in, engine->out);
+//    engine->in = BIO_new(BIO_s_mem());
+//    engine->out = BIO_new(BIO_s_mem());
+//
+//    BIO *engine_bio = BIO_new(BIO_s_engine());
+//    BIO_set_data(engine_bio, engine);
+//    BIO_set_init(engine_bio, 1);
+//    SSL_set_bio(engine->ssl, engine_bio, engine_bio);
+
     SSL_set_tlsext_host_name(engine->ssl, host);
     SSL_set1_host(engine->ssl, host);
     SSL_set_connect_state(engine->ssl);
@@ -576,6 +593,28 @@ tlsuv_engine_t new_openssl_engine(void *ctx, const char *host) {
     SSL_set_app_data(engine->ssl, engine);
 
     return &engine->api;
+}
+
+static void set_io(tlsuv_engine_t self, io_ctx io, io_read rdf, io_write wrtf) {
+    struct openssl_engine *e = (struct openssl_engine *) self;
+    assert(e->bio == NULL);
+
+    e->bio = BIO_new(BIO_s_engine());
+    BIO_set_data(e->bio, e);
+    BIO_set_init(e->bio, true);
+    SSL_set_bio(e->ssl, e->bio, e->bio);
+
+    e->io = io;
+    e->read_f = rdf;
+    e->write_f = wrtf;
+}
+
+static void set_io_fd(tlsuv_engine_t self, uv_os_fd_t fd) {
+    struct openssl_engine *e = (struct openssl_engine *) self;
+    assert(e->bio == NULL);
+
+    e->bio = BIO_new_fd(fd, false);
+    SSL_set_bio(e->ssl, e->bio, e->bio);
 }
 
 static void set_protocols(tlsuv_engine_t self, const char** protocols, int len) {
@@ -807,21 +846,19 @@ static tls_handshake_state tls_hs_state(tlsuv_engine_t engine) {
     }
 }
 
+static int print_err_cb(const char *e, size_t len, void* v) {
+    UM_LOG(WARN, "%.*s", (int)len, e);
+}
 
 static tls_handshake_state
-tls_continue_hs(tlsuv_engine_t self, char *in, size_t in_bytes, char *out, size_t *out_bytes, size_t maxout) {
+tls_continue_hs(tlsuv_engine_t self) {
     struct openssl_engine *eng = (struct openssl_engine *) self;
-    if (in_bytes > 0) {
-        BIO_write(eng->in, (const unsigned char *)in, (int)in_bytes);
-    }
     ERR_clear_error();
 
     int rc = SSL_do_handshake(eng->ssl);
 
-    if (BIO_ctrl_pending(eng->out) > 0) {
-        *out_bytes = BIO_read(eng->out, (unsigned char *) out, (int)maxout);
-    } else {
-        *out_bytes = 0;
+    if (rc != 1) {
+        ERR_print_errors_cb(print_err_cb, NULL);
     }
 
     if (rc == 1) { // handshake completed
@@ -856,9 +893,13 @@ static const char* tls_get_alpn(tlsuv_engine_t self) {
     return eng->alpn;
 }
 
-static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len, char *out, size_t *out_bytes, size_t maxout) {
+static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len) {
     struct openssl_engine *eng = (struct openssl_engine *) self;
     ERR_clear_error();
+
+    if (data_len > INT_MAX) {
+        data_len = INT_MAX;
+    }
 
     size_t wrote = 0;
     while (data_len > wrote) {
@@ -871,21 +912,13 @@ static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len, cha
         wrote += written;
     }
 
-    if (BIO_ctrl_pending(eng->out) > 0)
-        *out_bytes = BIO_read(eng->out, (unsigned char *)out, (int)maxout);
-    else
-        *out_bytes = 0;
-
-    return (int)BIO_ctrl_pending(eng->out);
+    return (int)wrote;
 }
 
 
 static int
-tls_read(tlsuv_engine_t self, const char *ssl_in, size_t ssl_in_len, char *out, size_t *out_bytes, size_t maxout) {
+tls_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout) {
     struct openssl_engine *eng = (struct openssl_engine *) self;
-    if (ssl_in_len > 0 && ssl_in != NULL) {
-        BIO_write(eng->in, (const unsigned char *)ssl_in, (int)ssl_in_len);
-    }
 
     int err = SSL_ERROR_NONE;
     uint8_t *writep = (uint8_t*)out;
@@ -904,11 +937,14 @@ tls_read(tlsuv_engine_t self, const char *ssl_in, size_t ssl_in_len, char *out, 
         writep += read_bytes;
     }
 
-    *out_bytes = total_out;
+    if (total_out > 0) {
+        *out_bytes = total_out;
+        return SSL_pending(eng->ssl) ? TLS_MORE_AVAILABLE : TLS_OK;
+    }
 
-    // this indicates that more bytes are needed to complete SSL frame
+    *out_bytes = 0;
     if (err == SSL_ERROR_WANT_READ) {
-        return BIO_ctrl_pending(eng->out) > 0 ? TLS_HAS_WRITE : TLS_OK;
+        return TLS_AGAIN;
     }
 
     if (SSL_get_shutdown(eng->ssl)) {
@@ -920,15 +956,10 @@ tls_read(tlsuv_engine_t self, const char *ssl_in, size_t ssl_in_len, char *out, 
         UM_LOG(ERR, "openssl read: %s", tls_error(eng->error));
         return TLS_ERR;
     }
-
-    if (BIO_ctrl_pending(eng->in) > 0 || SSL_pending(eng->ssl)) {
-        return TLS_MORE_AVAILABLE;
-    }
-
-    return BIO_ctrl_pending(eng->out) > 0 ? TLS_HAS_WRITE : TLS_OK;
+    return TLS_OK;
 }
 
-static int tls_close(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout) {
+static int tls_close(tlsuv_engine_t self) {
     struct openssl_engine *eng = (struct openssl_engine *) self;
     ERR_clear_error();
 
@@ -937,10 +968,6 @@ static int tls_close(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t m
         int err = SSL_get_error(eng->ssl, rc);
         UM_LOG(WARN, "openssl shutdown: %s", tls_error(err));
     }
-    if (BIO_ctrl_pending(eng->out) > 0)
-        *out_bytes = BIO_read(eng->out, (unsigned char *)out, (int)maxout);
-    else
-        *out_bytes = 0;
     return 0;
 }
 
@@ -1074,3 +1101,111 @@ static X509_STORE *load_system_certs() {
     return store;
 }
 #endif
+
+
+static int engine_bio_write(BIO *b, const char *data, size_t len, size_t *written) {
+    struct openssl_engine *e = BIO_get_data(b);
+    assert(e);
+    assert(e->write_f);
+
+    ssize_t r = e->write_f(e->io, data, len);
+    if (r > 0) {
+        *written = r;
+        return 1;
+    }
+
+    if (r == TLS_AGAIN) {
+        *written = 0;
+        BIO_set_retry_write(b);
+        return -1;
+    }
+
+    return (int)r;
+}
+
+static int engine_bio_read(BIO *b, char *data, size_t len, size_t *len_out) {
+    struct openssl_engine *e = BIO_get_data(b);
+
+    assert(e->read_f);
+
+    ssize_t rc = e->read_f(e->io, data, len);
+    if (rc > 0) {
+        *len_out = rc;
+        return 1;
+    } else if (rc == TLS_AGAIN) {
+        *len_out = rc;
+        BIO_set_retry_read(b);
+        return 0;
+    } else if (rc == 0) {
+        *len_out = 0;
+        return 0;
+    }
+    return 0;
+}
+
+static long engine_bio_ctrl(BIO *b, int cmd, long larg, void *pargs) {
+    long ret = 0;
+
+    fflush(stderr);
+
+    switch(cmd)
+    {
+        case BIO_CTRL_FLUSH: // 11
+        case BIO_CTRL_DGRAM_SET_CONNECTED: // 32
+        case BIO_CTRL_DGRAM_SET_PEER: // 44
+        case BIO_CTRL_DGRAM_GET_PEER: // 46
+            ret = 1;
+            break;
+        case BIO_CTRL_WPENDING: // 13
+            ret = 0;
+            break;
+        case BIO_CTRL_DGRAM_QUERY_MTU: // 40
+        case BIO_CTRL_DGRAM_GET_FALLBACK_MTU: // 47
+            ret = 1500;
+//             ret = 9000; // jumbo?
+            break;
+        case BIO_CTRL_DGRAM_GET_MTU_OVERHEAD: // 49
+            ret = 96; // random guess
+            break;
+        case BIO_CTRL_DGRAM_SET_PEEK_MODE: // 71
+            //((custom_bio_data_t *)BIO_get_data(b))->peekmode = !!larg;
+            ret = 0;
+            break;
+        case BIO_CTRL_PUSH: // 6
+        case BIO_CTRL_POP: // 7
+        case BIO_CTRL_DGRAM_SET_NEXT_TIMEOUT: // 45
+            ret = 0;
+            break;
+        default:
+            UM_LOG(WARN, "unknown cmd: BIO[%p], cmd[%d], larg[%ld]", b, cmd, larg);
+            ret = 0;
+            break;
+    }
+
+    return ret;
+}
+
+static int engine_bio_create(BIO *b) {
+    return 1;
+}
+static int engine_bio_destroy(BIO *b) {
+    return 1;
+}
+
+static BIO_METHOD *engine_bio_meth = NULL;
+BIO_METHOD *BIO_s_engine(void)
+{
+    if (engine_bio_meth == NULL) {
+
+        engine_bio_meth = BIO_meth_new(BIO_get_new_index() | BIO_TYPE_SOURCE_SINK, "BIO_s_engine");
+
+        BIO_meth_set_write_ex(engine_bio_meth, engine_bio_write);
+        BIO_meth_set_read_ex(engine_bio_meth, engine_bio_read);
+        BIO_meth_set_ctrl(engine_bio_meth, engine_bio_ctrl);
+        BIO_meth_set_create(engine_bio_meth, engine_bio_create);
+        BIO_meth_set_destroy(engine_bio_meth, engine_bio_destroy);
+
+    }
+    return engine_bio_meth;
+}
+
