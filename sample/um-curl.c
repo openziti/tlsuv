@@ -28,10 +28,10 @@ struct app_ctx {
 static void do_request(uv_timer_t *t) {
     struct app_ctx *app = t->data;
 
-    tlsuv_http_req_t *r = tlsuv_http_req(&app->clt, "GET", app->path, resp_cb, NULL);
-    r->resp.body_cb = body_cb;
-
     if (app->count-- > 0) {
+        tlsuv_http_req_t *r = tlsuv_http_req(&app->clt, "GET", app->path, resp_cb, NULL);
+        r->resp.body_cb = body_cb;
+
         uv_timer_start(t, do_request, app->cycle * 1000, 0);
     } else {
         uv_close((uv_handle_t *) t, NULL);

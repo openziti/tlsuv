@@ -14,6 +14,7 @@
 
 #include "catch.hpp"
 #include "p11.h"
+#include "util.h"
 
 #include <cstring>
 #include <tlsuv/tls_engine.h>
@@ -298,6 +299,50 @@ TEST_CASE("gen-pkcs11-key", "[key]") {
     }
     key->free(key);
     tls->free_ctx(tls);
+}
+
+TEST_CASE("wraparound buffer test", "[util]") {
+    WRAPAROUND_BUFFER(,16) buf{};
+    WAB_INIT(buf);
+
+    char *p;
+    size_t len;
+    WAB_PUT_SPACE(buf, p, len);
+    CHECK(p == buf.putp);
+    CHECK(len == sizeof(buf.buf));
+
+    WAB_GET_SPACE(buf, p, len);
+    CHECK(p == buf.getp);
+    CHECK(len == 0);
+
+    WAB_UPDATE_PUT(buf, 10);
+    CHECK(buf.putp == buf.buf + 10);
+    WAB_PUT_SPACE(buf, p, len);
+    CHECK(p == buf.putp);
+    CHECK(len == sizeof(buf.buf) - 10);
+    WAB_GET_SPACE(buf, p, len);
+    CHECK(p == buf.getp);
+    CHECK(len == 10);
+
+    WAB_UPDATE_GET(buf, 6);
+    CHECK(buf.getp == p + 6);
+    WAB_GET_SPACE(buf, p, len);
+    CHECK(p == buf.getp);
+    CHECK(len == 4);
+
+    // wrap around
+    WAB_UPDATE_PUT(buf, 6);
+    CHECK(buf.putp - buf.buf == 0);
+    WAB_PUT_SPACE(buf, p, len);
+    CHECK(p == buf.putp);
+    CHECK(len == buf.getp - buf.putp - 1);
+
+    WAB_GET_SPACE(buf, p, len);
+    CHECK(p == buf.getp);
+    CHECK(len == 10);
+
+    WAB_UPDATE_GET(buf, len);
+    CHECK(buf.getp == buf.buf);
 }
 
 #endif

@@ -42,8 +42,8 @@ WRAPAROUND_BUFFER(ssl_buf_s, TLS_BUF_SZ);
 void tls_alloc(uv_link_t *l, size_t suggested, uv_buf_t *buf) {
     tls_link_t *tls_link = (tls_link_t *) l;
 
+    // use inbound buffer
     WAB_PUT_SPACE(*tls_link->ssl_in, buf->base, buf->len);
-    UM_LOG(INFO, "allocated %zd", buf->len);
 }
 
 static int tls_read_start(uv_link_t *l) {
@@ -71,12 +71,13 @@ static int tls_read_start(uv_link_t *l) {
 static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
     tls_link_t *tls = (tls_link_t *) l;
     tls_handshake_state hs_state = tls->engine->handshake_state(tls->engine);
-    UM_LOG(INFO, "TLS(%p)[%d]: %zd", tls, hs_state, nread);
+    UM_LOG(TRACE, "TLS(%p)[%d]: %zd", tls, hs_state, nread);
 
     if (nread >= 0) {
         WAB_UPDATE_PUT(*tls->ssl_in, nread);
     } else if (nread == UV_ENOBUFS) {
         // our ssl buf is full
+        // try to flush some data to consumer below
     } else {
         UM_LOG(ERR, "TLS read %zd(%s)", nread, uv_strerror((int)nread));
         if (hs_state == TLS_HS_CONTINUE) {
@@ -127,7 +128,7 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
 
             size_t read_len;
             rc = tls->engine->read(tls->engine, buf.base, (size_t *)&read_len, buf.len);
-            UM_LOG(INFO, "TLS(%p) produced %zd application byte (rc=%d)", tls, read_len, rc);
+            UM_LOG(VERB, "TLS(%p) produced %zd application byte (rc=%d)", tls, read_len, rc);
 
             if (read_len > 0) {
                 uv_link_propagate_read_cb(l, (ssize_t)read_len, &buf);
@@ -214,13 +215,13 @@ static void tls_link_flush_io(tls_link_t *tls, uv_link_write_cb cb, void *ctx) {
             req = calloc(1, sizeof(struct flush_req));
             req->b = malloc(TLS_BUF_SZ);
         }
-        UM_LOG(INFO, "writing %zd bytes", len);
         memcpy(req->b + total, p, len);
         total += len;
         WAB_UPDATE_GET(*tls->ssl_out, len);
         WAB_GET_SPACE(*tls->ssl_out, p, len);
     }
     if (req) {
+        UM_LOG(TRACE, "flushing %zd bytes", len);
         uv_buf_t b = uv_buf_init(req->b, total);
         req->cb = cb;
         req->ctx = ctx;
@@ -240,7 +241,7 @@ static ssize_t tls_link_io_write(io_ctx ctx, const char *data, size_t data_len) 
     if (data_len > INT_MAX) {
         data_len = INT_MAX;
     }
-    UM_LOG(INFO, "io buffering %zd bytes", data_len);
+    UM_LOG(TRACE, "io buffering %zd bytes", data_len);
     size_t ret = data_len;
     while (data_len > 0) {
         char *sslp;
@@ -278,7 +279,7 @@ static ssize_t tls_link_io_read(io_ctx ctx, char *data, size_t max) {
 
     memcpy(data, ssl_p, max);
     WAB_UPDATE_GET(*tls->ssl_in, max);
-    UM_LOG(INFO, "read %zd/%zd bytes", max, avail);
+    UM_LOG(TRACE, "read %zd/%zd bytes", max, avail);
 
     return (ssize_t)max;
 }
