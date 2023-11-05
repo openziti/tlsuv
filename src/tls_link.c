@@ -221,7 +221,7 @@ static void tls_link_flush_io(tls_link_t *tls, uv_link_write_cb cb, void *ctx) {
         WAB_GET_SPACE(*tls->ssl_out, p, len);
     }
     if (req) {
-        UM_LOG(TRACE, "flushing %zd bytes", len);
+        UM_LOG(TRACE, "flushing %zd bytes", total);
         uv_buf_t b = uv_buf_init(req->b, total);
         req->cb = cb;
         req->ctx = ctx;

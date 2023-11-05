@@ -704,6 +704,8 @@ static int tls_reset(tlsuv_engine_t self) {
     struct openssl_engine *e = (struct openssl_engine *)self;
     ERR_clear_error();
 
+    e->bio = NULL;
+
     if (!SSL_clear(e->ssl)) {
         int err = SSL_get_error(e->ssl, 0);
         UM_LOG(ERR, "error resetting TSL enging: %d(%s)", err, tls_error(err));
