@@ -578,13 +578,6 @@ tlsuv_engine_t new_openssl_engine(void *ctx, const char *host) {
     engine->api = openssl_engine_api;
 
     engine->ssl = SSL_new(context->ctx);
-//    engine->in = BIO_new(BIO_s_mem());
-//    engine->out = BIO_new(BIO_s_mem());
-//
-//    BIO *engine_bio = BIO_new(BIO_s_engine());
-//    BIO_set_data(engine_bio, engine);
-//    BIO_set_init(engine_bio, 1);
-//    SSL_set_bio(engine->ssl, engine_bio, engine_bio);
 
     SSL_set_tlsext_host_name(engine->ssl, host);
     SSL_set1_host(engine->ssl, host);
@@ -613,7 +606,7 @@ static void set_io_fd(tlsuv_engine_t self, uv_os_fd_t fd) {
     struct openssl_engine *e = (struct openssl_engine *) self;
     assert(e->bio == NULL);
 
-    e->bio = BIO_new_fd(fd, false);
+    e->bio = BIO_new_socket(fd, false);
     SSL_set_bio(e->ssl, e->bio, e->bio);
 }
 
@@ -850,6 +843,7 @@ static tls_handshake_state tls_hs_state(tlsuv_engine_t engine) {
 
 static int print_err_cb(const char *e, size_t len, void* v) {
     UM_LOG(WARN, "%.*s", (int)len, e);
+    return 1;
 }
 
 static tls_handshake_state

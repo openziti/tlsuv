@@ -18,6 +18,7 @@
 #include "tlsuv/tls_link.h"
 #include "um_debug.h"
 #include "util.h"
+#include <string.h>
 
 static int tls_read_start(uv_link_t *l);
 static void tls_alloc(uv_link_t *l, size_t suggested, uv_buf_t *buf);
@@ -36,7 +37,7 @@ static const uv_link_methods_t tls_methods = {
     .read_cb_override = tls_read_cb
 };
 
-#define TLS_BUF_SZ (32 * 1024)
+#define TLS_BUF_SZ (64 * 1024)
 WRAPAROUND_BUFFER(ssl_buf_s, TLS_BUF_SZ);
 
 void tls_alloc(uv_link_t *l, size_t suggested, uv_buf_t *buf) {
@@ -295,4 +296,13 @@ int tlsuv_tls_link_init(tls_link_t *tls, tlsuv_engine_t engine, tls_handshake_cb
     engine->set_io(engine, tls, tls_link_io_read, tls_link_io_write);
     tls->hs_cb = cb;
     return 0;
+}
+
+void tlsuv_tls_link_free(tls_link_t *tls) {
+    if (tls) {
+        free(tls->ssl_out);
+        tls->ssl_out = NULL;
+        free(tls->ssl_in);
+        tls->ssl_in = NULL;
+    }
 }

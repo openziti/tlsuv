@@ -202,7 +202,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
         perror("failed to conenct");
     }
 
-    engine->set_io_fd(engine, sock);
+    engine->set_io_fd(engine, (uv_os_fd_t)sock);
 
     // do handshake
     do {

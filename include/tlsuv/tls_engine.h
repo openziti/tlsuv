@@ -17,12 +17,10 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <uv.h>
 
 #if _WIN32
-#include <uv/win.h>
 #pragma comment (lib, "crypt32.lib")
-#else
-#include <uv/unix.h>
 #endif
 
 #ifdef __cplusplus

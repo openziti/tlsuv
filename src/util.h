@@ -24,6 +24,7 @@
  * get space for putting bytes into the buffer
  */
 #define WAB_PUT_SPACE(b,p,l) do{ \
+if ((b).putp == (b).buf + sizeof((b).buf) && (b).getp != (b).buf) (b).putp = (b).buf; \
 p = (b).putp;                                 \
 if ((b).putp >= (b).getp) l = (b).buf + sizeof((b).buf) - (b).putp; \
 else l = (b).getp - (b).putp - 1; \
@@ -35,7 +36,7 @@ else l = (b).getp - (b).putp - 1; \
 #define WAB_UPDATE_PUT(b,l) do { \
 wab_check_bounds((b), (b).putp + l);                              \
 (b).putp += l;                     \
-if ((b).putp - (b).buf == sizeof((b).buf)) (b).putp = (b).buf; \
+if ((b).putp - (b).buf == sizeof((b).buf) && (b).getp != (b).buf) (b).putp = (b).buf; \
 } while(0)
 
 /**
@@ -51,9 +52,10 @@ else l = (b).buf + sizeof((b).buf) - (b).getp; \
 /**
  * update read pointer
  */
-#define WAB_UPDATE_GET(b,l) do { \
+#define WAB_UPDATE_GET(b, l) do { \
 wab_check_bounds((b), (b).getp + l);                              \
-(b).getp += l;                     \
+(b).getp += l;                   \
+if ((b).getp == (b).putp) (b).getp = (b).putp = (b).buf; \
 if ((b).getp == (b).buf + sizeof((b).buf)) (b).getp = (b).buf; \
 } while(0)
 

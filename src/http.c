@@ -553,6 +553,7 @@ int tlsuv_http_init(uv_loop_t *l, tlsuv_http_t *clt, const char *url) {
     tcp_src_keepalive(src, 1, 3);
     int rc = tlsuv_http_init_with_src(l, clt, url, (tlsuv_src_t *) src);
     clt->own_src = true;
+    clt->tls_link = (tls_link_t){0};
     return rc;
 }
 
@@ -742,6 +743,7 @@ static void free_http(tlsuv_http_t *clt) {
         free(clt->src);
         clt->src = NULL;
     }
+    tlsuv_tls_link_free(&clt->tls_link);
 }
 
 int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
