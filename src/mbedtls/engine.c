@@ -345,6 +345,7 @@ static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uin
             UM_LOG(WARN, "failed to create Trust object: %s", err);
             CFRelease(error);
         }
+        CFRelease(x509policy);
         CFRelease(certs);
     }
 #endif

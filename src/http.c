@@ -218,6 +218,7 @@ static void make_links(tlsuv_http_t *clt, uv_link_t *conn_src) {
             clt->engine->set_protocols(clt->engine, supported_alpn, supported_apln_num);
         }
 
+        tlsuv_tls_link_free(&clt->tls_link);
         tlsuv_tls_link_init(&clt->tls_link, clt->engine, on_tls_handshake);
         clt->tls_link.data = clt;
 

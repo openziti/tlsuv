@@ -670,7 +670,9 @@ static int tls_verify_signature(void *cert, enum hash_algo md, const char* data,
         unsigned long err = ERR_peek_error();
         UM_LOG(WARN, "no pub key: %ld/%s", err, ERR_lib_error_string(err));
     }
-    return verify_signature(pk, md, data, datalen, sig, siglen);
+    int rc = verify_signature(pk, md, data, datalen, sig, siglen);
+    EVP_PKEY_free(pk);
+    return rc;
 }
 
 static void tls_free_ctx(tls_context *ctx) {
