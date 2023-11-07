@@ -901,11 +901,21 @@ static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len) {
 
     size_t wrote = 0;
     while (data_len > wrote) {
-        size_t written;
-        if (!SSL_write_ex(eng->ssl, (const unsigned char *)(data + wrote), data_len - wrote, &written)) {
-            eng->error = ERR_get_error();
-            UM_LOG(ERR, "openssl: write error: %s", tls_error(eng->error));
-            return -1;
+        size_t written = 0;
+        int ret = SSL_write_ex(eng->ssl, (const unsigned char *) (data + wrote), data_len - wrote, &written);
+        if (ret == 0) {
+            int err = SSL_get_error(eng->ssl, 0);
+            if (err == SSL_ERROR_WANT_WRITE) {
+                if (wrote > 0) {
+                    return (int)wrote;
+                } else {
+                    return TLS_AGAIN;
+                }
+            } else {
+                eng->error = err;
+                UM_LOG(ERR, "openssl: write error: %s", tls_error(eng->error));
+                return -1;
+            }
         }
         wrote += written;
     }
