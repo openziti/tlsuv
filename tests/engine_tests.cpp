@@ -188,13 +188,12 @@ TEST_CASE("ALPN negotiation", "[engine]") {
         "http1.1"
     };
     int num_protos = sizeof(protos)/sizeof(*protos);
-//    tls->api->set_alpn_protocols(tls->ctx, protos, 2);
     tlsuv_engine_t engine = tls->new_engine(tls, host);
     engine->set_protocols(engine, protos, num_protos);
 
     SOCKET sock = socket(addr->ai_family, SOCK_STREAM, 0);
 
-    struct sockaddr_in *address = reinterpret_cast<sockaddr_in *>(addr->ai_addr);
+    auto address = reinterpret_cast<sockaddr_in *>(addr->ai_addr);
     int addrlen = addr->ai_addrlen;
 
     printf("sin_family = %d, %s:%d \n", address->sin_family, inet_ntoa(address->sin_addr), htons(address->sin_port));
@@ -203,14 +202,11 @@ TEST_CASE("ALPN negotiation", "[engine]") {
         perror("failed to conenct");
     }
 
-    // do handshake
-    char ssl_in[32 * 1024];
-    char ssl_out[32 * 1024];
-    size_t in_bytes = 0;
-    size_t out_bytes = 0;
+    engine->set_io_fd(engine, (uv_os_fd_t)sock);
 
+    // do handshake
     do {
-        tls_handshake_state state = engine->handshake(engine, ssl_in, in_bytes, ssl_out, &out_bytes, sizeof(ssl_out));
+        tls_handshake_state state = engine->handshake(engine);
 
         REQUIRE(state != TLS_HS_ERROR);
 
@@ -219,22 +215,12 @@ TEST_CASE("ALPN negotiation", "[engine]") {
             break;
         }
 
-        if (out_bytes > 0) {
-            printf("hs: out bytes = %zd\n", out_bytes);
-            send(sock, ssl_out, out_bytes, 0);
-        }
-
-        in_bytes = recv(sock, ssl_in, sizeof(ssl_in), 0);
-        printf("hs: in bytes = %zd\n", in_bytes);
-
     } while (true);
 
     const char *alpn = engine->get_alpn(engine);
     CHECK_THAT(alpn, Catch::Matches("h2"));
 
-    rc = engine->close(engine, ssl_out, &out_bytes, sizeof(ssl_out));
-    if (rc == 0 && out_bytes > 0)
-        send(sock, ssl_out, out_bytes, 0);
+    engine->close(engine);
 
 #if _WIN32
     closesocket(sock);

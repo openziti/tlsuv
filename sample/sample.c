@@ -17,7 +17,8 @@
 #include <tlsuv/tlsuv.h>
 #include <uv.h>
 
-#define HOST "www.wttr.in"
+#define HOST "httpbingo.org"
+#define PATH "/json"
 
 static void alloc(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
     buf->base = (char*) malloc(suggested_size);
@@ -64,7 +65,7 @@ void on_connect(uv_connect_t *cr, int status) {
     tlsuv_stream_read_start(mbed, alloc, on_data);
 
     uv_write_t *wr = malloc(sizeof(uv_write_t));
-    char req[] = "GET / HTTP/1.1\r\n"
+    char req[] = "GET " PATH " HTTP/1.1\r\n"
                  "Accept: */*\r\n"
                  "Connection: close\r\n"
                  "Host: " HOST "\r\n"

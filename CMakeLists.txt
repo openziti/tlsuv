@@ -41,7 +41,8 @@ set(tlsuv_sources
         src/compression.h
         src/p11.c
         src/p11.h
-        )
+        src/util.h
+)
 
 if(USE_OPENSSL)
     set(tlsImpl openssl)

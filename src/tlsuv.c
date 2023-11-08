@@ -255,6 +255,8 @@ int tlsuv_stream_free(tlsuv_stream_t *clt) {
         free(clt->socket);
         clt->socket = NULL;
     }
+    tlsuv_tls_link_free(&clt->tls_link);
+
     return 0;
 }
 
