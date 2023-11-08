@@ -66,10 +66,12 @@ TEST_CASE("cancel connect", "[stream]") {
 
     struct test_ctx {
         int connect_result;
+        bool connect_called;
         bool close_called;
     } test_ctx;
 
     test_ctx.connect_result = 0;
+    test_ctx.connect_called = false;
     test_ctx.close_called = false;
 
     s.data = &test_ctx;
@@ -79,6 +81,7 @@ TEST_CASE("cancel connect", "[stream]") {
     int rc = tlsuv_stream_connect(&cr, &s, "1.1.1.1", 5555, [](uv_connect_t *r, int status) {
         auto ctx = (struct test_ctx *) r->data;
         ctx->connect_result = status;
+        ctx->connect_called = true;
     });
 
     uv_timer_t t;
@@ -100,6 +103,7 @@ TEST_CASE("cancel connect", "[stream]") {
 
     CHECK(rc == 0);
     CHECK(test_ctx.close_called);
+    CHECK(test_ctx.connect_called);
     CHECK(test_ctx.connect_result == UV_ECANCELED);
 
     tlsuv_stream_free(&s);

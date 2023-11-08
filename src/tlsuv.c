@@ -22,7 +22,11 @@
 
 #if _WIN32
 #include "win32_compat.h"
+#include <winsock2.h>
+#define ioctl ioctlsocket
+#define get_error() WSAGetLastError()
 #else
+#define get_error() errno
 #include <sys/ioctl.h>
 #endif
 
@@ -139,8 +143,8 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
 }
 
 int tlsuv_stream_keepalive(tlsuv_stream_t *clt, int keepalive, unsigned int delay) {
-    uv_os_fd_t s;
-    if (uv_fileno((const uv_handle_t *) &clt->watcher, &s) == 0) {
+    uv_os_sock_t s;
+    if (uv_fileno((const uv_handle_t *) &clt->watcher, (uv_os_fd_t *) &s) == 0) {
         int count = 10;
         int intvl = 1;
         setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
@@ -188,7 +192,18 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     getsockopt(clt->sock, SOL_SOCKET, SO_ERROR, &err, &l);
 
     if (status == 0 && err != 0) {
+#if _WIN32
+        switch(err) {
+            case WSAECONNREFUSED: status = UV_ECONNREFUSED; break;
+            case WSAECANCELLED: status = UV_ECANCELED; break;
+            case WSAECONNRESET: status = UV_ECONNRESET; break;
+            case WSAECONNABORTED: status = UV_ECONNABORTED; break;
+            default:
+                status = -err;
+        }
+#else
         status = -(err);
+#endif
     }
 
     if (status != 0) {
@@ -204,7 +219,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
         if (clt->alpn_protocols) {
             clt->tls_engine->set_protocols(clt->tls_engine, clt->alpn_protocols, clt->alpn_count);
         }
-        clt->tls_engine->set_io_fd(clt->tls_engine, clt->sock);
+        clt->tls_engine->set_io_fd(clt->tls_engine, (uv_os_fd_t) clt->sock);
     }
 
     int rc;
@@ -361,19 +376,24 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
 
     uv_os_sock_t s = new_socket(addr);
     if (s < 0) {
-        return -errno;
+        return -get_error();
     }
 
     tlsuv_stream_open(req, clt, s, cb);
 
     int ret = connect(clt->sock, addr->ai_addr, addr->ai_addrlen);
     if (ret == -1) {
-        switch (errno) {
+        int error = get_error();
+        switch (error) {
             case EINPROGRESS:
             case EWOULDBLOCK:
+#if _WIN32
+            case WSAEWOULDBLOCK:
+            case WSAEINPROGRESS:
+#endif
                 break;
             default:
-                cb(req, -errno);
+                cb(req, -error);
                 clt->conn_req = NULL;
                 return 0;
         }
@@ -383,8 +403,9 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
 
 static void on_resolve(uv_getaddrinfo_t *req, int status, struct addrinfo *addr) {
     tlsuv_stream_t *clt = req->data;
-    if (clt) {
+    if (clt && clt->conn_req) {
         clt->resolve_req = NULL;
+
         if (status == 0) {
             tlsuv_stream_connect_addr(clt->conn_req, clt, addr, clt->conn_req->cb);
         } else if (status != UV_ECANCELED) {
