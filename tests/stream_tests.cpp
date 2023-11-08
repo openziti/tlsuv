@@ -52,8 +52,8 @@ TEST_CASE("stream connect fail", "[stream]") {
         test.run();
         CHECK(((rc == 0 && conn_cb_called == 1) || (rc != 0 && conn_cb_called == 0)));
     }
+    tlsuv_stream_close(&s, (uv_close_cb)tlsuv_stream_free);
 
-    tlsuv_stream_free(&s);
     tls->free_ctx(tls);
 }
 
