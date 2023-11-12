@@ -16,11 +16,11 @@
 #define TLSUV_H
 
 #include <uv.h>
-#include <uv_link_t.h>
 
 #include "tcp_src.h"
 #include "tls_engine.h"
 #include "tls_link.h"
+#include "queue.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,25 +39,94 @@ const char* tlsuv_stream_get_protocol(tlsuv_stream_t *clt);
 int tlsuv_stream_keepalive(tlsuv_stream_t *clt, int keepalive, unsigned int delay);
 int tlsuv_stream_nodelay(tlsuv_stream_t *clt, int nodelay);
 
+/**
+ * \brief connect to target server on the given port.
+ *
+ * connect callback will be called when TLS handshake completes
+ * or any error is encountered during connect.
+ *
+ * @param req connect request
+ * @param clt TSL stream
+ * @param host server hostname
+ * @param port server por
+ * @param cb connect callback
+ * @return 0, or error code
+ */
 int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *host, int port, uv_connect_cb cb);
 
+/**
+ * \brief set target server hostname, for SNI and hostname validation
+ *
+ * hostname is set automatically if [tlsuv_stream_connect()] is used to connect.
+ *
+ * @param clt TLS stream
+ * @param host target hostname
+ * @return 0
+ */
+int tlsuv_stream_set_hostname(tlsuv_stream_t *clt, const char *host);
+
+/**
+ * connect TLS stream to server with given network address.
+ *
+ * connect callback will be called when TLS handshake completes.
+ * use [tlsuv_stream_set_hostname()] prior to this to enable SNI and hostname validation.
+ *
+ * @param req connect request
+ * @param clt TLS stream
+ * @param addr server address
+ * @param cb connect callback
+ * @return 0 on success, or error code
+ */
 int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const struct addrinfo *addr, uv_connect_cb cb);
+
+/**
+ * \brief wrap TLS stream around connected or connecting socket.
+ *
+ * connect callback will be called when TLS handshake completes.
+ * use [tlsuv_stream_set_hostname()] prior to this to enable SNI and hostname validation.
+ *
+ * @param req connect request
+ * @param clt tls stream client
+ * @param fd socket
+ * @return 0 on success, or error code
+ */
+int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_fd_t fd, uv_connect_cb);
 
 int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_cb read_cb);
 int tlsuv_stream_read_stop(tlsuv_stream_t *clt);
 
+/**
+ * \brief try to write contents of the [buf].
+ *
+ * @param clt TLS stream
+ * @param buf payload
+ * @return
+ *     number of bytes successfully writen, could be less than `buf.len`
+ *     UV_EAGAIN if no data could be written at this time, could be retried later
+ *     other error codes, if TLS stream encounters any error, stream should be closed.
+ */
+int tlsuv_stream_try_write(tlsuv_stream_t *clt, uv_buf_t *buf);
+
+/**
+ * \brief write or queue the contents of [buf].
+ *
+ * @param req write request
+ * @param clt TLS stream
+ * @param buf data
+ * @param cb callback
+ * @return 0, or error code
+ */
 int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_write_cb cb);
 
 int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb);
 
 int tlsuv_stream_free(tlsuv_stream_t *clt);
 
-struct tlsuv_stream_s {
-    UV_LINK_FIELDS
+typedef struct tlsuv_write_s tlsuv_write_t;
 
+struct tlsuv_stream_s {
     uv_loop_t *loop;
-    tcp_src_t *socket;
-    tls_link_t tls_link;
+    void *data;
 
     tls_context *tls;
     tlsuv_engine_t tls_engine;
@@ -67,6 +136,15 @@ struct tlsuv_stream_s {
     char *host;
     uv_connect_t *conn_req; //a place to stash a connection request
     uv_close_cb close_cb;
+    uv_read_cb read_cb;
+    uv_alloc_cb alloc_cb;
+
+    uv_os_sock_t sock;
+    uv_getaddrinfo_t *resolve_req;
+    uv_poll_t watcher;
+
+    TAILQ_HEAD(reqs, tlsuv_write_s) queue;
+    size_t queue_len;
 };
 
 size_t tlsuv_base64url_decode(const char *in, char **out, size_t *out_len);
