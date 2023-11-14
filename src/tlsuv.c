@@ -117,6 +117,13 @@ static void on_internal_close(uv_handle_t *h) {
         req->wr->cb(req->wr, UV_ECANCELED);
         free(req);
     }
+
+    if (clt->tls_engine) {
+        clt->tls_engine->free(clt->tls_engine);
+        clt->tls_engine = NULL;
+    }
+    clt->watcher = (uv_poll_t){0};
+
     if (clt->close_cb) {
         clt->close_cb((uv_handle_t *) clt);
     }
