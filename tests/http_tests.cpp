@@ -978,11 +978,11 @@ TEST_CASE("form test", "[http]") {
     tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
 
-    tlsuv_http_req_form(req, 3, (tlsuv_http_pair[]){
-            {"foo", "bar"},
+    tlsuv_http_pair req_form[] = {
+            {"ziti", "is awesome!"},
             {"message", "Check out https://openziti.io"},
-            {"end", "is near"}
-    });
+    };
+    tlsuv_http_req_form(req, 2, req_form);
 
     test.run();
 
