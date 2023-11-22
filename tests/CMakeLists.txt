@@ -3,6 +3,8 @@ ENABLE_LANGUAGE(CXX)
 find_package(Catch2 CONFIG REQUIRED)
 message("catch2 is ${Catch2_CONFIG}")
 
+find_package(parson CONFIG REQUIRED)
+
 FILE(COPY ${CMAKE_CURRENT_SOURCE_DIR}/testdata DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/ )
 CONFIGURE_FILE(softhsm2.conf.in ${CMAKE_CURRENT_BINARY_DIR}/softhsm2.conf)
 
@@ -67,6 +69,7 @@ endif (softhsm_lib)
 target_link_libraries(all_tests
         tlsuv
         Catch2::Catch2
+        parson::parson
         )
 
 target_include_directories(all_tests PRIVATE ../src)

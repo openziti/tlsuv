@@ -35,6 +35,10 @@
         {
           "name": "catch2",
           "version>=": "2.13.9#1"
+        },
+        {
+          "name": "parson",
+          "$comment": "test response parsing/validations"
         }
       ]
     },
