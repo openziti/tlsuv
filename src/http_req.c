@@ -122,6 +122,41 @@ static size_t write_url_encoded(char *buf, const char *url) {
     return p - buf;
 }
 
+static void free_body_cb(tlsuv_http_req_t *r, char *body, ssize_t i) {
+    free(body);
+}
+
+int tlsuv_http_req_form(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair pairs[]) {
+    if (strcmp(req->method, "POST") != 0) {
+        return UV_EINVAL;
+    }
+
+    if (req->state > headers_sent) {
+        return UV_EINVAL;
+    }
+
+    char *body = malloc(16 * 1024);
+    char *p = body;
+    size_t len = 0;
+    for (int i = 0; i < count; i++) {
+        if (i > 0) {
+            body[len++] = '&';
+        }
+        len += write_url_encoded(body + len, pairs[i].name);
+        body[len++] = '=';
+        len += write_url_encoded(body + len, pairs[i].value);
+    }
+    char content_len[16];
+    snprintf(content_len, sizeof(content_len), "%zd", len);
+    tlsuv_http_req_header(req, "Content-Type", "application/x-www-form-urlencoded");
+    tlsuv_http_req_header(req, "Content-Length", content_len);
+
+    int rc = tlsuv_http_req_data(req, body, len, free_body_cb);
+    tlsuv_http_req_end(req);
+    return rc;
+}
+
+
 size_t http_req_write(tlsuv_http_req_t *req, char *buf, size_t maxlen) {
     const char *pfx = "";
     if (req->client && req->client->prefix) {
