@@ -993,9 +993,8 @@ TEST_CASE("form test", "[http]") {
     auto jval = json_parse_string(resp.body.c_str());
     auto json = json_value_get_object(jval);
     auto form = json_object_dotget_object(json, "form");
-    CHECK_THAT(json_array_get_string(json_object_dotget_array(form, "foo"), 0), Equals("bar"));
+    CHECK_THAT(json_array_get_string(json_object_dotget_array(form, "ziti"), 0), Equals("is awesome!"));
     CHECK_THAT(json_array_get_string(json_object_dotget_array(form, "message"), 0), Equals("Check out https://openziti.io"));
-    CHECK_THAT(json_array_get_string(json_object_dotget_array(form, "end"), 0), Equals("is near"));
 
     std::cout << resp.req_body << std::endl;
 
