@@ -295,6 +295,10 @@ int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen,
  * Convenience method to send a form request. Can only be done once.
  * set request's `Content-Type` to `application/x-www-form-urlencoded`
  * and encodes the form values into the body of the request.
+ *
+ * Form size is limited to 16K encoded bytes. If that size is exceeded UV_ENOMEM is returned
+ * and request is cancelled (request callback is called with appropriate error code/message)
+ *
  * @param req
  * @param count number of name/value pairs
  * @param pairs name/value pairs

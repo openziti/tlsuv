@@ -1003,6 +1003,69 @@ TEST_CASE("form test", "[http]") {
     json_value_free(jval);
 }
 
+TEST_CASE("form test too big", "[http]") {
+    std::string scheme = GENERATE("http", "https");
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    resp_capture resp(resp_body_cb);
+
+    tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+
+    auto g = Catch::Generators::random(5,255);
+    std::string blob;
+    for (int i = 0; i < (16 * 1024) && g.next(); i++) {
+        char c = (char)g.get();
+        blob.append(&c, 1);
+    }
+    tlsuv_http_pair req_form[] = {
+            {"ziti", "is awesome!"},
+            {"message", "Check out https://openziti.io"},
+            {"blob", blob.c_str()},
+    };
+    REQUIRE(tlsuv_http_req_form(req, 3, req_form) == UV_ENOMEM);
+
+    test.run();
+
+    REQUIRE(resp.code == UV_ENOMEM);
+    REQUIRE(resp.status == "form data too big");
+
+    tlsuv_http_close(&clt, nullptr);
+}
+
+TEST_CASE("test req header too big", "[http]") {
+    std::string scheme = GENERATE("http", "https");
+
+    WHEN("test " + scheme) {
+        UvLoopTest test;
+
+        tlsuv_http_t clt;
+        resp_capture resp(resp_body_cb);
+
+
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+
+        auto g = Catch::Generators::random((int) 'A', (int) 'z');
+        std::string blob;
+        for (int i = 0; i < (8 * 1024) && g.next(); i++) {
+            char c = (char) g.get();
+            blob.append(&c, 1);
+        }
+        tlsuv_http_req_header(req, "X-LargeHeader", blob.c_str());
+
+        test.run();
+
+        REQUIRE(resp.code == UV_ENOMEM);
+        REQUIRE(resp.status == "request header too big");
+
+        tlsuv_http_close(&clt, nullptr);
+    }
+}
+
 TEST_CASE("test request cancel", "[http]") {
     UvLoopTest test;
 
