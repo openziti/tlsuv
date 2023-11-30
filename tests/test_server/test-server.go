@@ -1,12 +1,20 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"flag"
 	"fmt"
 	"github.com/mccutchen/go-httpbin/v2/httpbin"
+	"math/big"
+	"net"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 func runHTTP(port int, handler http.Handler) chan error {
@@ -17,10 +25,18 @@ func runHTTP(port int, handler http.Handler) chan error {
 	return done
 }
 
-func runHTTPS(port int, handler http.Handler, keyFile, certFile string) chan error {
+func runHTTPS(port int, handler http.Handler) chan error {
 	done := make(chan error)
+	server := http.Server{
+		Handler: handler,
+		Addr:    fmt.Sprintf(":%d", port),
+		TLSConfig: &tls.Config{
+			Certificates: []tls.Certificate{serverCert},
+			ClientAuth:   tls.RequestClientCert,
+		}}
+
 	go func() {
-		done <- http.ListenAndServeTLS(":"+strconv.Itoa(port), certFile, keyFile, handler)
+		done <- server.ListenAndServeTLS("", "")
 	}()
 	return done
 }
@@ -38,26 +54,26 @@ func (a authHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request
 	}
 }
 
-func runClientAuth(port int, keyFile, certFile string) chan error {
+func runClientAuth(port int) chan error {
 	done := make(chan error)
 	server := http.Server{
 		Handler: new(authHandler),
 		Addr:    fmt.Sprintf(":%d", port),
 		TLSConfig: &tls.Config{
-			ClientAuth: tls.RequestClientCert,
+			Certificates: []tls.Certificate{serverCert},
+			ClientAuth:   tls.RequestClientCert,
 		}}
 
 	go func() {
-		done <- server.ListenAndServeTLS(certFile, keyFile)
+		done <- server.ListenAndServeTLS("", "")
 	}()
 	return done
 }
 
-func runEchoServer(port int, keyFile, certFile string) chan error {
+func runEchoServer(port int) chan error {
 	done := make(chan error)
 	cfg := &tls.Config{}
-	cert, _ := tls.LoadX509KeyPair(certFile, keyFile)
-	cfg.Certificates = append(cfg.Certificates, cert)
+	cfg.Certificates = append(cfg.Certificates, serverCert)
 
 	go func() {
 		server, err := tls.Listen("tcp", fmt.Sprintf(":%d", port), cfg)
@@ -90,13 +106,48 @@ func runEchoServer(port int, keyFile, certFile string) chan error {
 	return done
 }
 
-var keyFile string
-var certFile string
+var serverCert tls.Certificate
 
 func init() {
-	flag.StringVar(&keyFile, "keyfile", "", "key file for HTTPS listener")
-	flag.StringVar(&certFile, "certfile", "", "cert file for HTTPS listener")
+	var ca string
+	var caKey string
+
+	flag.StringVar(&ca, "ca", "", "CA certificate")
+	flag.StringVar(&caKey, "ca-key", "", "CA private key")
 	flag.Parse()
+
+	caCert, err := tls.LoadX509KeyPair(ca, caKey)
+	if err != nil {
+		panic(err)
+	}
+	caX509, _ := x509.ParseCertificate(caCert.Certificate[0])
+
+	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+
+	templ := &x509.Certificate{
+		Subject: pkix.Name{
+			Country:      []string{"US"},
+			Organization: []string{"OpenZiti"},
+			CommonName:   "Test Server",
+		},
+		DNSNames:    []string{"localhost"},
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(24 * time.Hour),
+	}
+	templ.SerialNumber = big.NewInt(42)
+	serverX509, err := x509.CreateCertificate(rand.Reader, templ, caX509, serverKey.Public(), caCert.PrivateKey)
+	if err != nil {
+		panic(err)
+	}
+
+	serverCert = tls.Certificate{
+		PrivateKey: serverKey,
+	}
+	serverCert.Certificate = append(serverCert.Certificate, serverX509)
 }
 
 func main() {
@@ -105,9 +156,9 @@ func main() {
 	var err error
 	select {
 	case err = <-runHTTP(8080, httpb):
-	case err = <-runHTTPS(8443, httpb, keyFile, certFile):
-	case err = <-runClientAuth(9443, keyFile, certFile):
-	case err = <-runEchoServer(7443, keyFile, certFile):
+	case err = <-runHTTPS(8443, httpb):
+	case err = <-runClientAuth(9443):
+	case err = <-runEchoServer(7443):
 	}
 
 	fmt.Println(err)

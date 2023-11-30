@@ -156,6 +156,10 @@ static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
         free(c->active);
         c->active = NULL;
     }
+}
+
+static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
+    fail_active_request(c, code, msg);
 
     tlsuv_http_req_t *r;
     while (!STAILQ_EMPTY(&c->requests)) {
@@ -187,7 +191,7 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
             const char *err = tls->engine->strerror(tls->engine);
             UM_LOG(ERR, "handshake failed status[%d]: %s", status, tls->engine->strerror(tls->engine));
             close_connection(clt);
-            fail_active_request(clt, UV_ECONNABORTED, err);
+            fail_all_requests(clt, UV_ECONNABORTED, err);
             break;
         }
 
@@ -268,7 +272,7 @@ static void src_connect_cb(tlsuv_src_t *src, int status, void *ctx) {
     else {
         UM_LOG(DEBG, "failed to connect: %d(%s)", status, uv_strerror(status));
         clt->connected = Disconnected;
-        fail_active_request(clt, status, uv_strerror(status));
+        fail_all_requests(clt, status, uv_strerror(status));
         uv_async_send(&clt->proc);
     }
 }
@@ -395,17 +399,24 @@ static void process_requests(uv_async_t *ar) {
         if (rc != 0) {
             src_connect_cb(c->src, rc, c);
         }
-    }
-    else if (c->connected == Connected) {
+    } else if (c->connected == Connected) {
         UM_LOG(VERB, "client connected, processing request[%s] state[%d]", c->active->path, c->active->state);
         if (c->active->state < headers_sent) {
             UM_LOG(VERB, "sending request[%s] headers", c->active->path);
             uv_buf_t req;
             req.base = malloc(8196);
-            req.len = http_req_write(c->active, req.base, 8196);
-            UM_LOG(TRACE, "writing request >>> %.*s", (int)req.len, req.base);
-            uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_cb, req.base);
-            c->active->state = headers_sent;
+            ssize_t header_len = http_req_write(c->active, req.base, 8196);
+            if (header_len == UV_ENOMEM) {
+                free(req.base);
+                fail_active_request(c, (int)header_len, "request header too big");
+                uv_async_send(&c->proc);
+                return;
+            } else {
+                req.len = header_len;
+                UM_LOG(TRACE, "writing request >>> %.*s", (int) req.len, req.base);
+                uv_link_write((uv_link_t *) &c->http_link, &req, 1, NULL, req_write_cb, req.base);
+                c->active->state = headers_sent;
+            }
         }
 
         // send body
@@ -427,7 +438,7 @@ static void on_clt_close(uv_handle_t *h) {
 int tlsuv_http_close(tlsuv_http_t *clt, tlsuv_http_close_cb close_cb) {
     uv_close((uv_handle_t *) &clt->proc, on_clt_close);
 
-    fail_active_request(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
+    fail_all_requests(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
     close_connection(clt);
 
     if (clt->engine != NULL) {
@@ -595,12 +606,17 @@ tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const ch
 }
 
 int tlsuv_http_cancel_all(tlsuv_http_t *clt) {
-    fail_active_request(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
+    fail_all_requests(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
     close_connection(clt);
     return 0;
 }
 
 int tlsuv_http_req_cancel(tlsuv_http_t *clt, tlsuv_http_req_t *req) {
+    return http_req_cancel_err(clt, req, UV_ECANCELED, NULL);
+}
+
+int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, const char *msg) {
+
     tlsuv_http_req_t *r = NULL;
     STAILQ_FOREACH(r, &clt->requests, _next) {
         if (r == req) break;
@@ -616,8 +632,8 @@ int tlsuv_http_req_cancel(tlsuv_http_t *clt, tlsuv_http_req_t *req) {
             STAILQ_REMOVE(&clt->requests, req, tlsuv_http_req_s, _next);
         }
 
-        req->resp.code = UV_ECANCELED;
-        req->resp.status = strdup(uv_strerror(req->resp.code));
+        req->resp.code = error;
+        req->resp.status = strdup(msg ? msg : uv_strerror(error));
         clear_req_body(req, req->resp.code);
 
         if (req->state < headers_received) { // resp_cb has not been called yet

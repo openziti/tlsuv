@@ -107,33 +107,93 @@ void free_hdr_list(um_header_list *l) {
 
 #define HEXIFY(c) (((c) < 10) ? '0' + (c) : 'A' + (c) - 10)
 
-static size_t write_url_encoded(char *buf, const char *url) {
+static ssize_t write_url_encoded(char *buf, size_t maxlen, const char *url) {
     static char unsafe[] = "\"<>%{}|\\^`";
     char *p = buf;
+
+#define CHECK_APPEND(ptr, c)  if (ptr - buf < maxlen)  *ptr++ = (c); else return UV_ENOMEM
+
     for(; *url != 0; url++) {
         if (*url <= ' ' || strchr(unsafe, *url) != NULL) {
-            *p++ = '%';
-            *p++ = HEXIFY((*url >> 4) & 0xf);
-            *p++ = HEXIFY(*url & 0xf);
+            CHECK_APPEND(p, '%');
+            CHECK_APPEND(p, HEXIFY((*url >> 4) & 0xf));
+            CHECK_APPEND(p, HEXIFY(*url & 0xf));
         } else {
-            *p++ = *url;
+            CHECK_APPEND(p, *url);
         }
     }
+#undef CHECK_APPEND
     return p - buf;
 }
 
-size_t http_req_write(tlsuv_http_req_t *req, char *buf, size_t maxlen) {
+static void free_body_cb(tlsuv_http_req_t *r, char *body, ssize_t i) {
+    free(body);
+}
+
+int tlsuv_http_req_form(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair pairs[]) {
+    if (strcmp(req->method, "POST") != 0) {
+        return UV_EINVAL;
+    }
+
+    if (req->state > headers_sent) {
+        return UV_EINVAL;
+    }
+
+#define MAX_FORM (16 * 1024)
+    char *body = malloc(MAX_FORM);
+    size_t len = 0;
+    int err;
+    for (int i = 0; i < count; i++) {
+        if (len >= MAX_FORM) { err = UV_ENOMEM; goto error; }
+
+        if (i > 0) {
+            body[len++] = '&';
+        }
+        ssize_t l = write_url_encoded(body + len, MAX_FORM - len,  pairs[i].name);
+        if (l < 0) { err = UV_ENOMEM; goto error; }
+        len += l;
+
+        if (len >= MAX_FORM) { err = UV_ENOMEM; goto error; }
+        body[len++] = '=';
+
+        l = write_url_encoded(body + len, MAX_FORM - len, pairs[i].value);
+        if (l < 0) { err = UV_ENOMEM; goto error; }
+        len += l;
+    }
+    char content_len[16];
+    snprintf(content_len, sizeof(content_len), "%zd", len);
+    tlsuv_http_req_header(req, "Content-Type", "application/x-www-form-urlencoded");
+    tlsuv_http_req_header(req, "Content-Length", content_len);
+
+    int rc = tlsuv_http_req_data(req, body, len, free_body_cb);
+    tlsuv_http_req_end(req);
+    return rc;
+
+    error:
+    free(body);
+    http_req_cancel_err(req->client, req, err, "form data too big");
+    return err;
+}
+
+
+ssize_t http_req_write(tlsuv_http_req_t *req, char *buf, size_t maxlen) {
     const char *pfx = "";
     if (req->client && req->client->prefix) {
         pfx = req->client->prefix;
     }
 
     size_t len = 0;
-    len += snprintf(buf, maxlen, "%s ", req->method);
-    len += write_url_encoded(buf + len, pfx);
-    len += write_url_encoded(buf + len, req->path);
-    len += snprintf(buf + len, maxlen - len, " HTTP/1.1\r\n");
 
+#define CHECK_APPEND(l, op) do { \
+ssize_t a_size = op;             \
+if (a_size < 0 || a_size >= maxlen - l) return UV_ENOMEM; \
+l += a_size;\
+} while(0)
+
+    CHECK_APPEND(len, snprintf(buf, maxlen - len, "%s ", req->method));
+    CHECK_APPEND(len, write_url_encoded(buf + len, maxlen - len, pfx));
+    CHECK_APPEND(len, write_url_encoded(buf + len, maxlen - len, req->path));
+    CHECK_APPEND(len, snprintf(buf + len, maxlen - len, " HTTP/1.1\r\n"));
 
     if (strcmp(req->method, "POST") == 0 ||
         strcmp(req->method, "PUT") == 0 ||
@@ -154,11 +214,11 @@ size_t http_req_write(tlsuv_http_req_t *req, char *buf, size_t maxlen) {
 
     tlsuv_http_hdr *h;
     LIST_FOREACH(h, &req->req_headers, _next) {
-        len += snprintf(buf + len, maxlen - len, "%s: %s\r\n", h->name, h->value);
+        CHECK_APPEND(len, snprintf(buf + len, maxlen - len, "%s: %s\r\n", h->name, h->value));
     }
 
-    len += snprintf(buf + len, maxlen - len, "\r\n");
-    return len;
+    CHECK_APPEND(len, snprintf(buf + len, maxlen - len, "\r\n"));
+    return (ssize_t)len;
 }
 
 void add_http_header(um_header_list *hl, const char* name, const char *value, size_t vallen) {

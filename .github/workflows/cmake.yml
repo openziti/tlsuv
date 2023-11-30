@@ -50,12 +50,12 @@ jobs:
     - name: start test server
       if: matrix.os != 'windows'
       run: |
-        ${{ github.workspace }}/build/test-server -keyfile ./tests/certs/server.key -certfile ./tests/certs/server.crt &
+        ${{ github.workspace }}/build/test-server -ca-key ./tests/certs/ca.key -ca ./tests/certs/ca.pem &
 
     - name: start test server
       if: matrix.os == 'windows'
       run: |
-        Start-Process -FilePath ${{ github.workspace }}/build/test-server -ArgumentList "-keyfile","./tests/certs/server.key","-certfile","./tests/certs/server.crt"
+        Start-Process -FilePath ${{ github.workspace }}/build/test-server -ArgumentList "-ca-key","./tests/certs/ca.key","-ca","./tests/certs/ca.pem"
 
     - uses: lukka/run-cmake@v10
       name: Build and Test

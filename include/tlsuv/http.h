@@ -62,7 +62,7 @@ typedef void (*tlsuv_http_resp_cb)(tlsuv_http_resp_t *resp, void *ctx);
 /**
  * HTTP body callback type.
  */
-typedef void (*tlsuv_http_body_cb)(tlsuv_http_req_t *req, const char *body, ssize_t len);
+typedef void (*tlsuv_http_body_cb)(tlsuv_http_req_t *req, char *body, ssize_t len);
 
 typedef void (*tlsuv_http_close_cb)(tlsuv_http_t *);
 /**
@@ -156,6 +156,11 @@ struct tlsuv_http_s {
     void *data;
     tlsuv_http_close_cb close_cb;
 };
+
+typedef struct tlsuv_http_pair {
+    const char *name;
+    const char *value;
+} tlsuv_http_pair;
 
 /**
  * Initialize HTTP client
@@ -285,6 +290,21 @@ int tlsuv_http_req_header(tlsuv_http_req_t *req, const char *name, const char *v
  * @return
  */
 int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen, tlsuv_http_body_cb cb);
+
+/**
+ * Convenience method to send a form request. Can only be done once.
+ * set request's `Content-Type` to `application/x-www-form-urlencoded`
+ * and encodes the form values into the body of the request.
+ *
+ * Form size is limited to 16K encoded bytes. If that size is exceeded UV_ENOMEM is returned
+ * and request is cancelled (request callback is called with appropriate error code/message)
+ *
+ * @param req
+ * @param count number of name/value pairs
+ * @param pairs name/value pairs
+ * @return 0 for success, or error code
+ */
+int tlsuv_http_req_form(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair pairs[]);
 
 /**
  * Indicate the end of the request body. Only needed if `Transfer-Encoding` header was set to `chunked`

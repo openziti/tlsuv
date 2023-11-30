@@ -26,6 +26,8 @@ limitations under the License.
 #include <tlsuv/tls_engine.h>
 #include <tlsuv/tlsuv.h>
 
+#include <parson.h>
+
 extern tlsuv_log_func test_log;
 using namespace std;
 using namespace Catch::Matchers;
@@ -107,13 +109,13 @@ public:
     uv_timeval64_t resp_endtime{};
 };
 
-void req_body_cb(tlsuv_http_req_t *req, const char *chunk, ssize_t status) {
+void req_body_cb(tlsuv_http_req_t *req, char *chunk, ssize_t status) {
     auto rc = static_cast<resp_capture *>(req->data);
     rc->req_body.append(chunk);
     rc->req_body_cb_called = true;
 }
 
-void resp_body_cb(tlsuv_http_req_t *req, const char *chunk, ssize_t len) {
+void resp_body_cb(tlsuv_http_req_t *req, char *chunk, ssize_t len) {
     auto rc = static_cast<resp_capture *>(req->data);
 
     if (len > 0) {
@@ -466,7 +468,7 @@ TEST_CASE("client_idle_test","[http]") {
 
     tlsuv_http_t clt;
 
-    tlsuv_http_body_cb bodyCb = [](tlsuv_http_req_t *req, const char *b, ssize_t len) {
+    tlsuv_http_body_cb bodyCb = [](tlsuv_http_req_t *req, char *b, ssize_t len) {
         auto r = static_cast<resp_capture *>(req->data);
 
         if (len == UV_EOF) {
@@ -503,7 +505,7 @@ TEST_CASE("server_idle_close","[.]") {
 
     tlsuv_http_t clt;
 
-    tlsuv_http_body_cb body_cb = [](tlsuv_http_req_t *req, const char *b, ssize_t len) {
+    tlsuv_http_body_cb body_cb = [](tlsuv_http_req_t *req, char *b, ssize_t len) {
         auto r = static_cast<resp_capture *>(req->data);
 
         if (len == UV_EOF) {
@@ -939,8 +941,12 @@ TEST_CASE("URL encode", "[http]") {
     CHECK_THAT(resp.http_version, Equals("1.1"));
     CHECK_THAT(resp.status, Equals("OK"));
     CHECK(resp.resp_body_end_called == 1);
-    CHECK_THAT(resp.body, Contains("this is a <test>!", Catch::CaseSensitive::No));
-    CHECK_THAT(resp.body, Contains(R"("url": "http://localhost/anything?query=this%20is%20a%20%3Ctest%3E!")", Catch::CaseSensitive::No));
+    auto json = json_value_get_object(json_parse_string(resp.body.c_str()));
+    auto query = json_array_get_string(json_object_dotget_array(json, "args.query"), 0);
+    auto url = json_object_dotget_string(json, "url");
+
+    CHECK_THAT(query, Equals("this is a <test>!"));
+    CHECK_THAT(url, Equals("http://localhost/anything?query=this%20is%20a%20%3Ctest%3E!"));
 
     std::cout << resp.req_body << std::endl;
 
@@ -960,6 +966,105 @@ public:
     resp_capture resp2;
 
 };
+
+TEST_CASE("form test", "[http]") {
+    std::string scheme = GENERATE("http", "https");
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    resp_capture resp(resp_body_cb);
+
+    tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+
+    tlsuv_http_pair req_form[] = {
+            {"ziti", "is awesome!"},
+            {"message", "Check out https://openziti.io"},
+    };
+    tlsuv_http_req_form(req, 2, req_form);
+
+    test.run();
+
+    CHECK(resp.code == HTTP_STATUS_OK);
+    CHECK_THAT(resp.http_version, Equals("1.1"));
+    CHECK_THAT(resp.status, Equals("OK"));
+    CHECK(resp.resp_body_end_called == 1);
+    auto jval = json_parse_string(resp.body.c_str());
+    auto json = json_value_get_object(jval);
+    auto form = json_object_dotget_object(json, "form");
+    CHECK_THAT(json_array_get_string(json_object_dotget_array(form, "ziti"), 0), Equals("is awesome!"));
+    CHECK_THAT(json_array_get_string(json_object_dotget_array(form, "message"), 0), Equals("Check out https://openziti.io"));
+
+    std::cout << resp.req_body << std::endl;
+
+    tlsuv_http_close(&clt, nullptr);
+
+    json_value_free(jval);
+}
+
+TEST_CASE("form test too big", "[http]") {
+    std::string scheme = GENERATE("http", "https");
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    resp_capture resp(resp_body_cb);
+
+    tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+
+    auto g = Catch::Generators::random(5,255);
+    std::string blob;
+    for (int i = 0; i < (16 * 1024) && g.next(); i++) {
+        char c = (char)g.get();
+        blob.append(&c, 1);
+    }
+    tlsuv_http_pair req_form[] = {
+            {"ziti", "is awesome!"},
+            {"message", "Check out https://openziti.io"},
+            {"blob", blob.c_str()},
+    };
+    REQUIRE(tlsuv_http_req_form(req, 3, req_form) == UV_ENOMEM);
+
+    test.run();
+
+    REQUIRE(resp.code == UV_ENOMEM);
+    REQUIRE(resp.status == "form data too big");
+
+    tlsuv_http_close(&clt, nullptr);
+}
+
+TEST_CASE("test req header too big", "[http]") {
+    std::string scheme = GENERATE("http", "https");
+
+    WHEN("test " + scheme) {
+        UvLoopTest test;
+
+        tlsuv_http_t clt;
+        resp_capture resp(resp_body_cb);
+
+
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+
+        auto g = Catch::Generators::random((int) 'A', (int) 'z');
+        std::string blob;
+        for (int i = 0; i < (8 * 1024) && g.next(); i++) {
+            char c = (char) g.get();
+            blob.append(&c, 1);
+        }
+        tlsuv_http_req_header(req, "X-LargeHeader", blob.c_str());
+
+        test.run();
+
+        REQUIRE(resp.code == UV_ENOMEM);
+        REQUIRE(resp.status == "request header too big");
+
+        tlsuv_http_close(&clt, nullptr);
+    }
+}
 
 TEST_CASE("test request cancel", "[http]") {
     UvLoopTest test;
