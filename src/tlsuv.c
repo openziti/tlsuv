@@ -216,8 +216,8 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     if (status != 0) {
         UM_LOG(ERR, "failed connect: %d/%s", status, uv_strerror(status));
         clt->conn_req = NULL;
-        req->cb(req, status);
         uv_poll_stop(&clt->watcher);
+        req->cb(req, status);
         return;
     }
 
@@ -236,19 +236,49 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
         const char *error = clt->tls_engine->strerror(clt->tls_engine);
         UM_LOG(ERR, "TLS handshake failed: %s", error);
         clt->conn_req = NULL;
-        req->cb(req, UV_ECONNABORTED);
         uv_poll_stop(&clt->watcher);
+        req->cb(req, UV_ECONNABORTED);
         return;
     }
 
     if (rc == TLS_HS_COMPLETE) {
         UM_LOG(DEBG, "handshake completed");
         clt->conn_req = NULL;
-        req->cb(req, 0);
         start_io(clt);
+        req->cb(req, 0);
     } else {
         // wait for incoming handshake messages
         uv_poll_start(&clt->watcher, UV_READABLE, on_clt_io);
+    }
+}
+
+static ssize_t write_req(tlsuv_stream_t *clt, tlsuv_write_t *req) {
+    int rc = clt->tls_engine->write(clt->tls_engine, req->buf.base, req->buf.len);
+    if (rc > 0) {
+        return rc;
+    }
+
+    if (rc == TLS_ERR) {
+        UM_LOG(WARN, "tls connection error: %s", clt->tls_engine->strerror(clt->tls_engine));
+        return UV_ECONNABORTED;
+    }
+
+    if (rc == TLS_AGAIN) {
+        return UV_EAGAIN;
+    }
+
+    return UV_EINVAL;
+}
+
+static void fail_pending_reqs(tlsuv_stream_t *clt, int err) {
+    while(!TAILQ_EMPTY(&clt->queue)) {
+        tlsuv_write_t *req = TAILQ_FIRST(&clt->queue);
+        TAILQ_REMOVE(&clt->queue, req, _next);
+        clt->queue_len -= 1;
+
+        req->wr->cb(req->wr, (int)err);
+        free(req);
+
     }
 }
 
@@ -262,7 +292,7 @@ static void process_outbound(tlsuv_stream_t *clt) {
         }
 
         req = TAILQ_FIRST(&clt->queue);
-        ret = tlsuv_stream_try_write(clt, &req->buf);
+        ret = write_req(clt, req);
         if (ret > 0) {
             req->buf.base += ret;
             req->buf.len -= ret;
@@ -287,13 +317,7 @@ static void process_outbound(tlsuv_stream_t *clt) {
 
     // error handling
     // fail all pending requests
-    do {
-        clt->queue_len -= 1;
-        TAILQ_REMOVE(&clt->queue, req, _next);
-        req->wr->cb(req->wr, (int)ret);
-        free(req);
-        req = TAILQ_FIRST(&clt->queue);
-    } while (!TAILQ_EMPTY(&clt->queue));
+    fail_pending_reqs(clt, (int)ret);
 }
 
 static void on_clt_io(uv_poll_t *p, int status, int events) {
@@ -305,6 +329,7 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
     }
 
     if (status != 0) {
+        UM_LOG(WARN, "IO failed: %d/%s", status, uv_strerror(status));
         if (clt->read_cb) {
             uv_buf_t buf;
             clt->alloc_cb((uv_handle_t *) clt, 32 * 1024, &buf);
@@ -340,6 +365,7 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
 
             if (rc == TLS_ERR) {
                 clt->read_cb((uv_stream_t *)clt, UV_ECONNABORTED, &buf);
+                fail_pending_reqs(clt, UV_ECONNABORTED);
                 return;
             }
 
@@ -461,10 +487,13 @@ int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_c
         return UV_EALREADY;
     }
 
-    int rc = uv_poll_start(&clt->watcher, UV_READABLE, on_clt_io);
-    if (rc == 0) {
-        clt->alloc_cb = alloc_cb;
-        clt->read_cb = read_cb;
+    clt->alloc_cb = alloc_cb;
+    clt->read_cb = read_cb;
+
+    int rc = start_io(clt);
+    if (rc != 0) {
+        clt->alloc_cb = NULL;
+        clt->read_cb = NULL;
     }
     return rc;
 }
@@ -484,6 +513,11 @@ int tlsuv_stream_read_stop(tlsuv_stream_t *clt) {
 }
 
 int tlsuv_stream_try_write(tlsuv_stream_t *clt, uv_buf_t *buf) {
+    // do not allow to cut the line
+    if (!TAILQ_EMPTY(&clt->queue)) {
+        return UV_EAGAIN;
+    }
+
     int rc = clt->tls_engine->write(clt->tls_engine, buf->base, buf->len);
     if (rc > 0) {
         return rc;
@@ -524,21 +558,21 @@ int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_w
         return (int)count;
     }
 
+    // successfully wrote the whole request
     if (count == buf->len) {
-        // successfully wrote the whole request
         cb(req, 0);
-    } else {
-        // queue request
-        tlsuv_write_t *wr = malloc(sizeof(*wr));
-        wr->wr = req;
-        wr->buf = uv_buf_init(buf->base + count, buf->len - count);
-
-        clt->queue_len += 1;
-        TAILQ_INSERT_TAIL(&clt->queue, wr, _next);
-        UM_LOG(INFO, "qlen = %zd", clt->queue_len);
+        return 0;
     }
 
-    return 0;
+    // queue request or whatever left
+    tlsuv_write_t *wr = malloc(sizeof(*wr));
+    wr->wr = req;
+    wr->buf = uv_buf_init(buf->base + count, buf->len - count);
+    clt->queue_len += 1;
+    TAILQ_INSERT_TAIL(&clt->queue, wr, _next);
+
+    // make sure to re-arm IO after queuing request
+    return start_io(clt);
 }
 
 int tlsuv_stream_free(tlsuv_stream_t *clt) {
