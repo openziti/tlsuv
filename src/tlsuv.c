@@ -40,10 +40,7 @@
 #endif
 
 static uv_os_sock_t new_socket(const struct addrinfo *addr);
-
-static void tcp_connect_cb(uv_connect_t* req, int status);
 static void on_clt_io(uv_poll_t *, int, int);
-static ssize_t try_write(tlsuv_stream_t *, uv_buf_t *);
 
 static tls_context *DEFAULT_TLS = NULL;
 
@@ -252,8 +249,8 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     }
 }
 
-static ssize_t write_req(tlsuv_stream_t *clt, tlsuv_write_t *req) {
-    int rc = clt->tls_engine->write(clt->tls_engine, req->buf.base, req->buf.len);
+static ssize_t write_req(tlsuv_stream_t *clt, uv_buf_t *buf) {
+    int rc = clt->tls_engine->write(clt->tls_engine, buf->base, buf->len);
     if (rc > 0) {
         return rc;
     }
@@ -292,7 +289,7 @@ static void process_outbound(tlsuv_stream_t *clt) {
         }
 
         req = TAILQ_FIRST(&clt->queue);
-        ret = write_req(clt, req);
+        ret = write_req(clt, &req->buf);
         if (ret > 0) {
             req->buf.base += ret;
             req->buf.len -= ret;
@@ -518,21 +515,7 @@ int tlsuv_stream_try_write(tlsuv_stream_t *clt, uv_buf_t *buf) {
         return UV_EAGAIN;
     }
 
-    int rc = clt->tls_engine->write(clt->tls_engine, buf->base, buf->len);
-    if (rc > 0) {
-        return rc;
-    }
-
-    if (rc == TLS_ERR) {
-        UM_LOG(WARN, "tls connection error: %s", clt->tls_engine->strerror(clt->tls_engine));
-        return UV_ECONNABORTED;
-    }
-
-    if (rc == TLS_AGAIN) {
-        return UV_EAGAIN;
-    }
-
-    return UV_EINVAL;
+    return (int) write_req(clt, buf);
 }
 
 int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_write_cb cb) {
