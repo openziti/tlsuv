@@ -341,7 +341,6 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
     }
 
     if (events & UV_READABLE) {
-        size_t count;
         size_t total;
         uv_buf_t buf;
         int rc = TLS_MORE_AVAILABLE;
@@ -355,9 +354,9 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
             total = 0;
 
             do {
+                size_t count = 0;
                 rc = clt->tls_engine->read(clt->tls_engine, buf.base + total, &count, buf.len - total);
                 total += count;
-                count = 0;
             } while (rc == TLS_MORE_AVAILABLE && total < buf.len);
 
             if (rc == TLS_ERR) {
