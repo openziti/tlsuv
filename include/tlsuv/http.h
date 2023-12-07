@@ -308,14 +308,17 @@ int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen,
 int tlsuv_http_req_form(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair pairs[]);
 
 /**
- * Convenience method to set query on the given request.
+ * Convenience method to set query parameters on the given request.
+ *
+ * Repeated calls will override the query, i.e. only parameters from the last call will be preserved.
+ * Call with `count=0` or `params=NULL` to clear previously set parameters
  *
  * @param req
  * @param count number of name/value pairs
- * @param pairs name/value pairs
+ * @param params name/value pairs
  * @return 0 for success, or error code
  */
-int tlsuv_http_req_query(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair pairs[]);
+int tlsuv_http_req_query(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair params[]);
 
 /**
  * Indicate the end of the request body. Only needed if `Transfer-Encoding` header was set to `chunked`

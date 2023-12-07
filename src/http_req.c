@@ -165,14 +165,19 @@ static char *encode_query (size_t count, const tlsuv_http_pair *pairs, size_t *o
     return NULL;
 }
 
-int tlsuv_http_req_query(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair pairs[]) {
+int tlsuv_http_req_query(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair params[]) {
     if (req->state > headers_sent) {
         return UV_EINVAL;
     }
 
-    char *query = encode_query(count, pairs, NULL);
-    if (query == NULL)
-        return UV_EINVAL;
+    char *query = NULL;
+
+    if (count > 0 && params != NULL) {
+        query = encode_query(count, params, NULL);
+        if (query == NULL) {
+            return UV_EINVAL;
+        }
+    }
 
     free(req->query);
     req->query = query;
