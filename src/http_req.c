@@ -139,22 +139,21 @@ static char *encode_query (size_t count, const tlsuv_http_pair *pairs, size_t *o
     }
 
     size_t len = 0;
-    int err;
     for (int i = 0; i < count; i++) {
-        if (len >= MAX_FORM) { err = UV_ENOMEM;goto error; }
+        if (len >= MAX_FORM) { goto error; }
 
         if (i > 0) {
             body[len++] = '&';
         }
         ssize_t l = write_url_encoded(body + len, MAX_FORM - len,  pairs[i].name);
-        if (l < 0) { err = UV_ENOMEM; goto error; }
+        if (l < 0) { goto error; }
         len += l;
 
-        if (len >= MAX_FORM) { err = UV_ENOMEM; goto error; }
+        if (len >= MAX_FORM) { goto error; }
         body[len++] = '=';
 
         l = write_url_encoded(body + len, MAX_FORM - len, pairs[i].value);
-        if (l < 0) { err = UV_ENOMEM; goto error; }
+        if (l < 0) { goto error; }
         len += l;
     }
     if (outlen)
@@ -248,7 +247,7 @@ l += a_size;\
                 req_len += chunk->len;
                 chunk = chunk->next;
             }
-            req->req_body_size = req_len;
+            req->req_body_size = (ssize_t)req_len;
             char length_str[16];
             snprintf(length_str, sizeof(length_str), "%ld", req_len);
             set_http_header(&req->req_headers, "Content-Length", length_str);
@@ -386,7 +385,7 @@ static int http_body_cb(llhttp_t *parser, const char *body, size_t len) {
         um_inflate(r->inflater, body, len);
     } else {
         if (r->resp.body_cb != NULL) {
-            r->resp.body_cb(r, body, len);
+            r->resp.body_cb(r, (char*)body, (ssize_t)len);
         }
     }
     return 0;
