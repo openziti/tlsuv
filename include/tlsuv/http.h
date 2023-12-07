@@ -102,6 +102,7 @@ struct tlsuv_http_req_s {
     struct tlsuv_http_s *client;
     char *method;
     char *path;
+    char *query;
     llhttp_t parser;
     enum http_request_state state;
 
@@ -305,6 +306,16 @@ int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen,
  * @return 0 for success, or error code
  */
 int tlsuv_http_req_form(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair pairs[]);
+
+/**
+ * Convenience method to set query on the given request.
+ *
+ * @param req
+ * @param count number of name/value pairs
+ * @param pairs name/value pairs
+ * @return 0 for success, or error code
+ */
+int tlsuv_http_req_query(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair pairs[]);
 
 /**
  * Indicate the end of the request body. Only needed if `Transfer-Encoding` header was set to `chunked`

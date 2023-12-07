@@ -668,7 +668,7 @@ int tlsuv_http_req_header(tlsuv_http_req_t *req, const char *name, const char *v
     }
 
     if (strcasecmp(name, "Content-Length") == 0) {
-        // Transfet-Encoding: chunked was set already
+        // Transfer-Encoding: chunked was set already
         if (req->req_chunked) {
             return UV_EINVAL;
         }

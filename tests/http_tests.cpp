@@ -933,7 +933,12 @@ TEST_CASE("URL encode", "[http]") {
 
     tlsuv_http_init(test.loop, &clt, "https://localhost:8443/anything");
     tlsuv_http_set_ssl(&clt, testServerTLS());
-    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", R"(?query=this is a <test>!)", resp_capture_cb, &resp);
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "", resp_capture_cb, &resp);
+    tlsuv_http_pair q = {
+            .name = "query",
+            .value = "this is a <test>!"
+    };
+    tlsuv_http_req_query(req, 1, &q);
 
     test.run();
 
