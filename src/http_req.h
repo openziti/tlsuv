@@ -31,7 +31,7 @@ void set_http_header(um_header_list *hl, const char* name, const char *value);
 void set_http_headern(um_header_list *hl, const char* name, const char *value, size_t vallen);
 
 struct body_chunk_s {
-    const char *chunk;
+    char *chunk;
     size_t len;
     tlsuv_http_body_cb cb;
 

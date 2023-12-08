@@ -714,7 +714,7 @@ int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen,
     }
 
     struct body_chunk_s *chunk = calloc(1, sizeof(struct body_chunk_s));
-    chunk->chunk = body;
+    chunk->chunk = (char*)body;
     chunk->len = bodylen;
     chunk->cb = cb;
     chunk->next = NULL;
