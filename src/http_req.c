@@ -156,6 +156,7 @@ static char *encode_query (size_t count, const tlsuv_http_pair *pairs, size_t *o
         if (l < 0) { goto error; }
         len += l;
     }
+    body[len] = '\0';
     if (outlen)
         *outlen = len;
     return body;
@@ -231,10 +232,11 @@ if (a_size < 0 || a_size >= maxlen - l) return UV_ENOMEM; \
 l += a_size;\
 } while(0)
 
-    CHECK_APPEND(len, snprintf(buf, maxlen - len, "%s %s%s%s%s",
-                               req->method, pfx, req->path,
-                               req->query ? "?" : "",
-                               req->query ? req->query : ""));
+    CHECK_APPEND(len, snprintf(buf, maxlen - len, "%s %s%s",
+                               req->method, pfx, req->path));
+    if (req->query) {
+        CHECK_APPEND(len, snprintf(buf + len, maxlen - len, "?%s", req->query));
+    }
     CHECK_APPEND(len, snprintf(buf + len, maxlen - len, " HTTP/1.1\r\n"));
 
     if (strcmp(req->method, "POST") == 0 ||

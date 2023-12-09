@@ -946,7 +946,8 @@ TEST_CASE("URL encode", "[http]") {
     CHECK_THAT(resp.http_version, Equals("1.1"));
     CHECK_THAT(resp.status, Equals("OK"));
     CHECK(resp.resp_body_end_called == 1);
-    auto json = json_value_get_object(json_parse_string(resp.body.c_str()));
+    auto j = json_parse_string(resp.body.c_str());
+    auto json = json_value_get_object(j);
     auto query = json_array_get_string(json_object_dotget_array(json, "args.query"), 0);
     auto url = json_object_dotget_string(json, "url");
 
@@ -956,6 +957,7 @@ TEST_CASE("URL encode", "[http]") {
     std::cout << resp.req_body << std::endl;
 
     tlsuv_http_close(&clt, nullptr);
+    json_value_free(j);
 }
 
 class testdata {
