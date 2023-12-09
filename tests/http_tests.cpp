@@ -933,7 +933,12 @@ TEST_CASE("URL encode", "[http]") {
 
     tlsuv_http_init(test.loop, &clt, "https://localhost:8443/anything");
     tlsuv_http_set_ssl(&clt, testServerTLS());
-    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", R"(?query=this is a <test>!)", resp_capture_cb, &resp);
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "", resp_capture_cb, &resp);
+    tlsuv_http_pair q = {
+            .name = "query",
+            .value = "this is a <test>!"
+    };
+    tlsuv_http_req_query(req, 1, &q);
 
     test.run();
 
@@ -941,7 +946,8 @@ TEST_CASE("URL encode", "[http]") {
     CHECK_THAT(resp.http_version, Equals("1.1"));
     CHECK_THAT(resp.status, Equals("OK"));
     CHECK(resp.resp_body_end_called == 1);
-    auto json = json_value_get_object(json_parse_string(resp.body.c_str()));
+    auto j = json_parse_string(resp.body.c_str());
+    auto json = json_value_get_object(j);
     auto query = json_array_get_string(json_object_dotget_array(json, "args.query"), 0);
     auto url = json_object_dotget_string(json, "url");
 
@@ -951,6 +957,7 @@ TEST_CASE("URL encode", "[http]") {
     std::cout << resp.req_body << std::endl;
 
     tlsuv_http_close(&clt, nullptr);
+    json_value_free(j);
 }
 
 class testdata {

@@ -668,7 +668,7 @@ int tlsuv_http_req_header(tlsuv_http_req_t *req, const char *name, const char *v
     }
 
     if (strcasecmp(name, "Content-Length") == 0) {
-        // Transfet-Encoding: chunked was set already
+        // Transfer-Encoding: chunked was set already
         if (req->req_chunked) {
             return UV_EINVAL;
         }
@@ -714,7 +714,7 @@ int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen,
     }
 
     struct body_chunk_s *chunk = calloc(1, sizeof(struct body_chunk_s));
-    chunk->chunk = body;
+    chunk->chunk = (char*)body;
     chunk->len = bodylen;
     chunk->cb = cb;
     chunk->next = NULL;

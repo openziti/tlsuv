@@ -62,6 +62,7 @@ void http_req_free(tlsuv_http_req_t *req) {
     if (req->inflater) {
         um_free_inflater(req->inflater);
     }
+    free(req->query);
     free(req->path);
     free(req->method);
 }
@@ -108,7 +109,7 @@ void free_hdr_list(um_header_list *l) {
 #define HEXIFY(c) (((c) < 10) ? '0' + (c) : 'A' + (c) - 10)
 
 static ssize_t write_url_encoded(char *buf, size_t maxlen, const char *url) {
-    static char unsafe[] = "\"<>%{}|\\^`";
+    static char unsafe[] = "/:\"<>%{}|\\^`";
     char *p = buf;
 
 #define CHECK_APPEND(ptr, c)  if (ptr - buf < maxlen)  *ptr++ = (c); else return UV_ENOMEM
@@ -130,8 +131,65 @@ static void free_body_cb(tlsuv_http_req_t *r, char *body, ssize_t i) {
     free(body);
 }
 
+static char *encode_query (size_t count, const tlsuv_http_pair *pairs, size_t *outlen) {
+#define MAX_FORM (16 * 1024)
+    char *body = malloc(MAX_FORM);
+    if (body == NULL) {
+        return NULL;
+    }
+
+    size_t len = 0;
+    for (int i = 0; i < count; i++) {
+        if (len >= MAX_FORM) { goto error; }
+
+        if (i > 0) {
+            body[len++] = '&';
+        }
+        ssize_t l = write_url_encoded(body + len, MAX_FORM - len,  pairs[i].name);
+        if (l < 0) { goto error; }
+        len += l;
+
+        if (len >= MAX_FORM) { goto error; }
+        body[len++] = '=';
+
+        l = write_url_encoded(body + len, MAX_FORM - len, pairs[i].value);
+        if (l < 0) { goto error; }
+        len += l;
+    }
+    body[len] = '\0';
+    if (outlen)
+        *outlen = len;
+    return body;
+    error:
+    free(body);
+    return NULL;
+}
+
+int tlsuv_http_req_query(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair params[]) {
+    if (req->state > headers_sent) {
+        return UV_EINVAL;
+    }
+
+    char *query = NULL;
+
+    if (count > 0 && params != NULL) {
+        query = encode_query(count, params, NULL);
+        if (query == NULL) {
+            return UV_EINVAL;
+        }
+    }
+
+    free(req->query);
+    req->query = query;
+    return 0;
+}
+
 int tlsuv_http_req_form(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pair pairs[]) {
     if (strcmp(req->method, "POST") != 0) {
+        return UV_EINVAL;
+    }
+
+    if (count == 0 || pairs == NULL) {
         return UV_EINVAL;
     }
 
@@ -139,40 +197,24 @@ int tlsuv_http_req_form(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pa
         return UV_EINVAL;
     }
 
-#define MAX_FORM (16 * 1024)
-    char *body = malloc(MAX_FORM);
+
     size_t len = 0;
-    int err;
-    for (int i = 0; i < count; i++) {
-        if (len >= MAX_FORM) { err = UV_ENOMEM; goto error; }
-
-        if (i > 0) {
-            body[len++] = '&';
-        }
-        ssize_t l = write_url_encoded(body + len, MAX_FORM - len,  pairs[i].name);
-        if (l < 0) { err = UV_ENOMEM; goto error; }
-        len += l;
-
-        if (len >= MAX_FORM) { err = UV_ENOMEM; goto error; }
-        body[len++] = '=';
-
-        l = write_url_encoded(body + len, MAX_FORM - len, pairs[i].value);
-        if (l < 0) { err = UV_ENOMEM; goto error; }
-        len += l;
+    char *body = encode_query(count, pairs, &len);
+    if (body == NULL) {
+        http_req_cancel_err(req->client, req, UV_ENOMEM, "form data too big");
+        return UV_ENOMEM;
     }
+
+    tlsuv_http_req_header(req, "Content-Type", "application/x-www-form-urlencoded");
+
     char content_len[16];
     snprintf(content_len, sizeof(content_len), "%zd", len);
-    tlsuv_http_req_header(req, "Content-Type", "application/x-www-form-urlencoded");
     tlsuv_http_req_header(req, "Content-Length", content_len);
 
+    printf("form: %.*s\n", (int)len, body);
     int rc = tlsuv_http_req_data(req, body, len, free_body_cb);
     tlsuv_http_req_end(req);
     return rc;
-
-    error:
-    free(body);
-    http_req_cancel_err(req->client, req, err, "form data too big");
-    return err;
 }
 
 
@@ -190,9 +232,11 @@ if (a_size < 0 || a_size >= maxlen - l) return UV_ENOMEM; \
 l += a_size;\
 } while(0)
 
-    CHECK_APPEND(len, snprintf(buf, maxlen - len, "%s ", req->method));
-    CHECK_APPEND(len, write_url_encoded(buf + len, maxlen - len, pfx));
-    CHECK_APPEND(len, write_url_encoded(buf + len, maxlen - len, req->path));
+    CHECK_APPEND(len, snprintf(buf, maxlen - len, "%s %s%s",
+                               req->method, pfx, req->path));
+    if (req->query) {
+        CHECK_APPEND(len, snprintf(buf + len, maxlen - len, "?%s", req->query));
+    }
     CHECK_APPEND(len, snprintf(buf + len, maxlen - len, " HTTP/1.1\r\n"));
 
     if (strcmp(req->method, "POST") == 0 ||
@@ -205,7 +249,7 @@ l += a_size;\
                 req_len += chunk->len;
                 chunk = chunk->next;
             }
-            req->req_body_size = req_len;
+            req->req_body_size = (ssize_t)req_len;
             char length_str[16];
             snprintf(length_str, sizeof(length_str), "%ld", req_len);
             set_http_header(&req->req_headers, "Content-Length", length_str);
@@ -343,7 +387,7 @@ static int http_body_cb(llhttp_t *parser, const char *body, size_t len) {
         um_inflate(r->inflater, body, len);
     } else {
         if (r->resp.body_cb != NULL) {
-            r->resp.body_cb(r, body, len);
+            r->resp.body_cb(r, (char*)body, (ssize_t)len);
         }
     }
     return 0;
