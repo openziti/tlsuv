@@ -211,7 +211,7 @@ int tlsuv_http_req_form(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pa
     snprintf(content_len, sizeof(content_len), "%zd", len);
     tlsuv_http_req_header(req, "Content-Length", content_len);
 
-    printf("form: %.*s\n", (int)len, body);
+    UM_LOG(VERB, "form: %.*s", (int)len, body);
     int rc = tlsuv_http_req_data(req, body, len, free_body_cb);
     tlsuv_http_req_end(req);
     return rc;
