@@ -87,6 +87,12 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
 
 static int start_io(tlsuv_stream_t *clt) {
     int events = 0;
+
+    // was closed already
+    if (uv_is_closing((const uv_handle_t *) &clt->watcher)) {
+        return UV_EINVAL;
+    }
+
     if (!TAILQ_EMPTY(&clt->queue)) {
         events |= UV_WRITABLE;
     }
@@ -131,6 +137,9 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
         clt->resolve_req->data = NULL;
         uv_cancel((uv_req_t *) clt->resolve_req);
     }
+
+    clt->read_cb = NULL;
+    clt->alloc_cb = NULL;
 
     clt->close_cb = close_cb;
     if (clt->tls_engine) {
