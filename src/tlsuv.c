@@ -87,6 +87,12 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
 
 static int start_io(tlsuv_stream_t *clt) {
     int events = 0;
+
+    // was closed already
+    if (uv_is_closing((const uv_handle_t *) &clt->watcher)) {
+        return UV_EINVAL;
+    }
+
     if (!TAILQ_EMPTY(&clt->queue)) {
         events |= UV_WRITABLE;
     }
@@ -131,6 +137,9 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
         clt->resolve_req->data = NULL;
         uv_cancel((uv_req_t *) clt->resolve_req);
     }
+
+    clt->read_cb = NULL;
+    clt->alloc_cb = NULL;
 
     clt->close_cb = close_cb;
     if (clt->tls_engine) {
@@ -317,6 +326,55 @@ static void process_outbound(tlsuv_stream_t *clt) {
     fail_pending_reqs(clt, (int)ret);
 }
 
+static void process_inbound(tlsuv_stream_t *clt) {
+    size_t total;
+    uv_buf_t buf;
+    int rc;
+
+    int attempts = 16;
+
+    while(clt->read_cb && (attempts-- > 0)) {
+        assert(clt->alloc_cb != NULL);
+
+        buf = uv_buf_init(NULL, 0);
+        clt->alloc_cb((uv_handle_t *) clt, 64 * 1024, &buf);
+        if (buf.base == NULL || buf.len == 0) {
+            clt->read_cb((uv_stream_t *) clt, UV_ENOBUFS, &buf);
+            break;
+        }
+
+        total = 0;
+
+        do {
+            size_t count = 0;
+            rc = clt->tls_engine->read(clt->tls_engine, buf.base + total, &count, buf.len - total);
+            total += count;
+        } while ( (rc == TLS_MORE_AVAILABLE || rc == TLS_OK) && total < buf.len);
+
+        if (total > 0) {
+            clt->read_cb((uv_stream_t *) clt, (ssize_t) total, &buf);
+            if (rc == TLS_AGAIN) {
+                break;
+            }
+            continue;
+        }
+
+        if (rc == TLS_ERR) {
+            clt->read_cb((uv_stream_t *)clt, UV_ECONNABORTED, &buf);
+            fail_pending_reqs(clt, UV_ECONNABORTED);
+            break;
+        }
+
+        if (rc == TLS_EOF) {
+            clt->read_cb((uv_stream_t *) clt, UV_EOF, &buf);
+            break;
+        }
+
+        clt->read_cb((uv_stream_t *) clt, (ssize_t) total, &buf);
+    }
+    UM_LOG(TRACE, "finished reading after %d iterations", 16 - attempts);
+}
+
 static void on_clt_io(uv_poll_t *p, int status, int events) {
     tlsuv_stream_t *clt = p->data;
     if (clt->conn_req) {
@@ -341,37 +399,7 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
     }
 
     if (events & UV_READABLE) {
-        size_t total;
-        uv_buf_t buf;
-        int rc = TLS_MORE_AVAILABLE;
-        for (int i = 0; rc == TLS_MORE_AVAILABLE &&  i < 16; i++) {
-            clt->alloc_cb((uv_handle_t *) clt, 64 * 1024, &buf);
-            if (buf.base == NULL || buf.len == 0) {
-                clt->read_cb((uv_stream_t *) clt, UV_ENOBUFS, &buf);
-                break;
-            }
-
-            total = 0;
-
-            do {
-                size_t count = 0;
-                rc = clt->tls_engine->read(clt->tls_engine, buf.base + total, &count, buf.len - total);
-                total += count;
-            } while (rc == TLS_MORE_AVAILABLE && total < buf.len);
-
-            if (rc == TLS_ERR) {
-                clt->read_cb((uv_stream_t *)clt, UV_ECONNABORTED, &buf);
-                fail_pending_reqs(clt, UV_ECONNABORTED);
-                return;
-            }
-
-            if (rc == TLS_EOF) {
-                clt->read_cb((uv_stream_t *) clt, UV_EOF, &buf);
-                return;
-            }
-
-            clt->read_cb((uv_stream_t *) clt, (ssize_t) total, &buf);
-        }
+        process_inbound(clt);
     }
 
     start_io(clt);
