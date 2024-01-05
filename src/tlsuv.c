@@ -111,8 +111,9 @@ static int start_io(tlsuv_stream_t *clt) {
 static void on_internal_close(uv_handle_t *h) {
     tlsuv_stream_t *clt = h->data;
     if (clt->conn_req) {
-        clt->conn_req->cb(clt->conn_req, UV_ECANCELED);
+        uv_connect_t *req = clt->conn_req;
         clt->conn_req = NULL;
+        req->cb(req, UV_ECANCELED);
     }
     while(!TAILQ_EMPTY(&clt->queue)) {
         tlsuv_write_t *req = TAILQ_FIRST(&clt->queue);
@@ -466,8 +467,9 @@ static void on_resolve(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
         if (status == 0) {
             tlsuv_stream_connect_addr(clt->conn_req, clt, addr, clt->conn_req->cb);
         } else if (status != UV_ECANCELED) {
-            clt->conn_req->cb(clt->conn_req, status);
+            uv_connect_t *r = clt->conn_req;
             clt->conn_req = NULL;
+            r->cb(r, status);
         }
     }
     uv_freeaddrinfo(addr);
