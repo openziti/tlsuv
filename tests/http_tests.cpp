@@ -451,9 +451,6 @@ TEST_CASE("client_cert_test","[http]") {
         CHECK(resp.code == HTTP_STATUS_OK);
         CHECK(resp.resp_body_end_called);
         CHECK(resp.body == "you are 'CN=BadSSL Client Certificate,O=BadSSL,L=San Francisco,ST=California,C=US' by CN=BadSSL Client Root Certificate Authority,O=BadSSL,L=San Francisco,ST=California,C=US");
-        if (c) {
-            tls->free_cert(&c);
-        }
     }
 
     tlsuv_http_close(&clt, nullptr);

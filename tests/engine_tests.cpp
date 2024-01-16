@@ -115,7 +115,7 @@ fcwJ0v2IisYTCMavk0DJSj9Hd+coMSyTa7ghp8ja/0PSoQAxAA==
 TEST_CASE("implementation test", "[engine]") {
     tls_context *tls = default_tls_context(nullptr, 0);
 #if defined(TEST_mbedtls)
-    REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("mbed TLS"));
+    REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("mbed TLS", Catch::CaseSensitive::No));
 #elif defined(TEST_openssl)
     REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("OpenSSL"));
 #else
