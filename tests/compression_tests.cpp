@@ -1,6 +1,7 @@
 
 
 #include <uv.h>
+#include <parson.h>
 #include "catch.hpp"
 #include "compression.h"
 
@@ -56,7 +57,13 @@ TEST_CASE("deflate", "[http]") {
 
     CHECK(um_inflate(inflater, (const char*)packet_bytes, sizeof(packet_bytes)) == 1);
     CHECK(um_inflate_state(inflater) == 1);
-    CHECK_THAT(res.str, Catch::Contains(R"("method": "GET")"));
+    auto j = json_parse_string(res.str.c_str());
+    auto json = json_value_get_object(j);
+    auto method = json_object_get_string(json, "method");
+    auto url = json_object_dotget_string(json, "url");
+
+    CHECK_THAT(method, Catch::Matchers::Equals("GET"));
+    json_value_free(j);
 
     um_free_inflater(inflater);
 
@@ -66,9 +73,12 @@ TEST_CASE("deflate", "[http]") {
     CHECK(um_inflate(inflater, (const char*)packet_bytes, inputLen / 2 ) == 0);
     CHECK(um_inflate(inflater, (const char*)packet_bytes + (inputLen/2), inputLen - inputLen / 2 ) == 1);
     CHECK(um_inflate_state(inflater) == 1);
-    CHECK_THAT(res.str, Catch::Contains(R"("method": "GET")"));
+    j = json_parse_string(res.str.c_str());
+    json = json_value_get_object(j);
+    method = json_object_get_string(json, "method");
+    CHECK_THAT(method, Catch::Matchers::Equals("GET"));
     um_free_inflater(inflater);
-
+    json_value_free(j);
 }
 
 
@@ -148,7 +158,7 @@ TEST_CASE("gzip", "[http]") {
     CHECK(um_inflate_state(inflater) == 0);
     CHECK(um_inflate(inflater, (const char*)packet_bytes + (inputLen/2), inputLen - inputLen / 2 ) == 1);
     CHECK(um_inflate_state(inflater) == 1);
-    CHECK_THAT(res.str, Catch::Equals(expected));
+    CHECK_THAT(res.str, Catch::Matchers::Equals(expected));
     um_free_inflater(inflater);
 }
 

@@ -218,7 +218,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     } while (true);
 
     const char *alpn = engine->get_alpn(engine);
-    CHECK_THAT(alpn, Catch::Matches("h2"));
+    CHECK_THAT(alpn, Catch::Matchers::Matches("h2"));
 
     engine->close(engine);
 
