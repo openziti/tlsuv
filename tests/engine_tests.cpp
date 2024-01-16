@@ -199,7 +199,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     printf("sin_family = %d, %s:%d \n", address->sin_family, inet_ntoa(address->sin_addr), htons(address->sin_port));
 
     if (connect(sock, (const struct sockaddr *) address, addrlen) != 0) {
-        perror("failed to conenct");
+        perror("failed to connect");
     }
 
     engine->set_io_fd(engine, (uv_os_fd_t)sock);
