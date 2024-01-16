@@ -245,6 +245,10 @@ static void make_links(tlsuv_http_t *clt, uv_link_t *conn_src) {
 static void link_close_cb(uv_link_t *l) {
     tlsuv_http_t *clt = l->data;
     if (clt) {
+        if (clt->engine) {
+            clt->engine->free(clt->engine);
+            clt->engine = NULL;
+        }
         clt->src->release(clt->src);
         uv_async_send(&clt->proc);
     }

@@ -436,9 +436,11 @@ TEST_CASE("client_cert_test","[http]") {
                       "c7ugThP6iMPNVAycWkIF4vvHTwZ9RCSmEQabRaqGGLz/bhLL3fi3lPGCR+iW2Dxq\n"
                       "GTH3fhaM/pZZGdIC75x/69Y=\n"
                       "-----END PRIVATE KEY-----";
-        tlsuv_private_key_t pk;
+        tlsuv_private_key_t pk = nullptr;
         int rc = tls->load_key(&pk, key, strlen(key) + 1);
         REQUIRE(rc == 0);
+        REQUIRE(pk != nullptr);
+
         tls_cert c = nullptr;
         CHECK(tls->load_cert(&c, cert, strlen(cert)) == 0);
         CHECK(tls->set_own_cert(tls, pk, c) == 0);
@@ -449,6 +451,9 @@ TEST_CASE("client_cert_test","[http]") {
         CHECK(resp.code == HTTP_STATUS_OK);
         CHECK(resp.resp_body_end_called);
         CHECK(resp.body == "you are 'CN=BadSSL Client Certificate,O=BadSSL,L=San Francisco,ST=California,C=US' by CN=BadSSL Client Root Certificate Authority,O=BadSSL,L=San Francisco,ST=California,C=US");
+        if (c) {
+            tls->free_cert(&c);
+        }
     }
 
     tlsuv_http_close(&clt, nullptr);
