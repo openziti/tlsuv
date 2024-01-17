@@ -60,11 +60,13 @@ static void check_key(tlsuv_private_key_t key) {
     CHECK(pemlen > 0);
     free(pem);
 
-    pem = nullptr;
-    CHECK(pub->to_pem(pub, &pem, &pemlen) == 0);
-    CHECK(pem != nullptr);
-    CHECK(pemlen > 0);
-    free(pem);
+    if (pub->to_pem) {
+        pem = nullptr;
+        CHECK(pub->to_pem(pub, &pem, &pemlen) == 0);
+        CHECK(pem != nullptr);
+        CHECK(pemlen > 0);
+        free(pem);
+    }
 
     const char *data = "this is an important message";
     size_t datalen = strlen(data);
@@ -143,6 +145,10 @@ lAkOwU8XOpspVUfYbwPSVSoS2NXn1rE7iA==
 
 TEST_CASE("gen csr", "[engine]") {
     tls_context *ctx = default_tls_context(nullptr, 0);
+    if (ctx->generate_csr_to_pem == nullptr) {
+        ctx->free_ctx(ctx);
+        SKIP("TLS does not implement CSR generation");
+    }
 
     tlsuv_private_key_t key;
     REQUIRE(ctx->generate_key(&key) == 0);

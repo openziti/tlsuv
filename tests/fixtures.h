@@ -25,7 +25,7 @@ struct UvLoopTest {
     uv_timer_t timer{};
     uv_prepare_t check{};
 
-    UvLoopTest(): UvLoopTest(15) {}
+    UvLoopTest(): UvLoopTest(150) {}
 
     explicit UvLoopTest(unsigned int to):
             loop(uv_loop_new()) {
@@ -108,6 +108,7 @@ struct UvLoopTest {
         if (rc != 0) {
             fprintf(stderr, "loop_close_failed: %d(%s)", rc, uv_strerror(rc));
             uv_print_all_handles(loop, stderr);
+            fflush(stderr);
         }
         free(loop);
     }
