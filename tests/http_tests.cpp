@@ -246,11 +246,11 @@ TEST_CASE("http_tests", "[http]") {
 
         REQUIRE(resp.code == HTTP_STATUS_OK);
         REQUIRE(resp2.code == HTTP_STATUS_OK);
-        REQUIRE_THAT(resp.body, Contains("Client-Header") && Contains("This is client header"));
-        REQUIRE_THAT(resp2.body, Contains("Client-Header") && Contains("This is client header"));
+        REQUIRE_THAT(resp.body, Catch::Matchers::ContainsSubstring("Client-Header") && Catch::Matchers::ContainsSubstring("This is client header"));
+        REQUIRE_THAT(resp2.body, Catch::Matchers::ContainsSubstring("Client-Header") && Catch::Matchers::ContainsSubstring("This is client header"));
 
-        REQUIRE_THAT(resp.body, Contains("Request-Header") && Contains("this is request header"));
-        REQUIRE_THAT(resp2.body, !Contains("Request-Header") && !Contains("this is request header"));
+        REQUIRE_THAT(resp.body, Catch::Matchers::ContainsSubstring("Request-Header") && Catch::Matchers::ContainsSubstring("this is request header"));
+        REQUIRE_THAT(resp2.body, !Catch::Matchers::ContainsSubstring("Request-Header") && !Catch::Matchers::ContainsSubstring("this is request header"));
     }
 
     WHEN(scheme << " POST body") {
@@ -271,7 +271,7 @@ TEST_CASE("http_tests", "[http]") {
         size_t content_len = strtol(resp.headers["Content-Length"].c_str(), nullptr, 10);
         REQUIRE(body_len == content_len);
 
-        REQUIRE_THAT(resp.body, Contains(req_body));
+        REQUIRE_THAT(resp.body, Catch::Matchers::ContainsSubstring(req_body));
         REQUIRE(resp.req_body_cb_called);
     }
 
@@ -301,7 +301,7 @@ TEST_CASE("http_tests", "[http]") {
         size_t body_len = resp.body.size();
         size_t content_len = strtol(resp.headers["Content-Length"].c_str(), nullptr, 10);
 
-        THEN("response body size matches") {
+        THEN("response body size Catch::Matchers::ContainsSubstring") {
             REQUIRE(body_len == content_len);
         }
 
@@ -364,10 +364,10 @@ TEST_CASE("client_cert_test","[http]") {
 
         THEN("request should be bad") {
             CHECK(resp.code == HTTP_STATUS_UNAUTHORIZED);
-            CHECK_THAT(resp.body, Contains("I don't know you"));
+            CHECK_THAT(resp.body, Catch::Matchers::ContainsSubstring("I don't know you"));
         }
 
-        AND_THEN("response body size matches") {
+        AND_THEN("response body size Catch::Matchers::ContainsSubstring") {
             size_t body_len = resp.body.size();
             size_t content_len = strtol(resp.headers["Content-Length"].c_str(), nullptr, 10);
             REQUIRE(body_len == content_len);
@@ -436,9 +436,11 @@ TEST_CASE("client_cert_test","[http]") {
                       "c7ugThP6iMPNVAycWkIF4vvHTwZ9RCSmEQabRaqGGLz/bhLL3fi3lPGCR+iW2Dxq\n"
                       "GTH3fhaM/pZZGdIC75x/69Y=\n"
                       "-----END PRIVATE KEY-----";
-        tlsuv_private_key_t pk;
+        tlsuv_private_key_t pk = nullptr;
         int rc = tls->load_key(&pk, key, strlen(key) + 1);
         REQUIRE(rc == 0);
+        REQUIRE(pk != nullptr);
+
         tls_cert c = nullptr;
         CHECK(tls->load_cert(&c, cert, strlen(cert)) == 0);
         CHECK(tls->set_own_cert(tls, pk, c) == 0);
@@ -842,7 +844,7 @@ TEST_CASE("TLS to IP address", "[http]") {
 
     CHECK(resp.code == 200);
     CHECK(resp.headers["Content-Type"] == "application/dns-json");
-    CHECK_THAT(resp.body, Contains("\"Answer\":[{\"name\":\"google.com\""));
+    CHECK_THAT(resp.body, Catch::Matchers::ContainsSubstring("\"Answer\":[{\"name\":\"google.com\""));
     tlsuv_http_close(&clt, nullptr);
 }
 
@@ -890,7 +892,7 @@ TEST_CASE("HTTP gzip", "[http]") {
     CHECK_THAT(resp.status, Equals("OK"));
     CHECK_THAT(resp.headers["Content-Type"], StartsWith("application/json"));
     CHECK(resp.headers["Content-Encoding"] == "gzip");
-    CHECK_THAT(resp.body, Contains(R"("Accept-Encoding")") && Contains("gzip, deflate"));
+    CHECK_THAT(resp.body, Catch::Matchers::ContainsSubstring(R"("Accept-Encoding")") && Catch::Matchers::ContainsSubstring("gzip, deflate"));
     CHECK(resp.resp_body_end_called == 1);
 
     std::cout << resp.req_body << std::endl;
@@ -916,7 +918,8 @@ TEST_CASE("HTTP deflate", "[http]") {
     CHECK_THAT(resp.status, Equals("OK"));
     CHECK_THAT(resp.headers["Content-Type"], StartsWith("application/json"));
     CHECK(resp.headers["Content-Encoding"] == "deflate");
-    CHECK_THAT(resp.body, Contains(R"("Accept-Encoding")") && Contains("gzip, deflate"));
+    CHECK_THAT(resp.body, Catch::Matchers::ContainsSubstring(R"("Accept-Encoding")") &&
+                          Catch::Matchers::ContainsSubstring("gzip, deflate"));
     CHECK(resp.resp_body_end_called == 1);
 
 
@@ -952,7 +955,8 @@ TEST_CASE("URL encode", "[http]") {
     auto url = json_object_dotget_string(json, "url");
 
     CHECK_THAT(query, Equals("this is a <test>!"));
-    CHECK_THAT(url, Equals("http://localhost/anything?query=this%20is%20a%20%3Ctest%3E!"));
+
+    CHECK_THAT(url, Catch::Matchers::Equals("http://localhost/anything?query=this%20is%20a%20%3Ctest%3E!"));
 
     std::cout << resp.req_body << std::endl;
 

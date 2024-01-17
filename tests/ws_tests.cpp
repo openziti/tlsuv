@@ -138,7 +138,7 @@ TEST_CASE("websocket echo tests", "[websocket]") {
         CHECK(test.write_status == 0);
         CHECK(test.close_cb_called);
         REQUIRE(test.resp.size() == 2);
-        CHECK_THAT(test.resp[1],Catch::Matches("this is a test"));
+        CHECK_THAT(test.resp[1],Catch::Matchers::Matches("this is a test"));
     }
 
     WHEN("wss echo test") {
@@ -149,6 +149,6 @@ TEST_CASE("websocket echo tests", "[websocket]") {
         CHECK(test.write_status == 0);
         CHECK(test.close_cb_called);
         REQUIRE(test.resp.size() == 2);
-        CHECK_THAT(test.resp[1],Catch::Matches("this is a test"));
+        CHECK_THAT(test.resp[1],Catch::Matchers::Matches("this is a test"));
     }
 }

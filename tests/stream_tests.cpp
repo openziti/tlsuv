@@ -146,7 +146,7 @@ TEST_CASE("read/write","[stream]") {
 
         auto proto = tlsuv_stream_get_protocol(c);
         REQUIRE(proto != nullptr);
-        CHECK_THAT(proto, Catch::Equals("http/1.1"));
+        CHECK_THAT(proto, Catch::Matchers::Equals("http/1.1"));
 
         tlsuv_stream_read_start(c, test_alloc, [](uv_stream_t *s, ssize_t status, const uv_buf_t *b) {
             auto c = (tlsuv_stream_t *) s;
@@ -155,7 +155,7 @@ TEST_CASE("read/write","[stream]") {
                 tlsuv_stream_close(c, nullptr);
             } else {
                 REQUIRE(status > 0);
-                REQUIRE_THAT(b->base, Catch::StartsWith("HTTP/1.1 200 OK"));
+                REQUIRE_THAT(b->base, Catch::Matchers::StartsWith("HTTP/1.1 200 OK"));
                 fprintf(stderr, "%.*s\n", (int) status, b->base);
             }
             free(b->base);

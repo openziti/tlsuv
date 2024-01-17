@@ -55,6 +55,11 @@ target_include_directories(all_tests PRIVATE ../src)
 target_compile_options(all_tests PRIVATE ${PKCS11_OPTS})
 target_compile_definitions(all_tests PRIVATE TEST_DATA_DIR=${CMAKE_CURRENT_BINARY_DIR}/testdata)
 
+if (WIN32)
+    # set NOMINMAX to avoid Catch2 compile errors
+    target_compile_definitions(all_tests PRIVATE NOMINMAX)
+endif ()
+
 target_compile_definitions(all_tests PRIVATE
         TEST_${TLSUV_TLSLIB}
         TEST_SERVER_CA=${CMAKE_CURRENT_SOURCE_DIR}/certs/ca.pem

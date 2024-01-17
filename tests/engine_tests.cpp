@@ -115,7 +115,7 @@ fcwJ0v2IisYTCMavk0DJSj9Hd+coMSyTa7ghp8ja/0PSoQAxAA==
 TEST_CASE("implementation test", "[engine]") {
     tls_context *tls = default_tls_context(nullptr, 0);
 #if defined(TEST_mbedtls)
-    REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("mbed TLS"));
+    REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("mbed TLS", Catch::CaseSensitive::No));
 #elif defined(TEST_openssl)
     REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("OpenSSL"));
 #else
@@ -199,7 +199,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     printf("sin_family = %d, %s:%d \n", address->sin_family, inet_ntoa(address->sin_addr), htons(address->sin_port));
 
     if (connect(sock, (const struct sockaddr *) address, addrlen) != 0) {
-        perror("failed to conenct");
+        perror("failed to connect");
     }
 
     engine->set_io_fd(engine, (uv_os_fd_t)sock);
@@ -218,7 +218,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     } while (true);
 
     const char *alpn = engine->get_alpn(engine);
-    CHECK_THAT(alpn, Catch::Matches("h2"));
+    CHECK_THAT(alpn, Catch::Matchers::Matches("h2"));
 
     engine->close(engine);
 

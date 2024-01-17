@@ -53,7 +53,6 @@
     }
   },
   "overrides": [
-    { "name": "catch2", "version": "2.13.9#1" }
   ],
-  "builtin-baseline": "8eb57355a4ffb410a2e94c07b4dca2dffbee8e50"
+  "builtin-baseline": "53bef8994c541b6561884a8395ea35715ece75db"
 }
