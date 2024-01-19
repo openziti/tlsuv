@@ -41,6 +41,7 @@
 
 static uv_os_sock_t new_socket(const struct addrinfo *addr);
 static void on_clt_io(uv_poll_t *, int, int);
+static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
 
 static tls_context *DEFAULT_TLS = NULL;
 
@@ -115,18 +116,15 @@ static void on_internal_close(uv_handle_t *h) {
         clt->conn_req = NULL;
         req->cb(req, UV_ECANCELED);
     }
-    while(!TAILQ_EMPTY(&clt->queue)) {
-        tlsuv_write_t *req = TAILQ_FIRST(&clt->queue);
-        TAILQ_REMOVE(&clt->queue, req, _next);
-        req->wr->cb(req->wr, UV_ECANCELED);
-        free(req);
-    }
+
+    // error handling
+    // fail all pending requests
+    fail_pending_reqs(clt, UV_ECANCELED);
 
     if (clt->tls_engine) {
         clt->tls_engine->free(clt->tls_engine);
         clt->tls_engine = NULL;
     }
-    clt->watcher = (uv_poll_t){0};
 
     if (clt->close_cb) {
         clt->close_cb((uv_handle_t *) clt);
@@ -283,9 +281,10 @@ static void fail_pending_reqs(tlsuv_stream_t *clt, int err) {
         TAILQ_REMOVE(&clt->queue, req, _next);
         clt->queue_len -= 1;
 
-        req->wr->cb(req->wr, (int)err);
+        if (req->wr->cb) {
+            req->wr->cb(req->wr, (int) err);
+        }
         free(req);
-
     }
 }
 
@@ -309,7 +308,9 @@ static void process_outbound(tlsuv_stream_t *clt) {
         if (req->buf.len == 0) {
             clt->queue_len -= 1;
             TAILQ_REMOVE(&clt->queue, req, _next);
-            req->wr->cb(req->wr, 0);
+            if (req->wr->cb) {
+                req->wr->cb(req->wr, 0);
+            }
             free(req);
             continue;
         }
@@ -319,12 +320,14 @@ static void process_outbound(tlsuv_stream_t *clt) {
         }
 
         UM_LOG(WARN, "failed to write: %d/%s", (int)ret, uv_strerror(ret));
+        TAILQ_REMOVE(&clt->queue, req, _next);
+        clt->queue_len -= 1;
+        if (req->wr->cb) {
+            req->wr->cb(req->wr, (int)ret);
+        }
         break;
     }
 
-    // error handling
-    // fail all pending requests
-    fail_pending_reqs(clt, (int)ret);
 }
 
 static void process_inbound(tlsuv_stream_t *clt) {
