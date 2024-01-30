@@ -14,6 +14,7 @@
 
 #include "tlsuv/tlsuv.h"
 #include "um_debug.h"
+#include "util.h"
 #include "tlsuv/queue.h"
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +43,7 @@
 static uv_os_sock_t new_socket(const struct addrinfo *addr);
 static void on_clt_io(uv_poll_t *, int, int);
 static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
+static void check_read(uv_idle_t *idle);
 
 static tls_context *DEFAULT_TLS = NULL;
 
@@ -110,7 +112,7 @@ static int start_io(tlsuv_stream_t *clt) {
 }
 
 static void on_internal_close(uv_handle_t *h) {
-    tlsuv_stream_t *clt = h->data;
+    tlsuv_stream_t *clt = container_of(h, tlsuv_stream_t, watcher);
     if (clt->conn_req) {
         uv_connect_t *req = clt->conn_req;
         clt->conn_req = NULL;
@@ -337,6 +339,15 @@ static void process_inbound(tlsuv_stream_t *clt) {
 
     int attempts = 16;
 
+    // got IO or idle check, can clear the handle
+    if (clt->watcher.data) {
+        uv_idle_t *idler = clt->watcher.data;
+        assert(idler->type == UV_IDLE);
+
+        clt->watcher.data = NULL;
+        uv_close((uv_handle_t *) idler, (uv_close_cb) free);
+    }
+
     while(clt->read_cb && (attempts-- > 0)) {
         assert(clt->alloc_cb != NULL);
 
@@ -380,7 +391,7 @@ static void process_inbound(tlsuv_stream_t *clt) {
 }
 
 static void on_clt_io(uv_poll_t *p, int status, int events) {
-    tlsuv_stream_t *clt = p->data;
+    tlsuv_stream_t *clt = container_of(p, tlsuv_stream_t, watcher);
     if (clt->conn_req) {
         UM_LOG(VERB, "processing connect: events=%d status=%d", events, status);
         process_connect(clt, status);
@@ -423,7 +434,6 @@ int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_fd_t fd, uv_
 
     clt->sock = fd;
     uv_poll_init_socket(clt->loop, &clt->watcher, clt->sock);
-    clt->watcher.data = clt;
     return uv_poll_start(&clt->watcher, UV_READABLE | UV_WRITABLE | UV_DISCONNECT, on_clt_io);
 }
 
@@ -523,6 +533,14 @@ int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_c
     if (rc != 0) {
         clt->alloc_cb = NULL;
         clt->read_cb = NULL;
+    } else {
+        // schedule idle read (if nothing on the wire)
+        // in case reading was stopped with data buffered in TLS engine
+        uv_idle_t *idle = calloc(1, sizeof(*idle));
+        clt->watcher.data = idle;
+        uv_idle_init(clt->loop, idle);
+        idle->data = clt;
+        uv_idle_start(idle, check_read);
     }
     return rc;
 }
@@ -629,3 +647,8 @@ uv_os_sock_t new_socket(const struct addrinfo *addr) {
     return sock;
 }
 
+void check_read(uv_idle_t *idler) {
+    tlsuv_stream_t *clt = idler->data;
+    // this will clean up idle handle
+    process_inbound(clt);
+}

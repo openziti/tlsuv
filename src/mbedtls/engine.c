@@ -765,6 +765,10 @@ static int mbedtls_read(tlsuv_engine_t engine, char *out, size_t *out_bytes, siz
         if (rc < 0) {
             if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) {
                 err = TLS_AGAIN;
+            } else if (rc == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+                UM_LOG(DEBG, "mbedTLS: peer close notify");
+                eng->error = rc;
+                err = TLS_EOF;
             } else {
                 UM_LOG(ERR, "mbedTLS: %0x(%s)", rc, mbedtls_error(rc));
                 eng->error = rc;

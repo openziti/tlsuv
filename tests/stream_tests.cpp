@@ -153,10 +153,13 @@ TEST_CASE("read/write","[stream]") {
             auto ctx = (struct test_ctx *) c->data;
             if (status == UV_EOF) {
                 tlsuv_stream_close(c, nullptr);
+            } else if (status >= 0) {
+                if (status > 0) {
+                    REQUIRE_THAT(b->base, Catch::Matchers::StartsWith("HTTP/1.1 200 OK"));
+                    fprintf(stderr, "%.*s\n", (int) status, b->base);
+                }
             } else {
-                REQUIRE(status > 0);
-                REQUIRE_THAT(b->base, Catch::Matchers::StartsWith("HTTP/1.1 200 OK"));
-                fprintf(stderr, "%.*s\n", (int) status, b->base);
+                FAIL("status: " << status << " " << uv_strerror(status));
             }
             free(b->base);
         });
