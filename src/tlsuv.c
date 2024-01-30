@@ -83,8 +83,6 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
     clt->queue_len = 0;
     TAILQ_INIT(&clt->queue);
 
-    clt->watcher.data = clt;
-
     return 0;
 }
 
