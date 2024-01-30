@@ -19,6 +19,6 @@
 #include <tlsuv/http.h>
 
 void resp_cb(tlsuv_http_resp_t *resp, void *data);
-void body_cb(tlsuv_http_req_t *req, const char *body, ssize_t len);
+void body_cb(tlsuv_http_req_t *req, char *body, ssize_t len);
 void logger(int level, const char *file, unsigned int line, const char *msg);
 #endif //UV_MBED_COMMON_H

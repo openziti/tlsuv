@@ -153,10 +153,13 @@ TEST_CASE("read/write","[stream]") {
             auto ctx = (struct test_ctx *) c->data;
             if (status == UV_EOF) {
                 tlsuv_stream_close(c, nullptr);
+            } else if (status >= 0) {
+                if (status > 0) {
+                    REQUIRE_THAT(b->base, Catch::Matchers::StartsWith("HTTP/1.1 200 OK"));
+                    fprintf(stderr, "%.*s\n", (int) status, b->base);
+                }
             } else {
-                REQUIRE(status > 0);
-                REQUIRE_THAT(b->base, Catch::Matchers::StartsWith("HTTP/1.1 200 OK"));
-                fprintf(stderr, "%.*s\n", (int) status, b->base);
+                FAIL("status: " << status << " " << uv_strerror(status));
             }
             free(b->base);
         });
@@ -322,9 +325,13 @@ static void read_cb(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     tlsuv_stream_t *clt = reinterpret_cast<tlsuv_stream_t *>(stream);
     test_result *result = static_cast<test_result *>(clt->data);
 
-    REQUIRE(nread > 0);
-    result->read_count++;
-    result->read_data.append(buf->base, nread);
+
+    REQUIRE(nread >= 0);
+
+    if (nread > 0) {
+        result->read_count++;
+        result->read_data.append(buf->base, nread);
+    }
 
     free(buf->base);
 }
