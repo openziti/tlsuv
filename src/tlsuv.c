@@ -119,6 +119,12 @@ static void on_internal_close(uv_handle_t *h) {
         req->cb(req, UV_ECANCELED);
     }
 
+    if (h->data) {
+        uv_idle_t *idle = h->data;
+        assert(idle->type == UV_IDLE);
+        uv_close((uv_handle_t *) idle, (uv_close_cb) free);
+    }
+
     // error handling
     // fail all pending requests
     fail_pending_reqs(clt, UV_ECANCELED);
