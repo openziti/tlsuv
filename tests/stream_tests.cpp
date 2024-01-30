@@ -325,9 +325,13 @@ static void read_cb(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     tlsuv_stream_t *clt = reinterpret_cast<tlsuv_stream_t *>(stream);
     test_result *result = static_cast<test_result *>(clt->data);
 
-    REQUIRE(nread > 0);
-    result->read_count++;
-    result->read_data.append(buf->base, nread);
+
+    REQUIRE(nread >= 0);
+
+    if (nread > 0) {
+        result->read_count++;
+        result->read_data.append(buf->base, nread);
+    }
 
     free(buf->base);
 }
