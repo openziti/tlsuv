@@ -132,7 +132,7 @@ static int load_key(tlsuv_private_key_t *key_ref, const char *keystr, size_t len
         keylen = len;
     }
 
-    CFArrayRef items;
+    CFArrayRef items = NULL;
 
     SecExternalItemType type = kSecItemTypePrivateKey;
     CFDataRef data = CFDataCreate(kCFAllocatorDefault, key_buf, keylen);
@@ -194,13 +194,44 @@ static int load_key(tlsuv_private_key_t *key_ref, const char *keystr, size_t len
     return rc == 0 ? 0 : -1;
 }
 
+static int load_cert(tls_cert *cert, const char *certstr, size_t len) {
+    char *cert_buf = NULL;
+    size_t cert_len;
+    if (load_file(certstr, &cert_buf, &cert_len) != 0) {
+        cert_buf = (char*)certstr;
+        cert_len = len;
+    }
+
+    SecExternalItemType type = kSecItemTypeCertificate;
+    CFDataRef data = CFDataCreate(kCFAllocatorDefault, cert_buf, cert_len);
+
+    CFArrayRef items = NULL;
+    OSStatus rc = SecItemImport(data, NULL, NULL, &type, 0, NULL, NULL, &items);
+
+    if (cert_buf != certstr) {
+        free(cert_buf);
+    }
+    *cert = items;
+    return rc == 0 ? 0 : -1;
+}
+
+static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t pk, tls_cert cert) {
+    struct sectransport_ctx *c = (struct sectransport_ctx *) ctx;
+    struct sectransport_pub_key *key = container_of(pk, struct sectransport_pub_key, api);
+
+    c->key = key->key;
+    c->cert = cert;
+
+    return 0;
+}
+
 static tls_context ctx_api = {
         .version = tls_lib_version,
 //        .strerror = (const char *(*)(long)) tls_error,
         .new_engine = new_engine,
         .free_ctx = tls_free_ctx,
 //        .free_cert = tls_free_cert,
-//        .set_own_cert = tls_set_own_cert,
+        .set_own_cert = tls_set_own_cert,
 //        .set_cert_verify = tls_set_cert_verify,
 //        .verify_signature =  tls_verify_signature,
 //        .parse_pkcs7_certs = parse_pkcs7_certs,
@@ -209,7 +240,7 @@ static tls_context ctx_api = {
         .load_key = load_key,
 //        .load_pkcs11_key = load_pkcs11_key,
 //        .generate_pkcs11_key = gen_pkcs11_key,
-//        .load_cert = load_cert,
+        .load_cert = load_cert,
 //       .generate_csr_to_pem = generate_csr,
 };
 
