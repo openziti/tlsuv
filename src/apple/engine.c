@@ -76,6 +76,8 @@ tlsuv_engine_t new_engine(tls_context *ctx, const char *hostname) {
 
         e->policies = policies;
         SSLSetSessionOption(e->ssl, kSSLSessionOptionBreakOnServerAuth, true);
+        SecKeyRef key;
+        SecKeyCreateSignature(key,)
     }
 
     e->socket = -1;

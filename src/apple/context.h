@@ -12,6 +12,9 @@ struct sectransport_ctx {
     tls_context api;
 
     CFArrayRef ca_bundle;
+
+    SecKeyRef key;
+    CFArrayRef cert;
 };
 
 struct sectransport_priv_key {
