@@ -53,7 +53,7 @@ static void comp_free(void *ctx, void *p) {
 }
 
 #if __linux__
-#define SO_lib(p) (#p ".so")
+#define SO_lib(p) (#p ".so.1")
 #elif defined(__APPLE__)
 #define SO_lib(p) (#p ".dylib")
 #else
