@@ -52,7 +52,7 @@ static void comp_free(void *ctx, void *p) {
     free(p);
 }
 
-#if __linux__
+#if __linux__ || defined(__FreeBSD__)
 #define SO_lib(p) (#p ".so.1")
 #elif defined(__APPLE__)
 #define SO_lib(p) (#p ".dylib")
