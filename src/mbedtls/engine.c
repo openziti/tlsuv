@@ -39,7 +39,10 @@
 #include <tlsuv/tlsuv.h>
 
 #if defined(__APPLE__)
+#include <TargetConditionals.h>
+#if TARGET_OS_IOS
 #include <Security/Security.h>
+#endif
 #endif
 
 #if _WIN32
@@ -306,7 +309,7 @@ static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uin
         }
     }
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS
     if (*flags & MBEDTLS_X509_BADCERT_NOT_TRUSTED) {
         CFMutableArrayRef certs = CFArrayCreateMutable(kCFAllocatorDefault, 1, &kCFTypeArrayCallBacks);
         mbedtls_x509_crt *c1 = crt;
