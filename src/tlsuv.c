@@ -308,16 +308,16 @@ static void process_outbound(tlsuv_stream_t *clt) {
         if (ret > 0) {
             req->buf.base += ret;
             req->buf.len -= ret;
-        }
 
-        // complete
-        if (req->buf.len == 0) {
-            clt->queue_len -= 1;
-            TAILQ_REMOVE(&clt->queue, req, _next);
-            if (req->wr->cb) {
-                req->wr->cb(req->wr, 0);
+            // complete
+            if (req->buf.len == 0) {
+                clt->queue_len -= 1;
+                TAILQ_REMOVE(&clt->queue, req, _next);
+                if (req->wr->cb) {
+                    req->wr->cb(req->wr, 0);
+                }
+                free(req);
             }
-            free(req);
             continue;
         }
 
