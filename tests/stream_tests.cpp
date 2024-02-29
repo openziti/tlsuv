@@ -383,3 +383,44 @@ TEST_CASE("read start/stop", "[stream]") {
     start(loopTest.loop, steps);
     loopTest.run();
 }
+
+static void wrt_cb(uv_write_t *wr, int status) {
+    if (status != 0) {
+        CHECK(status == UV_ECANCELED);
+    }
+
+    free(wr->data);
+    delete wr;
+}
+
+// this test is designed to block echo server since it is not reading back
+// eventually echo server will block on write and stop reading
+// this will cause this stream to block writing
+// the write requests will get either success of cancellation at the end of the test
+TEST_CASE("large/partial writes", "[stream]") {
+    tlsuv_stream_t s;
+    UvLoopTest loopTest(3);
+    uv_connect_t cr;
+    cr.data = &s;
+
+    tlsuv_stream_init(loopTest.loop, &s, testServerTLS());
+
+    tlsuv_stream_connect(&cr, &s, "localhost", 7443, [](uv_connect_t *r, int status){
+        REQUIRE(status == 0);
+
+        auto stream = (tlsuv_stream_t*) r->data;
+        for (int i = 0; i < 20; i++) {
+            auto w = new uv_write_t;
+            auto buf = uv_buf_init((char*)malloc(1024 * 1024), 1024 * 1024);
+            w->data = buf.base;
+            tlsuv_stream_write(w, stream, &buf, wrt_cb);
+        }
+    });
+
+    loopTest.run();
+
+    // cleanup after timeout
+    tlsuv_stream_close(&s, nullptr);
+    loopTest.run();
+    tlsuv_stream_free(&s);
+}

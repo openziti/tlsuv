@@ -90,8 +90,12 @@ func runEchoServer(port int) chan error {
 			}
 
 			go func() {
+				defer func(clt net.Conn) {
+					_ = clt.Close()
+				}(clt)
+				
+				buf := make([]byte, 1024)
 				for {
-					buf := make([]byte, 1024)
 					n, err := clt.Read(buf)
 					if err != nil {
 						return
