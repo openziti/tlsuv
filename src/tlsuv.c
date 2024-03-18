@@ -169,8 +169,12 @@ int tlsuv_stream_keepalive(tlsuv_stream_t *clt, int keepalive, unsigned int dela
 #if defined(TCP_KEEPALIVE)
         setsockopt(s, IPPROTO_TCP, TCP_KEEPALIVE, &delay, sizeof(delay));
 #endif
+#if defined(TCP_KEEPINTVL)
         setsockopt(s, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+#endif
+#if defined(TCP_KEEPCNT)
         setsockopt(s, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+#endif
     }
     return 0;
 }
