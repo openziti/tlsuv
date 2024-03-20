@@ -212,7 +212,7 @@ static void make_links(tlsuv_http_t *clt, uv_link_t *conn_src) {
         }
 
         if (clt->host_change) {
-            if(clt->engine) {
+            if (clt->engine) {
                 clt->engine->free(clt->engine);
             }
             clt->engine = NULL;
