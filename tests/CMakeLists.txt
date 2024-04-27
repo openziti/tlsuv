@@ -45,7 +45,8 @@ set(test_srcs
         stream_tests.cpp
         compression_tests.cpp
         key_tests.cpp
-        )
+        connector_tests.cpp
+)
 
 
 add_executable(all_tests

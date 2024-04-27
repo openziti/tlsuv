@@ -9,35 +9,67 @@ template<typename T> T* t_alloc() {
     return (T*)calloc(1, sizeof(T));
 }
 
+// readable condition lambdas
+#define UNTIL(c) [&](){ return !(c); }
+#define WHILE(c) [&](){ return (c); }
+
+
 struct UvLoopTest {
-    unsigned int timeout;
     uv_loop_t *loop;
-    uv_timer_t *timer;
+    uv_timer_t timer;
 
     UvLoopTest(): UvLoopTest(15) {}
 
-    UvLoopTest(unsigned int to): timeout(to), loop(t_alloc<uv_loop_t>()), timer(t_alloc<uv_timer_t>()){
-        uv_loop_init(loop);
-        uv_timer_init(loop, timer);
-        timer->data = this;
+    explicit UvLoopTest(unsigned int to): loop(uv_loop_new()) {
+        uv_timer_init(loop, &timer);
+        timer.data = this;
+        uv_unref((uv_handle_t*)&timer);
+
+        setTimeout(to);
     }
 
-    static void test_to(uv_timer_t *t) {
-        INFO("timeout stopping loop");
-        uv_print_all_handles(t->loop, stderr);
-        uv_stop(t->loop);
+    void setTimeout(unsigned int secs) {
+        uv_timer_stop(&timer);
+        if (secs > 0) {
+            INFO("starting test timer");
+            REQUIRE(uv_timer_start(&timer,
+                                   [](uv_timer_t *t){
+                                       uv_stop(t->loop);
+                                       FAIL("test exceeded allotted time");
+                                   }, secs * 1000, 0) == 0);
+        }
     }
 
-    void run() {
-        uv_timer_start(timer, test_to, timeout * 1000, 0);
-        uv_unref((uv_handle_t *)timer);
+    // run test loop until no more active handles or test timeout
+    void run() const {
         uv_run(loop, UV_RUN_DEFAULT);
+    }
+
+    // run while condition is met or until no active handles
+    template<typename Cond>
+    void run(Cond cond) const {
+        while(cond()) {
+            uv_run(loop, UV_RUN_ONCE);
+        }
+    }
+
+    // run loop for given number of seconds, take care not to exceed the test total timeout
+    void run(int to) const {
+        auto t = new uv_timer_t;
+        uv_timer_init(loop, t);
+
+        uv_timer_start(t, [](uv_timer_t* t){ uv_stop(t->loop); }, to * 1000, 0);
+
+        uv_run(loop, UV_RUN_DEFAULT);
+
+        uv_close((uv_handle_t*)t, [](uv_handle_t* h){
+            delete (uv_timer_t*)h;
+        });
     }
 
     ~UvLoopTest() {
         INFO("test teardown");
-
-        uv_close((uv_handle_t*) timer, nullptr);
+        uv_close((uv_handle_t*) &timer, nullptr);
         int attempt = 3;
 
         int rc;
@@ -52,7 +84,6 @@ struct UvLoopTest {
             fprintf(stderr, "loop_close_failed: %d(%s)", rc, uv_strerror(rc));
             uv_print_all_handles(loop, stderr);
         }
-        free(timer);
         free(loop);
     }
 };

@@ -1,10 +1,10 @@
-// Copyright (c) NetFoundry Inc.
+// Copyright (c) 2024. NetFoundry Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
 //
-//     https://www.apache.org/licenses/LICENSE-2.0
+// You may obtain a copy of the License at
+// https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,6 +29,7 @@
 #else
 #define get_error() errno
 #include <sys/ioctl.h>
+#include <unistd.h>
 #endif
 
 #define to_str1(s) #s
@@ -40,7 +41,6 @@
 #define TLSUV_VERS "<unknown>"
 #endif
 
-static uv_os_sock_t new_socket(const struct addrinfo *addr);
 static void on_clt_io(uv_poll_t *, int, int);
 static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
 static void check_read(uv_idle_t *idle);
@@ -77,6 +77,7 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
 
     clt->loop = l;
 
+    clt->connector = tlsuv_global_connector();
     clt->tls = tls != NULL ? tls : get_default_tls();
     clt->read_cb = NULL;
     clt->alloc_cb = NULL;
@@ -84,6 +85,11 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
     TAILQ_INIT(&clt->queue);
 
     return 0;
+}
+
+void tlsuv_stream_set_connector(tlsuv_stream_t *clt, const tlsuv_connector_t *c) {
+    assert(clt != NULL);
+    clt->connector = c != NULL ? c : tlsuv_global_connector();
 }
 
 static int start_io(tlsuv_stream_t *clt) {
@@ -114,7 +120,10 @@ static void on_internal_close(uv_handle_t *h) {
     if (clt->conn_req) {
         uv_connect_t *req = clt->conn_req;
         clt->conn_req = NULL;
-        req->cb(req, UV_ECANCELED);
+        if (req->cb) {
+            req->cb(req, UV_ECANCELED);
+            req->cb = NULL;
+        }
     }
 
     if (h->data) {
@@ -138,20 +147,26 @@ static void on_internal_close(uv_handle_t *h) {
 }
 
 int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
-    if (clt->resolve_req) {
-        clt->resolve_req->data = NULL;
-        uv_cancel((uv_req_t *) clt->resolve_req);
-    }
-
     clt->read_cb = NULL;
     clt->alloc_cb = NULL;
-
     clt->close_cb = close_cb;
+
+    if (clt->connect_req) {
+        clt->connector->cancel(clt->connect_req);
+        return 0;
+    }
+
     if (clt->tls_engine) {
         clt->tls_engine->close(clt->tls_engine);
     }
 
     if (clt->watcher.type == UV_POLL) {
+        uv_poll_stop(&clt->watcher);
+#if _WIN32
+        closesocket(clt->sock);
+#else
+        close(clt->sock);
+#endif
         uv_close((uv_handle_t *) &clt->watcher, on_internal_close);
     } else {
         on_internal_close((uv_handle_t *) &clt->watcher);
@@ -436,13 +451,15 @@ int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_fd_t fd, uv_
         return UV_EALREADY;
     }
 
+    clt->conn_req = req;
     req->type = UV_CONNECT;
     req->cb = cb;
     req->handle = (uv_stream_t *) clt;
 
     clt->sock = fd;
     uv_poll_init_socket(clt->loop, &clt->watcher, clt->sock);
-    return uv_poll_start(&clt->watcher, UV_READABLE | UV_WRITABLE | UV_DISCONNECT, on_clt_io);
+    process_connect(clt, 0);
+    return 0;
 }
 
 int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const struct addrinfo *addr, uv_connect_cb cb) {
@@ -453,7 +470,7 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
         return UV_EALREADY;
     }
 
-    uv_os_sock_t s = new_socket(addr);
+    uv_os_sock_t s = tlsuv_socket(addr, 0);
     if (s < 0) {
         return -get_error();
     }
@@ -480,21 +497,20 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
     return 0;
 }
 
-static void on_resolve(uv_getaddrinfo_t *req, int status, struct addrinfo *addr) {
-    tlsuv_stream_t *clt = req->data;
-    if (clt && clt->conn_req) {
-        clt->resolve_req = NULL;
-
-        if (status == 0) {
-            tlsuv_stream_connect_addr(clt->conn_req, clt, addr, clt->conn_req->cb);
-        } else if (status != UV_ECANCELED) {
-            uv_connect_t *r = clt->conn_req;
-            clt->conn_req = NULL;
-            r->cb(r, status);
-        }
+static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
+    uv_connect_t *r = ctx;
+    tlsuv_stream_t *clt = (tlsuv_stream_t *)r->handle;
+    clt->connect_req = NULL;
+    if (status == 0) {
+        tlsuv_stream_open(clt->conn_req, clt, sock, clt->conn_req->cb);
+        return;
     }
-    uv_freeaddrinfo(addr);
-    free(req);
+
+    r->cb(r, status);
+    clt->conn_req = NULL;
+    if (clt->close_cb) {
+        on_internal_close((uv_handle_t *) &clt->watcher);
+    }
 }
 
 int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *host, int port, uv_connect_cb cb) {
@@ -517,12 +533,8 @@ int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *hos
     tlsuv_stream_set_hostname(clt, host);
     clt->conn_req = req;
 
-    clt->resolve_req = calloc(1, sizeof(uv_getaddrinfo_t));
-    clt->resolve_req->data = clt;
-    struct addrinfo hints = {
-            .ai_socktype = SOCK_STREAM,
-    };
-    return uv_getaddrinfo(clt->loop, clt->resolve_req, on_resolve, host, portstr, &hints);
+    clt->connect_req = clt->connector->connect(clt->loop, clt->connector, host, portstr, on_connect, clt->conn_req);
+    return 0;
 }
 
 int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_cb read_cb) {
@@ -629,7 +641,7 @@ int tlsuv_stream_free(tlsuv_stream_t *clt) {
     return 0;
 }
 
-uv_os_sock_t new_socket(const struct addrinfo *addr) {
+uv_os_sock_t tlsuv_socket(const struct addrinfo *addr, bool blocking) {
     uv_os_sock_t sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
 
     int on = 1;
@@ -645,18 +657,52 @@ uv_os_sock_t new_socket(const struct addrinfo *addr) {
     flags = fcntl(sock, F_GETFD);
     fcntl(sock, F_SETFD, flags | FD_CLOEXEC);
 #endif
-#if defined(O_NONBLOCK)
-    flags = fcntl(sock, F_GETFL);
-    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
-#elif defined(FIONBIO)
-    ioctl(sock, FIONBIO, &on);
-#endif
+
+    tlsuv_socket_set_blocking(sock, blocking);
 
     return sock;
+}
+
+int tlsuv_socket_set_blocking(uv_os_sock_t s, bool blocking) {
+
+#if defined(O_NONBLOCK)
+    int flags = fcntl(s, F_GETFL);
+    if (blocking) {
+        fcntl(s, F_SETFL, flags & ~O_NONBLOCK);
+    } else {
+        fcntl(s, F_SETFL, flags | O_NONBLOCK);
+    }
+#elif defined(FIONBIO)
+    if (blocking) {
+        int off = 0;
+        ioctl(s, FIONBIO, &off);
+    } else {
+        int on = 1;
+        ioctl(s, FIONBIO, &on);
+    }
+#endif
+    return 0;
 }
 
 void check_read(uv_idle_t *idler) {
     tlsuv_stream_t *clt = idler->data;
     // this will clean up idle handle
     process_inbound(clt);
+}
+
+int tlsuv_stream_peername(const tlsuv_stream_t *clt, struct sockaddr *addr, int *namelen) {
+    uv_os_fd_t fd;
+    int r = uv_fileno((const uv_handle_t *) &clt->watcher, &fd);
+    if (r != 0) {
+        return r;
+    }
+
+    socklen_t socklen = (socklen_t)*namelen;
+    r = getpeername(fd, addr, &socklen);
+    if (r != 0) {
+        return r;
+    }
+
+    *namelen = (int)socklen;
+    return 0;
 }

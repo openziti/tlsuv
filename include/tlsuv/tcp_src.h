@@ -21,6 +21,7 @@
 #ifndef TLSUV_TCP_SRC_H
 #define TLSUV_TCP_SRC_H
 
+#include "connector.h"
 #include "src_t.h"
 
 #ifdef __cplusplus
@@ -32,8 +33,9 @@ extern "C" {
  */
 typedef struct tcp_src_s {
     tlsuv_SRC_FIELDS
-            uv_getaddrinfo_t *resolve_req;
-    uv_connect_t *conn_req;
+    const tlsuv_connector_t *connector;
+    tlsuv_connector_req conn_req;
+
     uv_tcp_t *conn;
     unsigned int keepalive;
     int nodelay:1;

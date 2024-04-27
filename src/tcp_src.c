@@ -1,10 +1,10 @@
-// Copyright (c) NetFoundry Inc.
+// Copyright (c) 2024. NetFoundry Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
 //
-//     https://www.apache.org/licenses/LICENSE-2.0
+// You may obtain a copy of the License at
+// https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,6 +27,7 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     tl->loop = l;
     tl->link = calloc(1, sizeof(uv_link_source_t));
     tl->conn = NULL;
+    tl->connector = tlsuv_global_connector();
     tl->connect = tcp_src_connect;
     tl->connect_cb = NULL;
     tl->release = tcp_src_release;
@@ -55,6 +56,25 @@ int tcp_src_keepalive(tcp_src_t *ts, int on, unsigned int val) {
     return ts->conn ? uv_tcp_keepalive(ts->conn, on, val) : 0;
 }
 
+static void on_connect(uv_os_sock_t s, int status, void *ctx) {
+    tcp_src_t *tcp = ctx;
+    tcp->conn_req = NULL;
+
+    if (status == 0) {
+        tcp->conn = calloc(1, sizeof(*tcp->conn));
+        uv_tcp_init(tcp->loop, tcp->conn);
+        uv_tcp_open(tcp->conn, s);
+        tcp_src_nodelay(tcp, tcp->nodelay);
+        tcp_src_keepalive(tcp, tcp->keepalive != 0, tcp->keepalive);
+
+        uv_link_source_init((uv_link_source_t *) tcp->link, (uv_stream_t *) tcp->conn);
+        tcp->link->data = tcp;
+    }
+
+    tcp->connect_cb((tlsuv_src_t *) tcp, status, tcp->connect_ctx);
+}
+
+/*
 static void tcp_connect_cb(uv_connect_t *req, int status) {
     tcp_src_t *sl = req->data;
 
@@ -125,6 +145,7 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
     uv_freeaddrinfo(addr);
     free(req);
 }
+ */
 
 static void free_handle(uv_handle_t *h) {
     free(h);
@@ -151,33 +172,17 @@ static int tcp_src_connect(tlsuv_src_t *sl, const char* host, const char *servic
             tcp->conn = NULL;
         }
     }
+    tcp->conn_req = tcp->connector->connect(tcp->loop, tcp->connector, host, service, on_connect, tcp);
 
-    tcp->resolve_req = calloc(1, sizeof(uv_getaddrinfo_t));
-    tcp->resolve_req->data = tcp;
-
-    UM_LOG(DEBG, "resolving '%s:%s'", host, service);
-    int rc = uv_getaddrinfo(sl->loop, tcp->resolve_req, resolve_cb, host, service, NULL);
-
-    if (rc != 0) {
-        free(tcp->resolve_req);
-        tcp->resolve_req = NULL;
-    }
-    return rc;
+    return 0;
 }
 
 static void tcp_src_cancel(tlsuv_src_t *sl) {
     tcp_src_t *tl = (tcp_src_t*)sl;
     uv_link_source_t *ts = (uv_link_source_t *) tl->link;
 
-    if (tl->resolve_req) {
-        tl->resolve_req->data = NULL;
-        tl->resolve_req = NULL;
-    }
-
     if (tl->conn_req) {
-        uv_close((uv_handle_t *) tl->conn_req->handle, free_handle);
-        tl->conn_req->data = NULL;
-        tl->conn_req = NULL;
+        tl->connector->cancel(tl->conn_req);
     }
 
     if (tl->conn && !uv_is_closing((const uv_handle_t *) tl->conn)) {

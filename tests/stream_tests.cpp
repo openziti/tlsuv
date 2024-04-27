@@ -1,18 +1,16 @@
-/*
-Copyright 2019-2021 NetFoundry, Inc.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright (c) 2024. NetFoundry Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+//
+// You may obtain a copy of the License at
+// https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include <cstring>
 #include <tlsuv/tlsuv.h>
@@ -384,43 +382,150 @@ TEST_CASE("read start/stop", "[stream]") {
     loopTest.run();
 }
 
-static void wrt_cb(uv_write_t *wr, int status) {
-    if (status != 0) {
-        CHECK(status == UV_ECANCELED);
-    }
-
-    free(wr->data);
-    delete wr;
-}
-
 // this test is designed to block echo server since it is not reading back
 // eventually echo server will block on write and stop reading
 // this will cause this stream to block writing
 // the write requests will get either success of cancellation at the end of the test
 TEST_CASE("large/partial writes", "[stream]") {
     tlsuv_stream_t s;
-    UvLoopTest loopTest(3);
+    UvLoopTest loopTest;
     uv_connect_t cr;
     cr.data = &s;
+
+    struct connect_res {
+        bool called;
+        int err;
+    } conn_res = { false, 0 };
+    cr.data = &conn_res;
 
     tlsuv_stream_init(loopTest.loop, &s, testServerTLS());
 
     tlsuv_stream_connect(&cr, &s, "localhost", 7443, [](uv_connect_t *r, int status){
-        REQUIRE(status == 0);
-
-        auto stream = (tlsuv_stream_t*) r->data;
-        for (int i = 0; i < 20; i++) {
-            auto w = new uv_write_t;
-            auto buf = uv_buf_init((char*)malloc(1024 * 1024), 1024 * 1024);
-            w->data = buf.base;
-            tlsuv_stream_write(w, stream, &buf, wrt_cb);
-        }
+        auto res = (connect_res*) r->data;
+        res->called = true;
+        res->err = status;
     });
 
-    loopTest.run();
+    loopTest.run(UNTIL(conn_res.called));
+    REQUIRE(conn_res.err == 0);
 
-    // cleanup after timeout
-    tlsuv_stream_close(&s, nullptr);
-    loopTest.run();
-    tlsuv_stream_free(&s);
+#define MSG_SIZE (1024*1024)
+
+    struct write_res {
+        int count;
+        std::vector<int> results;
+    } w_res = {0};
+
+    s.data = &w_res;
+    for (int i = 0; i < 20; i++) {
+        auto w = new uv_write_t;
+        w->data = malloc(MSG_SIZE);
+
+        auto buf = uv_buf_init((char*)w->data, MSG_SIZE);
+
+        tlsuv_stream_write(w, &s, &buf, [](uv_write_t *w, int status){
+            auto s = (tlsuv_stream_t *)w->handle;
+            auto res = (write_res*) s->data;
+            res->results.push_back(status);
+
+            free(w->data);
+            delete w;
+        });
+        w_res.count++;
+    }
+
+    // let it run to fill the 'wire'
+    loopTest.run(1);
+
+    tlsuv_stream_close(&s, [](uv_handle_t *h){
+        tlsuv_stream_free((tlsuv_stream_t *)h);
+    });
+
+    // should get the same number of callbacks as write requests
+    loopTest.run(UNTIL(w_res.count == w_res.results.size()));
+
+    // each write req should either succeed or be cancelled by close
+    auto successes = std::count(w_res.results.begin(), w_res.results.end(), 0);
+    auto cancelled = std::count(w_res.results.begin(), w_res.results.end(), UV_ECANCELED);
+
+    CHECK(cancelled > 0);
+    CHECK(successes + cancelled == w_res.results.size());
+}
+
+TEST_CASE_METHOD(UvLoopTest, "stream/global proxy", "[stream]") {
+    auto const proxy_port = "13128";
+    auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "localhost", proxy_port);
+    tlsuv_set_global_connector(proxy);
+
+    setTimeout(300);
+    tlsuv_stream_t s;
+    CHECK(tlsuv_stream_init(loop, &s, testServerTLS()) == 0);
+    CHECK(s.connector == proxy);
+    struct res {
+        bool conn_cb;
+        int conn_status;
+        char readbuf[128];
+        std::string data;
+        int read_status;
+    } result = { false, 0, "", "", 0 };
+
+    s.data = &result;
+
+    uv_connect_t cr;
+    cr.data = &s;
+    tlsuv_stream_connect(&cr, &s, "localhost", 7443, [](uv_connect_t *r, int status){
+        auto clt = (tlsuv_stream_t*)r->data;
+        auto result = (res*)clt->data;
+        result->conn_cb = true;
+        result->conn_status = status;
+        fprintf(stderr, "result = %p\n", result);
+    });
+
+    run(UNTIL(result.conn_cb));
+
+    INFO("check connected");
+    fprintf(stderr, "result = %p\n", &result);
+
+    REQUIRE(result.conn_status == 0);
+
+    sockaddr_storage peer;
+    int peer_len = sizeof(peer);
+    CHECK(tlsuv_stream_peername(&s, (sockaddr*)&peer, &peer_len) == 0);
+    int port = -1;
+    if (peer.ss_family == AF_INET) {
+        port = ntohs(((sockaddr_in*)&peer)->sin_port);
+    } else if (peer.ss_family == AF_INET6) {
+        port = ntohs(((sockaddr_in6*)&peer)->sin6_port);
+    }
+    INFO("check connected via proxy");
+    CHECK(port == 13128);
+
+    tlsuv_stream_read_start(&s,
+                            [](uv_handle_t * s,size_t sug, uv_buf_t* buf){
+                                auto clt = (tlsuv_stream_t *)s;
+                                auto result = (res*)clt->data;
+                                buf->base = result->readbuf;
+                                buf->len = sizeof(result->readbuf);
+                            },
+                            [](uv_stream_t *s, ssize_t n, const uv_buf_t* buf){
+                                auto clt = (tlsuv_stream_t *)s;
+                                auto result = (res*)clt->data;
+                                if (n < 0) {
+                                    result->read_status = (int)n;
+                                } else {
+                                    result->data.append(buf->base, n);
+                                }
+                            });
+    uv_buf_t write = uv_buf_init((char*)"12345", 5);
+    CHECK(tlsuv_stream_try_write(&s, &write) == 5);
+
+    while(result.data != "12345") {
+        uv_run(loop, UV_RUN_ONCE);
+    }
+
+    tlsuv_stream_close(&s, (uv_close_cb)tlsuv_stream_free);
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    tlsuv_set_global_connector(nullptr);
+    proxy->free(proxy);
 }

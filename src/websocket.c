@@ -1,10 +1,10 @@
-// Copyright (c) NetFoundry Inc.
+// Copyright (c) 2024. NetFoundry Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
 //
-//     https://www.apache.org/licenses/LICENSE-2.0
+// You may obtain a copy of the License at
+// https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -155,6 +155,7 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
 
     char portstr[6];
     snprintf(portstr, sizeof(portstr), "%d", port);
+
     req->handle = (uv_stream_t *) ws;
     req->cb = conn_cb;
 
@@ -175,7 +176,7 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
 
     ws->host = host;
     ws->read_cb = data_cb;
-    UM_LOG(DEBG, "connecting to '%s:%s'", host, portstr);
+    UM_LOG(DEBG, "connecting to '%s:%d'", host, port);
     return ws->src->connect(ws->src, host, portstr, src_connect_cb, req);
 }
 
