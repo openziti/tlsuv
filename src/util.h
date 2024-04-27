@@ -6,7 +6,8 @@
 #define TLSUV_UTIL_H
 
 #include <assert.h>
-
+#include <uv.h>
+#include <stdbool.h>
 
 #define container_of(ptr, type, member) \
   ((type *) ((char *) (ptr) - offsetof(type, member)))
@@ -62,5 +63,9 @@ wab_check_bounds((b), (b).getp + l);                              \
 if ((b).getp == (b).putp) (b).getp = (b).putp = (b).buf; \
 if ((b).getp == (b).buf + sizeof((b).buf)) (b).getp = (b).buf; \
 } while(0)
+
+
+uv_os_sock_t tlsuv_socket(const struct addrinfo *addr, bool blocking);
+int tlsuv_socket_set_blocking(uv_os_sock_t s, bool blocking);
 
 #endif //TLSUV_UTIL_H

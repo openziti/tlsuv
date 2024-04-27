@@ -17,6 +17,7 @@
 
 #include <uv.h>
 
+#include "connector.h"
 #include "tcp_src.h"
 #include "tls_engine.h"
 #include "tls_link.h"
@@ -34,6 +35,8 @@ typedef void(*tlsuv_log_func)(int level, const char *file, unsigned int line, co
 void tlsuv_set_debug(int level, tlsuv_log_func output_f);
 
 int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls);
+void tlsuv_stream_set_connector(tlsuv_stream_t *clt, const tlsuv_connector_t *connector);
+
 int tlsuv_stream_set_protocols(tlsuv_stream_t *clt, int num, const char *protocols[]);
 const char* tlsuv_stream_get_protocol(tlsuv_stream_t *clt);
 int tlsuv_stream_keepalive(tlsuv_stream_t *clt, int keepalive, unsigned int delay);
@@ -122,14 +125,20 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb);
 
 int tlsuv_stream_free(tlsuv_stream_t *clt);
 
+int tlsuv_stream_peername(const tlsuv_stream_t *clt, struct sockaddr *addr, int *namelen);
+
 typedef struct tlsuv_write_s tlsuv_write_t;
 
 struct tlsuv_stream_s {
     uv_loop_t *loop;
     void *data;
 
+    const tlsuv_connector_t *connector;
+    tlsuv_connector_req connect_req;
+
     tls_context *tls;
     tlsuv_engine_t tls_engine;
+
     int alpn_count;
     const char **alpn_protocols;
 
@@ -140,7 +149,6 @@ struct tlsuv_stream_s {
     uv_alloc_cb alloc_cb;
 
     uv_os_sock_t sock;
-    uv_getaddrinfo_t *resolve_req;
     uv_poll_t watcher;
 
     TAILQ_HEAD(reqs, tlsuv_write_s) queue;

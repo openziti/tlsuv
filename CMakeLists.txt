@@ -42,6 +42,7 @@ set(tlsuv_sources
         src/p11.c
         src/p11.h
         src/util.h
+        src/connector.c
 )
 
 if(USE_OPENSSL)

@@ -9,11 +9,16 @@ import (
 	"crypto/x509/pkix"
 	"flag"
 	"fmt"
+	"github.com/elazarl/goproxy"
 	"github.com/mccutchen/go-httpbin/v2/httpbin"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -154,16 +159,40 @@ func init() {
 	serverCert.Certificate = append(serverCert.Certificate, serverX509)
 }
 
-func main() {
-	httpb := httpbin.New()
+func runProxy(port int) chan error {
+	done := make(chan error)
+	proxy := goproxy.NewProxyHttpServer()
+	proxy.Verbose = true
+	proxy.KeepHeader = true
+	proxy.KeepDestinationHeaders = true
+	go func() {
+		done <- http.ListenAndServe(fmt.Sprintf(":%d", port), proxy)
+	}()
+	return done
+}
 
-	var err error
+func main() {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	httpb := httpbin.New(
+		func(httpBin *httpbin.HTTPBin) {
+			httpBin.Observer = func(result httpbin.Result) {
+				log.Print(result)
+			}
+		})
+
+	var err any
 	select {
 	case err = <-runHTTP(8080, httpb):
 	case err = <-runHTTPS(8443, httpb):
 	case err = <-runClientAuth(9443):
 	case err = <-runEchoServer(7443):
+	case err = <-runProxy(13128):
+	case err = <-sigs:
 	}
 
-	fmt.Println(err)
+	if err != nil {
+		fmt.Println(err)
+	}
 }

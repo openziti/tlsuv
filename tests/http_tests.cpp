@@ -1,18 +1,16 @@
-/*
-Copyright 2019-2020 NetFoundry, Inc.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright (c) 2024. NetFoundry Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+//
+// You may obtain a copy of the License at
+// https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "catch.hpp"
 #include "fixtures.h"
@@ -69,22 +67,8 @@ tls_context* testServerTLS() {
     return srv.TLS();
 }
 
-//struct ci_less : std::binary_function<string, string, bool>
-//{
-//    // case-independent (ci) compare_less binary function
-//    struct nocase_compare : public std::binary_function<unsigned char,unsigned char,bool>
-//    {
-//      bool operator() (const unsigned char& c1, const unsigned char& c2) const {
-//          return tolower (c1) < tolower (c2);
-//      }
-//    };
-//    bool operator() (const std::string & s1, const std::string & s2) const {
-//      return std::lexicographical_compare
-//        (s1.begin (), s1.end (),   // source range
-//        s2.begin (), s2.end (),   // dest range
-//        nocase_compare ());  // comparison
-//    }
-//};
+static const tlsuv_connector_t *proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", "13128");
+
 
 class resp_capture {
 public:
@@ -190,21 +174,25 @@ TEST_CASE("resolve failures", "[http]") {
 
     test.run();
 
-    REQUIRE(resp.code == UV_EAI_NONAME);
-
     tlsuv_http_close(clt, (tlsuv_http_close_cb) free);
+    CHECK(resp.code == UV_EAI_NONAME);
 }
 
 TEST_CASE("http_tests", "[http]") {
+
+    auto connector = GENERATE((const tlsuv_connector_t *)nullptr, proxy);
 
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
     UvLoopTest test;
     tlsuv_http_t clt;
 
+    std::string testType = scheme + '(' + (connector ? "proxy" : "direct") + ")";
+    tlsuv_set_global_connector(connector);
+
     resp_capture resp(resp_body_cb);
 
-    WHEN(scheme << " redirect") {
+    WHEN(testType << " redirect") {
         tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
         tlsuv_http_set_ssl(&clt, testServerTLS());
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/redirect/2", resp_capture_cb, &resp);
@@ -215,7 +203,7 @@ TEST_CASE("http_tests", "[http]") {
         REQUIRE(resp.headers["Location"] == "/relative-redirect/1");
     }
 
-    WHEN(scheme << " body GET") {
+    WHEN(testType << " body GET") {
         tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
         tlsuv_http_set_ssl(&clt, testServerTLS());
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
@@ -231,7 +219,7 @@ TEST_CASE("http_tests", "[http]") {
         REQUIRE(body_len == content_len);
     }
 
-    WHEN(scheme << " send headers") {
+    WHEN(testType << " send headers") {
         tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
         tlsuv_http_set_ssl(&clt, testServerTLS());
         tlsuv_http_header(&clt, "Client-Header", "This is client header");
@@ -253,7 +241,7 @@ TEST_CASE("http_tests", "[http]") {
         REQUIRE_THAT(resp2.body, !Catch::Matchers::ContainsSubstring("Request-Header") && !Catch::Matchers::ContainsSubstring("this is request header"));
     }
 
-    WHEN(scheme << " POST body") {
+    WHEN(testType << " POST body") {
         tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
         tlsuv_http_set_ssl(&clt, testServerTLS());
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
@@ -276,7 +264,7 @@ TEST_CASE("http_tests", "[http]") {
     }
 
 
-    WHEN(scheme << " posting chunked") {
+    WHEN(testType << " posting chunked") {
         tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
         tlsuv_http_set_ssl(&clt, testServerTLS());
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
@@ -311,6 +299,7 @@ TEST_CASE("http_tests", "[http]") {
         }
     }
     tlsuv_http_close(&clt, nullptr);
+    tlsuv_set_global_connector(nullptr);
 }
 
 #if defined(HSM_LIB)
@@ -541,8 +530,10 @@ TEST_CASE("server_idle_close","[.]") {
     }
 }
 
-
 TEST_CASE("basic_test", "[http]") {
+    auto connector = GENERATE((const tlsuv_connector_t *)nullptr, proxy);
+
+    tlsuv_set_global_connector(connector);
     UvLoopTest test;
 
     tlsuv_http_t clt;
@@ -553,7 +544,7 @@ TEST_CASE("basic_test", "[http]") {
 
     test.run();
 
-    THEN("request should be fast and then idle for 5 seconds") {
+    THEN("request should be fast and then idle for 5 seconds " << (connector ? "via proxy" : "direct")) {
         CHECK(resp.code == HTTP_STATUS_OK);
         CHECK_THAT(resp.http_version, Equals("1.1"));
         CHECK_THAT(resp.status, Equals("OK"));
@@ -562,6 +553,8 @@ TEST_CASE("basic_test", "[http]") {
     }
 
     tlsuv_http_close(&clt, nullptr);
+
+    tlsuv_set_global_connector(nullptr);
 }
 
 TEST_CASE("invalid CA", "[http]") {
