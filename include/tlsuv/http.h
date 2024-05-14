@@ -358,6 +358,10 @@ const char *tlsuv_http_resp_header(tlsuv_http_resp_t *resp, const char *name);
 struct tlsuv_url_s {
     const char *scheme;
     size_t scheme_len;
+    const char *username;
+    size_t username_len;
+    const char *password;
+    size_t password_len;
     const char *hostname;
     size_t hostname_len;
     uint16_t port;

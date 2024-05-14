@@ -156,7 +156,6 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addr) {
             e == EINPROGRESS
 #endif
                 ) {
-            UM_LOG(INFO, "poll = %p", &cr->poll);
             uv_poll_init_socket(r->loop, &cr->poll, cr->sock);
             uv_poll_start(&cr->poll, UV_WRITABLE|UV_DISCONNECT, on_poll_connect);
         } else {
@@ -218,7 +217,7 @@ struct proxy_connect_req {
 static void proxy_work(uv_work_t *wr) {
     struct proxy_connect_req *r = container_of(wr, struct proxy_connect_req, work);
 
-    struct tlsuv_proxy_connector_s *proxy = r->proxy;
+    const struct tlsuv_proxy_connector_s *proxy = r->proxy;
 
     tlsuv_socket_set_blocking(r->sock, true);
 
@@ -255,7 +254,7 @@ static void proxy_work(uv_work_t *wr) {
     int code = 0;
     res = sscanf(req, "HTTP/1.%*c %d ", &code);
     if (res != 1 || code != 200) {
-        r->err = ECONNREFUSED;
+        r->err = UV_ECONNREFUSED;
         closesocket(r->sock);
         r->sock = -1;
     }
@@ -313,14 +312,14 @@ int proxy_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *usern
         c->auth_header = "Proxy-Authorization";
         free(c->auth_value);
 
-        char auth[256];
-        size_t auth_len = snprintf(auth, sizeof(auth), "%s:%s", username, password);
+        char authstr[256];
+        size_t auth_len = snprintf(authstr, sizeof(authstr), "%s:%s", username, password);
 
         c->auth_value = malloc(512);
         size_t offset = snprintf(c->auth_value, 512, "Basic ");
         char *b64 = c->auth_value + offset;
         size_t b64max = 512 - offset;
-        return tlsuv_base64_encode((uint8_t *)auth, auth_len, &b64, &b64max);
+        return tlsuv_base64_encode((uint8_t *)authstr, auth_len, &b64, &b64max);
     } else {
         return UV_EINVAL;
     }
