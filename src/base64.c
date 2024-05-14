@@ -31,6 +31,14 @@ limitations under the License.
 */
 
 #include <stdlib.h>
+#include <uv.h>
+
+static const unsigned char base64[] = {
+        'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P',
+        'Q','R','S','T','U','V','W','X','Y','Z','a','b','c','d','e','f',
+        'g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v',
+        'w','x','y','z','0','1','2','3','4','5','6','7','8','9','+','/'
+};
 
 static const unsigned char pr2six[256] = {
     64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
@@ -63,6 +71,49 @@ static size_t base64url_decode_len(const char *bufcoded) {
     nbytesdecoded = ((nprbytes + 3) / 4) * 3;
 
     return nbytesdecoded;
+}
+
+int tlsuv_base64_encode(const uint8_t *in, size_t in_len, char **out, size_t *out_len) {
+    size_t b64len = in_len * 4 / 3 + 3;
+
+    if (*out != NULL && *out_len < b64len) {
+        return UV_ENOMEM;
+    }
+    if (*out == NULL) {
+        *out = malloc(b64len + 1);
+    }
+
+    uint8_t *outp = *out;
+    uint8_t ch1, ch2, ch3;
+    int i = 0;
+    for (; i + 2 < in_len; ) {
+        ch1 = in[i++];
+        ch2 = in[i++];
+        ch3 = in[i++];
+
+        *outp++ = base64[ (ch1 >> 2) & 0x3f ];
+        *outp++ = base64[ ((ch1 & 0x3) << 4) | (ch2 >> 4) & 0xf ];
+        *outp++ = base64[ ((ch2 & 0xf) << 2) | (ch3 >> 6) & 0x3 ];
+        *outp++ = base64[ (ch3 & 0x3f) ];
+    }
+
+    if (i < in_len) {
+        ch1 = in[i++];
+        ch2 = i < in_len ? in[i] : 0;
+        *outp++ = base64[ ch1 >> 2 & 0x3f ];
+        *outp++ = base64[ ((ch1 & 0x3) << 4) | (ch2 >> 4) & 0xf ];
+
+        if (i < in_len) {
+            *outp++ = base64[ ((ch2 & 0xf) << 2) ];
+        } else {
+            *outp++ = '=';
+        }
+        *outp++ = '=';
+    }
+    *outp = 0;
+
+    *out_len = (char*)outp - *out;
+    return 0;
 }
 
 size_t tlsuv_base64url_decode(const char *in, char **out, size_t *out_len) {

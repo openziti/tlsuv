@@ -26,6 +26,11 @@ typedef enum tlsuv_proxy_type {
     // maybe other kinds in the future
 } tlsuv_proxy_t;
 
+typedef enum tlsuv_proxy_auth {
+    tlsuv_PROXY_NONE,
+    tlsuv_PROXY_BASIC,
+} tlsuv_auth_t;
+
 // connector creates connected sockets
 typedef const void* tlsuv_connector_req;
 typedef struct tlsuv_connector_s tlsuv_connector_t;
@@ -42,6 +47,7 @@ tlsuv_connector_t *tlsuv_new_proxy_connector(tlsuv_proxy_t type, const char* hos
 
 struct tlsuv_connector_s {
     tlsuv_connect connect;
+    int (*set_auth)(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *username, const char *password);
     void (*cancel)(tlsuv_connector_req);
     void (*free)(void *self);
 };

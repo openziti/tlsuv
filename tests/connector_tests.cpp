@@ -17,6 +17,7 @@
 #include <tlsuv/connector.h>
 
 #include "fixtures.h"
+#include "tlsuv/tlsuv.h"
 
 #if _WIN32
 #include <winsock.h>
@@ -136,4 +137,27 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connector", "[connector]") {
          (result.sock);
 
     connector->free(connector);
+}
+
+TEST_CASE("base64 encode", "[connector]") {
+    auto msg = "this is a long message!";
+
+    auto len = strlen(msg);
+    char b64[128];
+
+    for (int i = 1; i <= len; i++) {
+        char *b = b64;
+        size_t outlen = sizeof(b64);
+        CHECK(tlsuv_base64_encode((const uint8_t *)msg, i, &b, &outlen) == 0);
+        CHECK(strlen(b) == outlen);
+        fprintf(stderr, "%.*s\n", (int)outlen, b64);
+    }
+
+    char *out = NULL;
+    size_t outlen = 0;
+    CHECK(tlsuv_base64_encode((const uint8_t *)msg, len, &out, &outlen) == 0);
+    fprintf(stderr, "len[%zd] %s\n", outlen, out);
+    CHECK(strlen(out) == outlen);
+    free(out);
+
 }

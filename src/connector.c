@@ -18,6 +18,7 @@
 
 #include "util.h"
 #include "um_debug.h"
+#include "tlsuv/tlsuv.h"
 
 
 #if _WIN32
@@ -61,8 +62,13 @@ static void default_connector_free(void *self){
     (void)self;
 }
 
+static int default_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *username, const char *password) {
+    return UV_ENOTSUP;
+}
+
 static tlsuv_connector_t default_connector = {
         .connect = default_connect,
+        .set_auth = default_set_auth,
         .cancel = default_cancel,
         .free = default_connector_free,
 };
@@ -70,12 +76,15 @@ static const tlsuv_connector_t *global_connector = &default_connector;
 
 struct tlsuv_proxy_connector_s {
     tlsuv_connect connect;
+    int (*set_auth)();
     void (*cancel)(tlsuv_connector_req);
     void (*free)(tlsuv_connector_t *self);
     
     tlsuv_proxy_t type;
     char *host;
     char *port;
+    const char *auth_header;
+    char *auth_value;
 };
 
 void tlsuv_set_global_connector(const tlsuv_connector_t *c) {
@@ -195,6 +204,7 @@ void default_cancel(tlsuv_connector_req req) {
 
 struct proxy_connect_req {
     uv_work_t work;
+    const struct tlsuv_proxy_connector_s *proxy;
     void *data;
     char *host;
     char *port;
@@ -208,6 +218,8 @@ struct proxy_connect_req {
 static void proxy_work(uv_work_t *wr) {
     struct proxy_connect_req *r = container_of(wr, struct proxy_connect_req, work);
 
+    struct tlsuv_proxy_connector_s *proxy = r->proxy;
+
     tlsuv_socket_set_blocking(r->sock, true);
 
     char req[1024];
@@ -215,8 +227,14 @@ static void proxy_work(uv_work_t *wr) {
                              "CONNECT %s:%s HTTP/1.1\r\n"
                              "Host: %s:%s\r\n"
                              "Proxy-Connection: keep-alive\r\n"
+                             "%s%s%s%s"
                              "\r\n",
-                             r->host, r->port, r->host, r->port);
+                             r->host, r->port, r->host, r->port,
+                             proxy->auth_header ? proxy->auth_header : "",
+                             proxy->auth_header ? ": " : "",
+                             proxy->auth_header ? proxy->auth_value : "",
+                             proxy->auth_header ? "\r\n" : ""
+    );
     ssize_t res = write(r->sock, req, reqlen);
     if (res < 0) {
         r->err = (int)get_error();
@@ -272,6 +290,7 @@ tlsuv_connector_req proxy_connect(uv_loop_t *loop, const tlsuv_connector_t *self
                                   const char *host, const char *port, tlsuv_connect_cb cb, void *ctx) {
     const struct tlsuv_proxy_connector_s *proxy = (const struct tlsuv_proxy_connector_s *) self;
     struct proxy_connect_req *r = calloc(1, sizeof(*r));
+    r->proxy = proxy;
     r->data = ctx;
     r->cb = cb;
     r->host = strdup(host);
@@ -279,6 +298,32 @@ tlsuv_connector_req proxy_connect(uv_loop_t *loop, const tlsuv_connector_t *self
     r->work.loop = loop;
     r->conn_req = default_connect(loop, &default_connector, proxy->host, proxy->port, on_proxy_connect, r);
     return r;
+}
+
+int proxy_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *username, const char *password) {
+    struct tlsuv_proxy_connector_s *c = (struct tlsuv_proxy_connector_s *) self;
+    if (auth == tlsuv_PROXY_NONE) {
+        c->auth_header = NULL;
+        free(c->auth_value);
+        c->auth_value = NULL;
+        return 0;
+    } else if (auth == tlsuv_PROXY_BASIC) {
+        if (!username || !password)
+            return UV_EINVAL;
+        c->auth_header = "Proxy-Authorization";
+        free(c->auth_value);
+
+        char auth[256];
+        size_t auth_len = snprintf(auth, sizeof(auth), "%s:%s", username, password);
+
+        c->auth_value = malloc(512);
+        size_t offset = snprintf(c->auth_value, 512, "Basic ");
+        char *b64 = c->auth_value + offset;
+        size_t b64max = 512 - offset;
+        return tlsuv_base64_encode((uint8_t *)auth, auth_len, &b64, &b64max);
+    } else {
+        return UV_EINVAL;
+    }
 }
 
 void proxy_cancel(tlsuv_connector_req req) {
@@ -294,6 +339,7 @@ void proxy_free(tlsuv_connector_t *self) {
     struct tlsuv_proxy_connector_s *c = (struct tlsuv_proxy_connector_s *) self;
     free(c->host);
     free(c->port);
+    free(c->auth_value);
     free(c);
 }
 
@@ -304,6 +350,7 @@ tlsuv_connector_t *tlsuv_new_proxy_connector(tlsuv_proxy_t type, const char* hos
     c->port = strdup(port);
     c->connect = proxy_connect;
     c->cancel = proxy_cancel;
+    c->set_auth = proxy_set_auth;
     c->free = proxy_free;
     return (tlsuv_connector_t *)c;
 }
