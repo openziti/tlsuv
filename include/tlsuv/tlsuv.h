@@ -156,6 +156,7 @@ struct tlsuv_stream_s {
 };
 
 size_t tlsuv_base64url_decode(const char *in, char **out, size_t *out_len);
+int tlsuv_base64_encode(const uint8_t *in, size_t in_len, char **out, size_t *out_len);
 #ifdef __cplusplus
 }
 #endif
