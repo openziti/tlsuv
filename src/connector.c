@@ -344,7 +344,7 @@ void proxy_free(tlsuv_connector_t *self) {
 }
 
 tlsuv_connector_t *tlsuv_new_proxy_connector(tlsuv_proxy_t type, const char* host, const char * port) {
-    struct tlsuv_proxy_connector_s *c = malloc(sizeof(*c));
+    struct tlsuv_proxy_connector_s *c = calloc(1, sizeof(*c));
     c->type = type;
     c->host = strdup(host);
     c->port = strdup(port);
