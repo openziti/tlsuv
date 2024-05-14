@@ -1133,3 +1133,33 @@ TEST_CASE("url parse", "[http]") {
     URL_TEST("websocket.org:443echo", -1, nullptr, "websocket.org", 443, "/echo", nullptr);
     URL_TEST("websocket.org:443443/echo", -1, nullptr, "websocket.org", 443, "/echo", nullptr);
 }
+
+TEST_CASE("url parse auth", "[http]") {
+    tlsuv_url_s url;
+
+    CHECK(tlsuv_parse_url(&url, "https://foo:passwd@host:3128") == 0);
+    CHECK(url.username != nullptr);
+    CHECK(url.username_len == strlen("foo"));
+    CHECK(strncmp("foo", url.username, url.username_len) == 0);
+
+    CHECK(url.password != nullptr);
+    CHECK(url.password_len == strlen("passwd"));
+    CHECK(strncmp("passwd", url.password, url.password_len) == 0);
+
+    CHECK(url.hostname != nullptr);
+    CHECK(url.hostname_len == strlen("host"));
+    CHECK(strncmp("host", url.hostname, url.hostname_len) == 0);
+
+
+    CHECK(tlsuv_parse_url(&url, "https://bar@host:3128") == 0);
+    CHECK(url.username != nullptr);
+    CHECK(url.username_len == strlen("bar"));
+    CHECK(strncmp("bar", url.username, url.username_len) == 0);
+
+    CHECK(url.password == nullptr);
+    CHECK(url.password_len == 0);
+
+    CHECK(url.hostname != nullptr);
+    CHECK(url.hostname_len == strlen("host"));
+    CHECK(strncmp("host", url.hostname, url.hostname_len) == 0);
+}

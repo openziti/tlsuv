@@ -83,7 +83,7 @@ int tlsuv_base64_encode(const uint8_t *in, size_t in_len, char **out, size_t *ou
         *out = malloc(b64len + 1);
     }
 
-    uint8_t *outp = *out;
+    uint8_t *outp = (uint8_t *)*out;
     uint8_t ch1, ch2, ch3;
     int i = 0;
     for (; i + 2 < in_len; ) {

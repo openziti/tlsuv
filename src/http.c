@@ -783,6 +783,21 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
         p += (count + 3);
     }
 
+    if (strchr(p, '@') != NULL) {
+        url->username = p;
+        sscanf(p, "%*[^:@]%n", &count);
+        url->username_len = count;
+        p += count;
+        if (*p == ':') {
+            p++;
+            url->password = p;
+            sscanf(p, "%*[^@]%n", &count);
+            url->password_len = count;
+            p += count;
+        }
+        p++;
+    }
+
     count = 0;
     if (sscanf(p, "%*[^:/]%n", &count) == 0 && count > 0) {
         url->hostname = p;
