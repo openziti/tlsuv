@@ -506,11 +506,8 @@ static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
         return;
     }
 
-    r->cb(r, status);
     clt->conn_req = NULL;
-    if (clt->close_cb) {
-        on_internal_close((uv_handle_t *) &clt->watcher);
-    }
+    r->cb(r, status);
 }
 
 int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *host, int port, uv_connect_cb cb) {
