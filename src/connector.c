@@ -278,6 +278,8 @@ static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
     struct proxy_connect_req *r = req;
     if (status != 0) {
         r->cb(-1, status, r->data);
+        free(r->port);
+        free(r->host);
         free(r);
     } else {
         r->sock = fd;
