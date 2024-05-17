@@ -242,7 +242,7 @@ static void proxy_work(uv_work_t *wr) {
         return;
     }
 
-    res = read(r->sock, req, sizeof(req));
+    res = read(r->sock, req, sizeof(req)-1);
     if (res < 0) {
         r->err = (int)get_error();
         closesocket(r->sock);
