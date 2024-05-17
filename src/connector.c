@@ -141,6 +141,10 @@ static void on_poll_connect(uv_poll_t *p, int status, int events) {
 static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addr) {
     struct conn_req_s *cr = container_of(r, struct conn_req_s, resolve);
 
+    if (status == UV_EAI_CANCELED) {
+        status = UV_ECANCELED;
+    }
+
     if (status != 0) {
         cr->cb(cr->sock, status, cr->ctx);
         free(r);
