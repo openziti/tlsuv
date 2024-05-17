@@ -55,12 +55,103 @@ TEST_CASE("stream connect fail", "[stream]") {
     tls->free_ctx(tls);
 }
 
+TEST_CASE("proxy connect fail", "[stream]") {
+    UvLoopTest test;
+    auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "localhost", "23128");
+
+    auto s = new tlsuv_stream_t;
+    tls_context *tls = default_tls_context(nullptr, 0);
+    tlsuv_stream_init(test.loop, s, tls);
+    tlsuv_stream_set_connector(s, proxy);
+
+    struct test_ctx {
+        int connect_result;
+        int connect_called;
+        int close_called;
+    } test_ctx = {0,0,0};
+
+    s->data = &test_ctx;
+
+    uv_connect_t cr;
+    cr.data = &test_ctx;
+    int rc = tlsuv_stream_connect(&cr, s, "1.1.1.1", 443, [](uv_connect_t *r, int status) {
+        auto ctx = (struct test_ctx *) r->data;
+        ctx->connect_result = status;
+        ctx->connect_called++;
+        uv_close_cb closeCb = [](uv_handle_t *h) {
+            auto s = (tlsuv_stream_t *) h;
+            auto ctx = (struct test_ctx*)s->data;
+            ctx->close_called++;
+            tlsuv_stream_free(s);
+            delete s;
+        };
+        tlsuv_stream_close((tlsuv_stream_t*)r->handle, closeCb);
+    });
+
+    test.run();
+
+    CHECK(rc == 0);
+    CHECK(test_ctx.close_called == 1);
+    CHECK(test_ctx.connect_called == 1);
+    CHECK(test_ctx.connect_result == UV_ECONNREFUSED);
+
+    tls->free_ctx(tls);
+
+    proxy->free(proxy);
+}
+
+
+TEST_CASE("proxy request fail", "[stream]") {
+    UvLoopTest test;
+    auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "localhost", "13128");
+
+    auto s = new tlsuv_stream_t;
+    tls_context *tls = default_tls_context(nullptr, 0);
+    tlsuv_stream_init(test.loop, s, tls);
+    tlsuv_stream_set_connector(s, proxy);
+
+    struct test_ctx {
+        int connect_result;
+        int connect_called;
+        int close_called;
+    } test_ctx = {0,0,0};
+
+    s->data = &test_ctx;
+
+    uv_connect_t cr;
+    cr.data = &test_ctx;
+    int rc = tlsuv_stream_connect(&cr, s, "localhost", 23128, [](uv_connect_t *r, int status) {
+        auto ctx = (struct test_ctx *) r->data;
+        ctx->connect_result = status;
+        ctx->connect_called++;
+        uv_close_cb closeCb = [](uv_handle_t *h) {
+            auto s = (tlsuv_stream_t *) h;
+            auto ctx = (struct test_ctx*)s->data;
+            ctx->close_called++;
+            tlsuv_stream_free(s);
+            delete s;
+        };
+        tlsuv_stream_close((tlsuv_stream_t*)r->handle, closeCb);
+    });
+
+    test.run();
+
+    CHECK(rc == 0);
+    CHECK(test_ctx.close_called == 1);
+    CHECK(test_ctx.connect_called == 1);
+    CHECK(test_ctx.connect_result == UV_ECONNREFUSED);
+
+    tls->free_ctx(tls);
+
+    proxy->free(proxy);
+}
+
 TEST_CASE("cancel connect", "[stream]") {
     UvLoopTest test;
 
-    tlsuv_stream_t s;
+    auto s = new tlsuv_stream_t;
     tls_context *tls = default_tls_context(nullptr, 0);
-    tlsuv_stream_init(test.loop, &s, tls);
+    tlsuv_stream_init(test.loop, s, tls);
 
     struct test_ctx {
         int connect_result;
@@ -72,11 +163,11 @@ TEST_CASE("cancel connect", "[stream]") {
     test_ctx.connect_called = false;
     test_ctx.close_called = false;
 
-    s.data = &test_ctx;
+    s->data = &test_ctx;
 
     uv_connect_t cr;
     cr.data = &test_ctx;
-    int rc = tlsuv_stream_connect(&cr, &s, "1.1.1.1", 5555, [](uv_connect_t *r, int status) {
+    int rc = tlsuv_stream_connect(&cr, s, "1.1.1.1", 5555, [](uv_connect_t *r, int status) {
         auto ctx = (struct test_ctx *) r->data;
         ctx->connect_result = status;
         ctx->connect_called = true;
@@ -84,13 +175,15 @@ TEST_CASE("cancel connect", "[stream]") {
 
     uv_timer_t t;
     uv_timer_init(test.loop, &t);
-    t.data = &s;
+    t.data = s;
     auto timer_cb = [](uv_timer_t* t){
         auto *c = static_cast<tlsuv_stream_t *>(t->data);
         uv_close_cb closeCb = [](uv_handle_t *h) {
             auto s = (tlsuv_stream_t *) h;
             auto ctx = (struct test_ctx*)s->data;
             ctx->close_called = true;
+            tlsuv_stream_free(s);
+            delete s;
         };
         tlsuv_stream_close(c, closeCb);
         uv_close(reinterpret_cast<uv_handle_t *>(t), nullptr);
@@ -102,9 +195,9 @@ TEST_CASE("cancel connect", "[stream]") {
     CHECK(rc == 0);
     CHECK(test_ctx.close_called);
     CHECK(test_ctx.connect_called);
+    INFO("connect result: " << uv_strerror(test_ctx.connect_result) << " " << uv_strerror(UV_ECANCELED));
     CHECK(test_ctx.connect_result == UV_ECANCELED);
 
-    tlsuv_stream_free(&s);
     tls->free_ctx(tls);
 }
 
