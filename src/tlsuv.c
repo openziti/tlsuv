@@ -126,7 +126,7 @@ static void on_internal_close(uv_handle_t *h) {
         }
     }
 
-    if (h->data) {
+    if (h->type == UV_POLL && h->data) {
         uv_idle_t *idle = h->data;
         assert(idle->type == UV_IDLE);
         uv_close((uv_handle_t *) idle, (uv_close_cb) free);
@@ -152,8 +152,9 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
     clt->close_cb = close_cb;
 
     if (clt->connect_req) {
-        clt->connector->cancel(clt->connect_req);
-        return 0;
+        const void *cr = clt->connect_req;
+        clt->connect_req = NULL;
+        clt->connector->cancel(cr);
     }
 
     if (clt->tls_engine) {
@@ -167,10 +168,11 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
 #else
         close(clt->sock);
 #endif
-        uv_close((uv_handle_t *) &clt->watcher, on_internal_close);
     } else {
-        on_internal_close((uv_handle_t *) &clt->watcher);
+        // if uv_poll has not been set up create a throwaway handle to defer close_cb
+        uv_idle_init(clt->loop, (uv_idle_t*)&clt->watcher);
     }
+    uv_close((uv_handle_t *) &clt->watcher, on_internal_close);
 
     return 0;
 }
