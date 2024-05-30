@@ -280,6 +280,7 @@ static void proxy_work_cb(uv_work_t *wr, int status) {
 
 static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
     struct proxy_connect_req *r = req;
+    r->conn_req = NULL;
     if (status != 0) {
         r->cb(-1, status, r->data);
         free(r->port);
@@ -334,8 +335,10 @@ int proxy_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *usern
 void proxy_cancel(tlsuv_connector_req req) {
     struct proxy_connect_req *r = (struct proxy_connect_req*)req;
     if (r->conn_req) {
-        default_cancel(r->conn_req);
-    } else {
+        tlsuv_connector_req cr = r->conn_req;
+        r->conn_req = NULL;
+        default_cancel(cr);
+    } else if (r->work.type == UV_WORK) {
         uv_cancel((uv_req_t *) &r->work);
     }
 }
