@@ -163,7 +163,9 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addr) {
             uv_poll_init_socket(r->loop, &cr->poll, cr->sock);
             uv_poll_start(&cr->poll, UV_WRITABLE|UV_DISCONNECT, on_poll_connect);
         } else {
-            cr->cb(cr->sock, e, cr->ctx);
+            int uv_err = -e; // convert to libuv error code
+            UM_LOG(DEBG, "failed to connect: %d/%s", uv_err, uv_strerror(uv_err));
+            cr->cb(cr->sock, uv_err, cr->ctx);
             free(r);
         }
     }
@@ -240,7 +242,7 @@ static void proxy_work(uv_work_t *wr) {
     );
     ssize_t res = write(r->sock, req, reqlen);
     if (res < 0) {
-        r->err = (int)get_error();
+        r->err = -(int)get_error();
         closesocket(r->sock);
         r->sock = -1;
         return;
@@ -248,7 +250,7 @@ static void proxy_work(uv_work_t *wr) {
 
     res = read(r->sock, req, sizeof(req)-1);
     if (res < 0) {
-        r->err = (int)get_error();
+        r->err = -(int)get_error();
         closesocket(r->sock);
         r->sock = -1;
         return;
