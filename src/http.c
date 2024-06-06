@@ -159,12 +159,17 @@ static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
 }
 
 static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
+    // move the queue to avoid failing requests added
+    // during error handing
+    struct req_q queue = c->requests;
+    STAILQ_INIT(&c->requests);
+
     fail_active_request(c, code, msg);
 
     tlsuv_http_req_t *r;
-    while (!STAILQ_EMPTY(&c->requests)) {
-        r = STAILQ_FIRST(&c->requests);
-        STAILQ_REMOVE_HEAD(&c->requests, _next);
+    while (!STAILQ_EMPTY(&queue)) {
+        r = STAILQ_FIRST(&queue);
+        STAILQ_REMOVE_HEAD(&queue, _next);
         if (r->resp_cb != NULL) {
             r->resp.code = code;
             r->resp.status = strdup(msg);
@@ -174,6 +179,11 @@ static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
         clear_req_body(r, code);
         http_req_free(r);
         free(r);
+    }
+
+    // app added new requests during error handling
+    if (!STAILQ_EMPTY(&c->requests)) {
+        uv_async_send(&c->proc);
     }
 }
 
