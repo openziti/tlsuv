@@ -28,11 +28,13 @@
 static int cert_to_pem(const struct tlsuv_certificate_s * c, int full, char **pem, size_t *pemlen);
 static void cert_free(tlsuv_certificate_t c);
 static int cert_verify(const struct tlsuv_certificate_s * c, enum hash_algo md, const char *data, size_t datalen, const char *sig, size_t siglen);
+static int cert_exp(const struct tlsuv_certificate_s *, struct tm *time);
 
 static struct cert_s cert_API = {
         .free = cert_free,
         .verify = cert_verify,
         .to_pem = cert_to_pem,
+        .get_expiration = cert_exp,
 };
 
 
@@ -513,7 +515,6 @@ error:
     return -1;
 }
 
-
 int gen_key(tlsuv_private_key_t *key) {
     int rc = 0;
 
@@ -696,4 +697,16 @@ static int cert_verify(const struct tlsuv_certificate_s * cert, enum hash_algo m
     int rc = verify_signature(pk, md, data, datalen, sig, siglen);
     EVP_PKEY_free(pk);
     return rc;
+}
+
+static int cert_exp(const struct tlsuv_certificate_s * cert, struct tm *time) {
+    if (time == NULL || cert == NULL) {
+        return UV_EINVAL;
+    }
+    
+    X509_STORE *store = ((struct cert_s*)cert)->cert;
+    STACK_OF(X509_OBJECT ) *s = X509_STORE_get0_objects(store);
+    X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
+    const ASN1_TIME *notAfter = X509_get0_notAfter(c);
+    return ASN1_TIME_to_tm(notAfter, time) == 1 ? 0 : -1;
 }

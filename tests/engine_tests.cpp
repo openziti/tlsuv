@@ -157,6 +157,16 @@ rzqUvKOfg8HVwOSngZyPa4zgd5ieZfxcFnDc2IK4fnI=
     tlsuv_certificate_t c;
     tls->load_cert(&c, certpem, strlen(certpem));
 
+    tm expire{};
+    CHECK(c->get_expiration(c, &expire) == 0);
+
+    //  Jun 29 02:26:51 2023
+    CHECK(expire.tm_year == 2023 - 1900);
+    CHECK(expire.tm_mon == 5);
+    CHECK(expire.tm_mday == 29);
+    CHECK(expire.tm_hour == 2);
+    CHECK(expire.tm_min == 26);
+
     auto input = "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbSI6Im90dCIsImV4cCI6MTY4MTMyNDg5OCwiaXNzIjoiaHR0cHM6Ly9jdHJsLmNsaW50LmRlbW8ub3BlbnppdGkub3JnOjg0NDEiLCJqdGkiOiI1OWQxOTgwOC0zYTEyLTQzNWEtYTM3My1iY2UwZTFmNzIxOTgiLCJzdWIiOiJ5bUxHZUlQaTQifQ";
     auto sig = "UE6IVn1c2xxPEp93J_dIkpjwaennq2HLzi8EJKkXyugRzYXANxj_peyQxwWythI4nT9RPS_gothILTFe8B3cew";
 

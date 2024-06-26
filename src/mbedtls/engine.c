@@ -152,6 +152,7 @@ static int write_cert_pem(const struct tlsuv_certificate_s * cert, int full_chai
 static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...);
 
 static int mbedtls_load_cert(tlsuv_certificate_t *c, const char *cert_buf, size_t cert_len);
+static int cert_expiration(const struct tlsuv_certificate_s *cert, struct tm *time);
 
 struct cert_s {
     TLSUV_CERT_API
@@ -162,6 +163,7 @@ static struct cert_s cert_api = {
     .free = mbedtls_free_cert,
     .to_pem = write_cert_pem,
     .verify = mbedtls_verify_signature,
+    .get_expiration = cert_expiration,
 };
 
 static tls_context mbedtls_context_api = {
@@ -1052,4 +1054,19 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
     }
     mbedtls_x509write_csr_free(&csr);
     return ret;
+}
+
+static int cert_expiration(const struct tlsuv_certificate_s *cert, struct tm *time) {
+    if (cert == NULL || time == NULL) {
+        return UV_EINVAL;
+    }
+
+    mbedtls_x509_crt *crt = ((struct cert_s*)cert)->chain;
+    time->tm_year = crt->valid_to.year - 1900; // years since 1900
+    time->tm_mon = crt->valid_to.mon - 1; // months since Jan
+    time->tm_mday = crt->valid_to.day;
+    time->tm_hour = crt->valid_to.hour;
+    time->tm_min = crt->valid_to.min;
+    time->tm_sec = crt->valid_to.sec;
+    return 0;
 }
