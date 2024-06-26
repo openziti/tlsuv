@@ -430,7 +430,7 @@ TEST_CASE("client_cert_test","[http]") {
         REQUIRE(rc == 0);
         REQUIRE(pk != nullptr);
 
-        tls_cert c = nullptr;
+        tlsuv_certificate_t c = nullptr;
         CHECK(tls->load_cert(&c, cert, strlen(cert)) == 0);
         CHECK(tls->set_own_cert(tls, pk, c) == 0);
 
@@ -735,10 +735,10 @@ typedef struct verify_ctx_s {
     size_t siglen;
 } verify_ctx;
 
-int cert_verify(tls_cert crt, void *ctx) {
+int cert_verify(const tlsuv_certificate_s * crt, void *ctx) {
     auto vtx = (verify_ctx *)ctx;
 
-    int rc = vtx->tls->verify_signature(crt, hash_SHA256, vtx->data, vtx->datalen, vtx->sig, vtx->siglen);
+    int rc = crt->verify(crt, hash_SHA256, vtx->data, vtx->datalen, vtx->sig, vtx->siglen);
     return rc;
 }
 

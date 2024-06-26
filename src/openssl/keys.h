@@ -18,6 +18,11 @@
 
 #include <tlsuv/tlsuv.h>
 
+struct cert_s {
+    TLSUV_CERT_API
+    X509_STORE *cert;
+};
+
 struct pub_key_s {
     TLSUV_PUBKEY_API
     EVP_PKEY *pkey;
@@ -32,6 +37,8 @@ const char *tls_error(unsigned long code);
 
 void pub_key_init(struct pub_key_s *pubkey);
 void priv_key_init(struct priv_key_s *privkey);
+
+void cert_init(struct cert_s *c);
 
 int gen_key(tlsuv_private_key_t *key);
 int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen);
