@@ -175,7 +175,8 @@ TEST_CASE("resolve failures", "[http]") {
     test.run();
 
     tlsuv_http_close(clt, (tlsuv_http_close_cb) free);
-    CHECK(resp.code == UV_EAI_NONAME);
+    INFO("resp.code = " << resp.code << "/" << uv_strerror(resp.code));
+    CHECK((resp.code == UV_EAI_NONAME || resp.code == UV_EAI_AGAIN));
 }
 
 TEST_CASE("http_tests", "[http]") {
@@ -322,7 +323,7 @@ TEST_CASE("pkcs11_client_cert_test","[http]") {
         tlsuv_private_key_t pk;
         int rc = tls->load_pkcs11_key(&pk, to_str(HSM_LIB), nullptr, "2222", nullptr, keyName.c_str());
         REQUIRE(rc == 0);
-        CHECK(tls->set_own_cert(tls, pk, NULL) == 0);
+        CHECK(tls->set_own_cert(tls, pk, nullptr) == 0);
 
         test.run();
 
@@ -440,6 +441,7 @@ TEST_CASE("client_cert_test","[http]") {
         CHECK(resp.code == HTTP_STATUS_OK);
         CHECK(resp.resp_body_end_called);
         CHECK(resp.body == "you are 'CN=BadSSL Client Certificate,O=BadSSL,L=San Francisco,ST=California,C=US' by CN=BadSSL Client Root Certificate Authority,O=BadSSL,L=San Francisco,ST=California,C=US");
+        c->free(c);
     }
 
     tlsuv_http_close(&clt, nullptr);

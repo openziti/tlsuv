@@ -787,7 +787,7 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
     }
 
     struct cert_s *crt = (struct cert_s *) cert;
-    X509_STORE *store;
+    X509_STORE *store = NULL;
     if (crt == NULL) {
         if(key->get_certificate) {
             if (key->get_certificate(key, (tlsuv_certificate_t *) &crt) != 0) {
@@ -801,7 +801,7 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
         X509_STORE_up_ref(crt->cert);
     }
 
-    if (cert == NULL) {
+    if (store == NULL) {
         return -1;
     }
 

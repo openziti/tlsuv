@@ -609,7 +609,7 @@ static int privkey_get_cert(tlsuv_private_key_t pk, tlsuv_certificate_t *cert) {
         X509_STORE_add_cert(store, c);
         X509_free(c);
         crt->cert = store;
-        *cert = crt;
+        *cert = (tlsuv_certificate_t) crt;
         free(der);
         return 0;
     }
