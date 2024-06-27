@@ -56,7 +56,7 @@ int mp11_load_key(mbedtls_pk_context *key,
 }
 
 static int mp11_get_key(mbedtls_pk_context *key, mp11_context *ctx, const char *idstr) {
-    mp11_key_ctx *p11_key = calloc(1, sizeof(mp11_key_ctx));
+    mp11_key_ctx *p11_key = tlsuv__calloc(1, sizeof(mp11_key_ctx));
 
     CK_ULONG cls = CKO_PRIVATE_KEY;
     char id[32];
@@ -148,11 +148,11 @@ static int mp11_init(mp11_context *p11, const char *lib, const char *slot, const
         CK_SLOT_ID_PTR slots;
         CK_ULONG slot_count;
         P11(p11->funcs->C_GetSlotList(CK_TRUE, NULL, &slot_count));
-        slots = calloc(slot_count, sizeof(CK_SLOT_ID));
+        slots = tlsuv__calloc(slot_count, sizeof(CK_SLOT_ID));
         P11(p11->funcs->C_GetSlotList(CK_TRUE, slots, &slot_count));
         slot_id = slots[0];
         /* WARNING: "slot id not specified. using the first slot[%lx] reported by driver", slot_id); */
-        free(slots);
+        tlsuv__free(slots);
     }
     else {
         slot_id = strtoul(slot, NULL, 16);

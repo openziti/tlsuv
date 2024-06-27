@@ -12,15 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#ifndef TLSUV_ALLOC_H
+#define TLSUV_ALLOC_H
 
-#ifndef UV_MBED_WIN32_COMPAT_H
-#define UV_MBED_WIN32_COMPAT_H
+#include <stdlib.h>
 
-#if _WIN32
+extern void *tlsuv__malloc(size_t size);
+extern void *tlsuv__calloc(size_t n, size_t size);
+extern void *tlsuv__realloc(void *addr, size_t size);
+extern void tlsuv__free(void *addr);
 
-#define tlsuv__strdup _strdup
-#define strcasecmp _stricmp
-#define strncasecmp _strnicmp
+extern char* tlsuv__strdup(const char *s);
+extern char* tlsuv__strndup(const char *s, size_t len);
 
-#endif
-#endif //UV_MBED_WIN32_COMPAT_H
+
+#endif //TLSUV_ALLOC_H

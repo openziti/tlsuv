@@ -9,6 +9,8 @@
 #include <uv.h>
 #include <stdbool.h>
 
+#include "alloc.h"
+
 #define container_of(ptr, type, member) \
   ((type *) ((char *) (ptr) - offsetof(type, member)))
 

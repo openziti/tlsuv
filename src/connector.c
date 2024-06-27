@@ -78,7 +78,7 @@ struct tlsuv_proxy_connector_s {
     tlsuv_connect connect;
     int (*set_auth)();
     void (*cancel)(tlsuv_connector_req);
-    void (*free)(tlsuv_connector_t *self);
+    void (*tlsuv__free)(tlsuv_connector_t *self);
     
     tlsuv_proxy_t type;
     char *host;
@@ -97,12 +97,12 @@ const tlsuv_connector_t* tlsuv_global_connector() {
 
 static void on_close(uv_handle_t *h) {
     struct conn_req_s *req = h->data;
-    free(req);
+    tlsuv__free(req);
 }
 
 static void on_poll_close(uv_handle_t *h) {
     struct conn_req_s *cr = container_of(h, struct conn_req_s, poll);
-    free(cr);
+    tlsuv__free(cr);
 }
 
 static void on_poll_connect(uv_poll_t *p, int status, int events) {
@@ -147,7 +147,7 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addr) {
 
     if (status != 0) {
         cr->cb(cr->sock, status, cr->ctx);
-        free(r);
+        tlsuv__free(r);
     } else {
         cr->sock = tlsuv_socket(addr, 0);
         int rc = connect(cr->sock, addr->ai_addr, addr->ai_addrlen);
@@ -166,7 +166,7 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addr) {
             int uv_err = -e; // convert to libuv error code
             UM_LOG(DEBG, "failed to connect: %d/%s", uv_err, uv_strerror(uv_err));
             cr->cb(cr->sock, uv_err, cr->ctx);
-            free(r);
+            tlsuv__free(r);
         }
     }
 
@@ -176,7 +176,7 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addr) {
 tlsuv_connector_req default_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
                                     const char *host, const char *port,
                                     tlsuv_connect_cb cb, void *ctx) {
-    struct conn_req_s *r = calloc(1, sizeof(*r));
+    struct conn_req_s *r = tlsuv__calloc(1, sizeof(*r));
     r->ctx = ctx;
     r->cb = cb;
     r->sock = (uv_os_sock_t)-1;
@@ -275,9 +275,9 @@ static void proxy_work_cb(uv_work_t *wr, int status) {
     }
 
     r->cb(r->sock, r->err, r->data);
-    free(r->host);
-    free(r->port);
-    free(r);
+    tlsuv__free(r->host);
+    tlsuv__free(r->port);
+    tlsuv__free(r);
 }
 
 static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
@@ -285,9 +285,9 @@ static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
     r->conn_req = NULL;
     if (status != 0) {
         r->cb(-1, status, r->data);
-        free(r->port);
-        free(r->host);
-        free(r);
+        tlsuv__free(r->port);
+        tlsuv__free(r->host);
+        tlsuv__free(r);
     } else {
         r->sock = fd;
         uv_queue_work(r->work.loop, &r->work, proxy_work, proxy_work_cb);
@@ -297,12 +297,12 @@ static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
 tlsuv_connector_req proxy_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
                                   const char *host, const char *port, tlsuv_connect_cb cb, void *ctx) {
     const struct tlsuv_proxy_connector_s *proxy = (const struct tlsuv_proxy_connector_s *) self;
-    struct proxy_connect_req *r = calloc(1, sizeof(*r));
+    struct proxy_connect_req *r = tlsuv__calloc(1, sizeof(*r));
     r->proxy = proxy;
     r->data = ctx;
     r->cb = cb;
-    r->host = strdup(host);
-    r->port = strdup(port);
+    r->host = tlsuv__strdup(host);
+    r->port = tlsuv__strdup(port);
     r->work.loop = loop;
     r->conn_req = default_connect(loop, &default_connector, proxy->host, proxy->port, on_proxy_connect, r);
     return r;
@@ -312,19 +312,19 @@ int proxy_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *usern
     struct tlsuv_proxy_connector_s *c = (struct tlsuv_proxy_connector_s *) self;
     if (auth == tlsuv_PROXY_NONE) {
         c->auth_header = NULL;
-        free(c->auth_value);
+        tlsuv__free(c->auth_value);
         c->auth_value = NULL;
         return 0;
     } else if (auth == tlsuv_PROXY_BASIC) {
         if (!username || !password)
             return UV_EINVAL;
         c->auth_header = "Proxy-Authorization";
-        free(c->auth_value);
+        tlsuv__free(c->auth_value);
 
         char authstr[256];
         size_t auth_len = snprintf(authstr, sizeof(authstr), "%s:%s", username, password);
 
-        c->auth_value = malloc(512);
+        c->auth_value = tlsuv__malloc(512);
         size_t offset = snprintf(c->auth_value, 512, "Basic ");
         char *b64 = c->auth_value + offset;
         size_t b64max = 512 - offset;
@@ -347,21 +347,21 @@ void proxy_cancel(tlsuv_connector_req req) {
 
 void proxy_free(tlsuv_connector_t *self) {
     struct tlsuv_proxy_connector_s *c = (struct tlsuv_proxy_connector_s *) self;
-    free(c->host);
-    free(c->port);
-    free(c->auth_value);
-    free(c);
+    tlsuv__free(c->host);
+    tlsuv__free(c->port);
+    tlsuv__free(c->auth_value);
+    tlsuv__free(c);
 }
 
 tlsuv_connector_t *tlsuv_new_proxy_connector(tlsuv_proxy_t type, const char* host, const char * port) {
-    struct tlsuv_proxy_connector_s *c = calloc(1, sizeof(*c));
+    struct tlsuv_proxy_connector_s *c = tlsuv__calloc(1, sizeof(*c));
     c->type = type;
-    c->host = strdup(host);
-    c->port = strdup(port);
+    c->host = tlsuv__strdup(host);
+    c->port = tlsuv__strdup(port);
     c->connect = proxy_connect;
     c->cancel = proxy_cancel;
     c->set_auth = proxy_set_auth;
-    c->free = proxy_free;
+    c->tlsuv__free = proxy_free;
     return (tlsuv_connector_t *)c;
 }
 

@@ -13,8 +13,7 @@
 // limitations under the License.
 
 #include "tlsuv/tcp_src.h"
-#include "tlsuv/http.h"
-#include "um_debug.h"
+#include "alloc.h"
 
 // connect and release method for um_http custom source link
 static int tcp_src_connect(tlsuv_src_t *sl, const char *host, const char *service, tlsuv_src_connect_cb cb, void *ctx);
@@ -25,7 +24,7 @@ static void free_handle(uv_handle_t *h);
 
 int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     tl->loop = l;
-    tl->link = calloc(1, sizeof(uv_link_source_t));
+    tl->link = tlsuv__calloc(1, sizeof(uv_link_source_t));
     tl->conn = NULL;
     tl->connector = tlsuv_global_connector();
     tl->connect = tcp_src_connect;
@@ -39,7 +38,7 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
 
 void tcp_src_free(tcp_src_t *ts) {
     if (ts) {
-        free(ts->link);
+        tlsuv__free(ts->link);
         ts->link = NULL;
     }
 }
@@ -61,7 +60,7 @@ static void on_connect(uv_os_sock_t s, int status, void *ctx) {
     tcp->conn_req = NULL;
 
     if (status == 0) {
-        tcp->conn = calloc(1, sizeof(*tcp->conn));
+        tcp->conn = tlsuv__calloc(1, sizeof(*tcp->conn));
         uv_tcp_init(tcp->loop, tcp->conn);
         uv_tcp_open(tcp->conn, s);
         tcp_src_nodelay(tcp, tcp->nodelay);
@@ -82,7 +81,7 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
         UM_LOG(TRACE, "connect requests was cancelled");
         if (!uv_is_closing((const uv_handle_t *) req->handle))
             uv_close((uv_handle_t *) req->handle, free_handle);
-        free(req);
+        tlsuv__free(req);
         return;
     }
 
@@ -90,7 +89,7 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
     if (status == UV_ECANCELED) {
         UM_LOG(TRACE, "connect was cancelled: handle(%p) closing(%d)", req->handle, uv_is_closing((const uv_handle_t *) req->handle));
         uv_close((uv_handle_t *) req->handle, free_handle);
-        free(req);
+        tlsuv__free(req);
         return;
     }
 
@@ -108,7 +107,7 @@ static void tcp_connect_cb(uv_connect_t *req, int status) {
     }
 
     sl->connect_cb((tlsuv_src_t *)sl, status, sl->connect_ctx);
-    free(req);
+    tlsuv__free(req);
 }
 
 static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr) {
@@ -119,12 +118,12 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
         UM_LOG(TRACE, "resolved status = %d", status);
         uv_tcp_t *conn = NULL;
         if (status == 0) {
-            conn = calloc(1, sizeof(uv_tcp_t));
+            conn = tlsuv__calloc(1, sizeof(uv_tcp_t));
             status = uv_tcp_init_ex(req->loop, conn, addr->ai_family);
         }
 
         if (status == 0) {
-            sl->conn_req = calloc(1, sizeof(uv_connect_t));
+            sl->conn_req = tlsuv__calloc(1, sizeof(uv_connect_t));
             sl->conn_req->data = sl;
             status = uv_tcp_connect(sl->conn_req, conn, addr->ai_addr, tcp_connect_cb);
         }
@@ -132,7 +131,7 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
         if (status != 0) {
             UM_LOG(ERR, "connect failed: %d(%s)", status, uv_strerror(status));
             if (sl->conn_req) {
-                free(sl->conn_req);
+                tlsuv__free(sl->conn_req);
                 sl->conn_req = NULL;
                 if (conn) {
                     uv_close((uv_handle_t *) conn, free_handle);
@@ -143,12 +142,12 @@ static void resolve_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
     }
 
     uv_freeaddrinfo(addr);
-    free(req);
+    tlsuv__free(req);
 }
  */
 
 static void free_handle(uv_handle_t *h) {
-    free(h);
+    tlsuv__free(h);
 }
 
 static void link_close_cb(uv_link_t *l) {
@@ -193,6 +192,6 @@ static void tcp_src_cancel(tlsuv_src_t *sl) {
 static void tcp_src_release(tlsuv_src_t *sl) {
     tcp_src_t *tcp = (tcp_src_t *) sl;
 
-    free(tcp->conn);
+    tlsuv__free(tcp->conn);
     tcp->conn = NULL;
 }

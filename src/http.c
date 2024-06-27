@@ -22,6 +22,7 @@
 #include "win32_compat.h"
 #include "http_req.h"
 #include "compression.h"
+#include "util.h"
 
 #define DEFAULT_IDLE_TIMEOUT 0
 
@@ -81,7 +82,7 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
         close_connection(c);
         uv_async_send(&c->proc);
         if (buf && buf->base) {
-            free(buf->base);
+            tlsuv__free(buf->base);
         }
         return;
     }
@@ -93,7 +94,7 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
                 UM_LOG(WARN, "failed to parse HTTP response");
                 fail_active_request(c, UV_EINVAL, "failed to parse HTTP response");
                 close_connection(c);
-                free(buf->base);
+                tlsuv__free(buf->base);
                 return;
             }
         }
@@ -115,7 +116,7 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
             }
 
             http_req_free(hr);
-            free(hr);
+            tlsuv__free(hr);
 
             if (!keep_alive) {
                 close_connection(c);
@@ -128,7 +129,7 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     }
 
     if (buf && buf->base) {
-        free(buf->base);
+        tlsuv__free(buf->base);
     }
 }
 
@@ -139,7 +140,7 @@ static void clear_req_body(tlsuv_http_req_t *req, int code) {
         if (chunk->cb) {
             chunk->cb(req, chunk->chunk, code);
         }
-        free(chunk);
+        tlsuv__free(chunk);
 
         chunk = next;
     }
@@ -149,11 +150,11 @@ static void clear_req_body(tlsuv_http_req_t *req, int code) {
 static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
     if (c->active != NULL && c->active->resp_cb != NULL) {
         c->active->resp.code = code;
-        c->active->resp.status = strdup(msg);
+        c->active->resp.status = tlsuv__strdup(msg);
         c->active->resp_cb(&c->active->resp, c->active->data);
         clear_req_body(c->active, code);
         http_req_free(c->active);
-        free(c->active);
+        tlsuv__free(c->active);
         c->active = NULL;
     }
 }
@@ -172,13 +173,13 @@ static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
         STAILQ_REMOVE_HEAD(&queue, _next);
         if (r->resp_cb != NULL) {
             r->resp.code = code;
-            r->resp.status = strdup(msg);
+            r->resp.status = tlsuv__strdup(msg);
             r->resp_cb(&r->resp, r->data);
             uv_unref((uv_handle_t *) &c->proc);
         }
         clear_req_body(r, code);
         http_req_free(r);
-        free(r);
+        tlsuv__free(r);
     }
 
     // app added new requests during error handling
@@ -302,7 +303,7 @@ static void src_connect_timeout(uv_timer_t *t) {
 
 static void req_write_cb(uv_link_t *source, int status, void *arg) {
     UM_LOG(VERB, "request write completed: %d", status);
-    free(arg);
+    tlsuv__free(arg);
 }
 
 static void req_write_body_cb(uv_link_t *source, int status, void *arg) {
@@ -311,12 +312,12 @@ static void req_write_body_cb(uv_link_t *source, int status, void *arg) {
     if (chunk->cb) {
         chunk->cb(chunk->req, chunk->chunk, status);
     }
-    free(chunk);
+    tlsuv__free(chunk);
 }
 
 static void chunk_hdr_wcb(uv_link_t *l, int status, void *arg) {
     if (arg != NULL) {
-        free(arg);
+        tlsuv__free(arg);
     }
 }
 
@@ -335,7 +336,7 @@ static void send_body(tlsuv_http_req_t *req) {
 
         if (req->req_chunked) {
             if (b->len > 0) {
-                buf.base = malloc(10);
+                buf.base = tlsuv__malloc(10);
                 buf.len = snprintf(buf.base, 10, "%zx\r\n", b->len);
                 uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, chunk_hdr_wcb, buf.base);
 
@@ -350,7 +351,7 @@ static void send_body(tlsuv_http_req_t *req) {
                 buf.base = "0\r\n\r\n";
                 buf.len = 5;
                 uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, chunk_hdr_wcb, NULL);
-                free(b);
+                tlsuv__free(b);
                 req->state = body_sent;
             }
         }
@@ -420,10 +421,10 @@ static void process_requests(uv_async_t *ar) {
         if (c->active->state < headers_sent) {
             UM_LOG(VERB, "sending request[%s] headers", c->active->path);
             uv_buf_t req;
-            req.base = malloc(8196);
+            req.base = tlsuv__malloc(8196);
             ssize_t header_len = http_req_write(c->active, req.base, 8196);
             if (header_len == UV_ENOMEM) {
-                free(req.base);
+                tlsuv__free(req.base);
                 fail_active_request(c, (int)header_len, "request header too big");
                 uv_async_send(&c->proc);
                 return;
@@ -464,18 +465,18 @@ int tlsuv_http_close(tlsuv_http_t *clt, tlsuv_http_close_cb close_cb) {
     clt->tls = NULL;
 
     clt->close_cb = close_cb;
-    uv_close((uv_handle_t *) clt->conn_timer, (uv_close_cb) free);
+    uv_close((uv_handle_t *) clt->conn_timer, (uv_close_cb) tlsuv__free);
     return 0;
 }
 
 static void http_set_prefix(tlsuv_http_t *clt, const char *pfx, size_t pfx_len) {
     if (clt->prefix) {
-        free(clt->prefix);
+        tlsuv__free(clt->prefix);
         clt->prefix = NULL;
     }
 
     if (pfx) {
-        clt->prefix = calloc(1, pfx_len + 1);
+        clt->prefix = tlsuv__calloc(1, pfx_len + 1);
         strncpy(clt->prefix, pfx, pfx_len);
     }
 }
@@ -511,11 +512,11 @@ int tlsuv_http_set_url(tlsuv_http_t *clt, const char *url) {
 
     if (clt->host) {
         clt->host_change = true;
-        free(clt->host);
+        tlsuv__free(clt->host);
     }
     set_http_header(&clt->headers, "Host", NULL);
 
-    clt->host = strndup(u.hostname, u.hostname_len);
+    clt->host = tlsuv__strndup(u.hostname, u.hostname_len);
     tlsuv_http_header(clt, "Host", clt->host);
 
 
@@ -553,7 +554,7 @@ int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, t
 
     clt->connect_timeout = 0;
     clt->idle_time = DEFAULT_IDLE_TIMEOUT;
-    clt->conn_timer = calloc(1, sizeof(uv_timer_t));
+    clt->conn_timer = tlsuv__calloc(1, sizeof(uv_timer_t));
     uv_timer_init(l, clt->conn_timer);
     uv_unref((uv_handle_t *) clt->conn_timer);
     clt->conn_timer->data = clt;
@@ -575,7 +576,7 @@ void tlsuv_http_set_path_prefix(tlsuv_http_t *clt, const char *prefix) {
 }
 
 int tlsuv_http_init(uv_loop_t *l, tlsuv_http_t *clt, const char *url) {
-    tcp_src_t *src = calloc(1, sizeof(tcp_src_t));
+    tcp_src_t *src = tlsuv__calloc(1, sizeof(tcp_src_t));
     tcp_src_init(l, src);
     tcp_src_nodelay(src, 1);
     tcp_src_keepalive(src, 1, 3);
@@ -600,7 +601,7 @@ void tlsuv_http_set_ssl(tlsuv_http_t *clt, tls_context *tls) {
 }
 
 tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const char *path, tlsuv_http_resp_cb resp_cb, void *ctx) {
-    tlsuv_http_req_t *r = calloc(1, sizeof(tlsuv_http_req_t));
+    tlsuv_http_req_t *r = tlsuv__calloc(1, sizeof(tlsuv_http_req_t));
     http_req_init(r, method, path);
 
     r->client = clt;
@@ -649,7 +650,7 @@ int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, con
         }
 
         req->resp.code = error;
-        req->resp.status = strdup(msg ? msg : uv_strerror(error));
+        req->resp.status = tlsuv__strdup(msg ? msg : uv_strerror(error));
         clear_req_body(req, req->resp.code);
 
         if (req->state < headers_received) { // resp_cb has not been called yet
@@ -659,7 +660,7 @@ int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, con
         }
 
         http_req_free(req);
-        free(req);
+        tlsuv__free(req);
         return 0;
     } else {
         return UV_EINVAL;
@@ -698,7 +699,7 @@ int tlsuv_http_req_header(tlsuv_http_req_t *req, const char *name, const char *v
 
 void tlsuv_http_req_end(tlsuv_http_req_t *req) {
     if (req->req_chunked) {
-        struct body_chunk_s *chunk = calloc(1, sizeof(struct body_chunk_s));
+        struct body_chunk_s *chunk = tlsuv__calloc(1, sizeof(struct body_chunk_s));
 
         chunk->len = 0;
         chunk->next = NULL;
@@ -729,7 +730,7 @@ int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen,
         return UV_EINVAL;
     }
 
-    struct body_chunk_s *chunk = calloc(1, sizeof(struct body_chunk_s));
+    struct body_chunk_s *chunk = tlsuv__calloc(1, sizeof(struct body_chunk_s));
     chunk->chunk = (char*)body;
     chunk->len = bodylen;
     chunk->cb = cb;
@@ -754,12 +755,12 @@ int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen,
 
 static void free_http(tlsuv_http_t *clt) {
     free_hdr_list(&clt->headers);
-    free(clt->host);
-    if (clt->prefix) free(clt->prefix);
+    tlsuv__free(clt->host);
+    if (clt->prefix) tlsuv__free(clt->prefix);
 
     if (clt->active) {
         http_req_free(clt->active);
-        free(clt->active);
+        tlsuv__free(clt->active);
         clt->active = NULL;
     }
 
@@ -767,13 +768,13 @@ static void free_http(tlsuv_http_t *clt) {
         tlsuv_http_req_t *req = STAILQ_FIRST(&clt->requests);
         STAILQ_REMOVE_HEAD(&clt->requests, _next);
         http_req_free(req);
-        free(req);
+        tlsuv__free(req);
     }
 
     if (clt->own_src && clt->src) {
         clt->src->release(clt->src);
         tcp_src_free((tcp_src_t *) clt->src);
-        free(clt->src);
+        tlsuv__free(clt->src);
         clt->src = NULL;
     }
     tlsuv_tls_link_free(&clt->tls_link);

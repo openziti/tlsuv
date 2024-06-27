@@ -29,6 +29,22 @@ extern "C" {
 
 const char* tlsuv_version();
 
+/**
+ * \brief Override the use of the standard library’s malloc(3), calloc(3), realloc(3), free(3),
+ * memory allocation functions.
+ *
+ * calling with method will also use passed functions to call uv_replace_allocator(),
+ * and appropriate function(s) in selected TLS engine (if supported)
+ * @param malloc_f
+ * @param realloc_f
+ * @param calloc_f
+ * @param free_f
+ */
+void tlsuv_set_allocator(uv_malloc_func malloc_f,
+                         uv_realloc_func realloc_f,
+                         uv_calloc_func calloc_f,
+                         uv_free_func free_f);
+
 typedef struct tlsuv_stream_s tlsuv_stream_t;
 
 typedef void(*tlsuv_log_func)(int level, const char *file, unsigned int line, const char *msg);

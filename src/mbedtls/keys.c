@@ -17,6 +17,7 @@
 #include <tlsuv/tlsuv.h>
 
 #include "../um_debug.h"
+#include "../alloc.h"
 #include "keys.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/entropy.h"
@@ -29,7 +30,7 @@ static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *d
 static int pubkey_pem(tlsuv_public_key_t pk, char **pem, size_t *pemlen);
 
 static struct pub_key_s PUB_KEY_API = {
-        .free = pubkey_free,
+        .tlsuv__free = pubkey_free,
         .to_pem = pubkey_pem,
         .verify = pubkey_verify,
 };
@@ -42,7 +43,7 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md,
                         const char *data, size_t datalen, char *sig, size_t *siglen);
 
 static struct priv_key_s PRIV_KEY_API = {
-        .free = privkey_free,
+        .tlsuv__free = privkey_free,
         .to_pem = privkey_to_pem,
         .pubkey = privkey_pubkey,
         .sign = privkey_sign,
@@ -59,17 +60,17 @@ void priv_key_init(struct priv_key_s *privkey) {
 static void pubkey_free(tlsuv_public_key_t k) {
     struct pub_key_s *pub = (struct pub_key_s *) k;
     mbedtls_pk_free(&pub->pkey);
-    free(pub);
+    tlsuv__free(pub);
 }
 
 static int pubkey_pem(tlsuv_public_key_t pk, char **pem, size_t *pemlen) {
     struct pub_key_s *pub = (struct pub_key_s *) pk;
     size_t len = 1024;
-    char *buf = malloc(len);
+    char *buf = tlsuv__malloc(len);
     int rc;
     rc = mbedtls_pk_write_pubkey_pem(&pub->pkey, (unsigned char*)buf, len);
     if (rc != 0) {
-        free(buf);
+        tlsuv__free(buf);
         UM_LOG(WARN, "pubkey to_pem error: %d/%s", rc, mbedtls_error(rc));
         return -1;
     }
@@ -120,7 +121,7 @@ static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *d
 static void privkey_free(tlsuv_private_key_t k) {
     struct priv_key_s *priv = (struct priv_key_s *) k;
     mbedtls_pk_free(&priv->pkey);
-    free(priv);
+    tlsuv__free(priv);
 }
 
 static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *data, size_t datalen, char *sig, size_t *siglen) {
@@ -172,7 +173,7 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *d
 
 static tlsuv_public_key_t privkey_pubkey(tlsuv_private_key_t pk) {
     struct priv_key_s *priv = (struct priv_key_s *) pk;
-    struct pub_key_s *pub = calloc(1, sizeof(*pub));
+    struct pub_key_s *pub = tlsuv__calloc(1, sizeof(*pub));
     pub_key_init(pub);
 
     // there is probably a more straight-forward way,
@@ -194,12 +195,12 @@ static int privkey_to_pem(tlsuv_private_key_t pk, char **pem, size_t *pemlen) {
     }
 
     *pemlen = strlen((char*)keybuf) + 1;
-    *pem = strdup((char*)keybuf);
+    *pem = tlsuv__strdup((char*)keybuf);
     return 0;
 }
 
 int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
-    struct priv_key_s *privkey = calloc(1, sizeof(struct priv_key_s));
+    struct priv_key_s *privkey = tlsuv__calloc(1, sizeof(struct priv_key_s));
     priv_key_init(privkey);
     mbedtls_pk_init(&privkey->pkey);
 
@@ -213,7 +214,7 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
     int rc = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
     if (rc != 0) {
         mbedtls_pk_free(&privkey->pkey);
-        free(privkey);
+        tlsuv__free(privkey);
         *key = NULL;
         return rc;
     }
@@ -231,7 +232,7 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
         );
         if (rc < 0) {
             mbedtls_pk_free(&privkey->pkey);
-            free(privkey);
+            tlsuv__free(privkey);
             *key = NULL;
             return rc;
         }
@@ -249,7 +250,7 @@ int gen_key(tlsuv_private_key_t *key) {
     mbedtls_ecp_group_id ec_curve = MBEDTLS_ECP_DP_SECP256R1;
     mbedtls_pk_type_t pk_type = MBEDTLS_PK_ECKEY;
 
-    struct priv_key_s *private_key = calloc(1, sizeof(struct priv_key_s));
+    struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
     *private_key = PRIV_KEY_API;
     mbedtls_pk_context *pk = &private_key->pkey;
     mbedtls_pk_init(pk);
@@ -277,7 +278,7 @@ int gen_key(tlsuv_private_key_t *key) {
     on_error:
     if (ret != 0) {
         mbedtls_pk_free(pk);
-        free(private_key);
+        tlsuv__free(private_key);
     } else {
         *key = (tlsuv_private_key_t)private_key;
     }

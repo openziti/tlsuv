@@ -129,7 +129,7 @@ static void on_internal_close(uv_handle_t *h) {
     if (h->type == UV_POLL && h->data) {
         uv_idle_t *idle = h->data;
         assert(idle->type == UV_IDLE);
-        uv_close((uv_handle_t *) idle, (uv_close_cb) free);
+        uv_close((uv_handle_t *) idle, (uv_close_cb) tlsuv__free);
     }
 
     // error handling
@@ -218,8 +218,8 @@ const char* tlsuv_stream_get_protocol(tlsuv_stream_t *clt) {
 }
 
 int tlsuv_stream_set_hostname(tlsuv_stream_t *clt, const char *host) {
-    free (clt->host);
-    clt->host = strdup(host);
+    tlsuv__free (clt->host);
+    clt->host = tlsuv__strdup(host);
     return 0;
 }
 
@@ -311,7 +311,7 @@ static void fail_pending_reqs(tlsuv_stream_t *clt, int err) {
         if (req->wr->cb) {
             req->wr->cb(req->wr, (int) err);
         }
-        free(req);
+        tlsuv__free(req);
     }
 }
 
@@ -337,7 +337,7 @@ static void process_outbound(tlsuv_stream_t *clt) {
                 if (req->wr->cb) {
                     req->wr->cb(req->wr, 0);
                 }
-                free(req);
+                tlsuv__free(req);
             }
             continue;
         }
@@ -370,7 +370,7 @@ static void process_inbound(tlsuv_stream_t *clt) {
         assert(idler->type == UV_IDLE);
 
         clt->watcher.data = NULL;
-        uv_close((uv_handle_t *) idler, (uv_close_cb) free);
+        uv_close((uv_handle_t *) idler, (uv_close_cb) tlsuv__free);
     }
 
     while(clt->read_cb && (attempts-- > 0)) {
@@ -555,7 +555,7 @@ int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_c
     } else {
         // schedule idle read (if nothing on the wire)
         // in case reading was stopped with data buffered in TLS engine
-        uv_idle_t *idle = calloc(1, sizeof(*idle));
+        uv_idle_t *idle = tlsuv__calloc(1, sizeof(*idle));
         clt->watcher.data = idle;
         uv_idle_init(clt->loop, idle);
         idle->data = clt;
@@ -617,7 +617,7 @@ int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_w
     }
 
     // queue request or whatever left
-    tlsuv_write_t *wr = malloc(sizeof(*wr));
+    tlsuv_write_t *wr = tlsuv__malloc(sizeof(*wr));
     wr->wr = req;
     wr->buf = uv_buf_init(buf->base + count, buf->len - count);
     clt->queue_len += 1;
@@ -629,7 +629,7 @@ int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_w
 
 int tlsuv_stream_free(tlsuv_stream_t *clt) {
     if (clt->host) {
-        free(clt->host);
+        tlsuv__free(clt->host);
         clt->host = NULL;
     }
     if (clt->tls_engine) {

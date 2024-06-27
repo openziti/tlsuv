@@ -32,7 +32,7 @@
 #include <mbedtls/pem.h>
 #include <mbedtls/version.h>
 
-#include "../bio.h"
+#include "../alloc.h"
 #include "../um_debug.h"
 #include "keys.h"
 #include "mbed_p11.h"
@@ -160,7 +160,7 @@ struct cert_s {
 };
 
 static struct cert_s cert_api = {
-    .free = mbedtls_free_cert,
+    .tlsuv__free = mbedtls_free_cert,
     .to_pem = write_cert_pem,
     .verify = mbedtls_verify_signature,
     .get_expiration = cert_expiration,
@@ -193,7 +193,7 @@ static struct tlsuv_engine_s mbedtls_engine_api = {
         .read = mbedtls_read,
         .reset = mbedtls_reset,
         .strerror = mbedtls_eng_error,
-        .free = mbedtls_free,
+        .tlsuv__free = mbedtls_free,
 };
 
 static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *ca, size_t cabuf_len);
@@ -215,11 +215,11 @@ static const char *mbedtls_eng_error(tlsuv_engine_t eng) {
 }
 
 tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len) {
-    struct mbedtls_context *c = calloc(1, sizeof(struct mbedtls_context));
+    struct mbedtls_context *c = tlsuv__calloc(1, sizeof(struct mbedtls_context));
     c->api = mbedtls_context_api;
     if (ca && ca_len > 0) {
         c->ca_len = ca_len;
-        c->ca = calloc(1, ca_len + 1);
+        c->ca = tlsuv__calloc(1, ca_len + 1);
         memcpy(c->ca, ca, ca_len);
     }
 
@@ -245,15 +245,15 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
                                 MBEDTLS_SSL_PRESET_DEFAULT);
     mbedtls_ssl_conf_renegotiation(ssl_config, MBEDTLS_SSL_RENEGOTIATION_ENABLED);
     mbedtls_ssl_conf_authmode(ssl_config, MBEDTLS_SSL_VERIFY_REQUIRED);
-    engine->drbg = calloc(1, sizeof(mbedtls_ctr_drbg_context));
-    engine->entropy = calloc(1, sizeof(mbedtls_entropy_context));
+    engine->drbg = tlsuv__calloc(1, sizeof(mbedtls_ctr_drbg_context));
+    engine->entropy = tlsuv__calloc(1, sizeof(mbedtls_entropy_context));
     mbedtls_ctr_drbg_init(engine->drbg);
     mbedtls_entropy_init(engine->entropy);
-    unsigned char *seed = malloc(MBEDTLS_ENTROPY_MAX_SEED_SIZE); // uninitialized memory
+    unsigned char *seed = tlsuv__malloc(MBEDTLS_ENTROPY_MAX_SEED_SIZE); // uninitialized memory
     mbedtls_ctr_drbg_seed(engine->drbg, mbedtls_entropy_func, engine->entropy, seed, MBEDTLS_ENTROPY_MAX_SEED_SIZE);
     mbedtls_ssl_conf_rng(ssl_config, mbedtls_ctr_drbg_random, engine->drbg);
 
-    engine->ca = calloc(1, sizeof(mbedtls_x509_crt));
+    engine->ca = tlsuv__calloc(1, sizeof(mbedtls_x509_crt));
     mbedtls_x509_crt_init(engine->ca);
 
     if (cabuf != NULL) {
@@ -300,7 +300,7 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
 
 
     mbedtls_ssl_conf_ca_chain(ssl_config, engine->ca, NULL);
-    free(seed);
+    tlsuv__free(seed);
 }
 
 static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
@@ -389,13 +389,13 @@ static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uin
 tlsuv_engine_t new_mbedtls_engine(void *ctx, const char *host) {
     struct mbedtls_context *context = ctx;
 
-    struct mbedtls_engine *mbed_eng = calloc(1, sizeof(struct mbedtls_engine));
+    struct mbedtls_engine *mbed_eng = tlsuv__calloc(1, sizeof(struct mbedtls_engine));
     init_ssl_context(&mbed_eng->config, context->ca, context->ca_len);
 
     if (context->own_key && context->own_cert) {
         mbedtls_ssl_conf_own_cert(&mbed_eng->config, context->own_cert, &context->own_key->pkey);
     }
-    mbedtls_ssl_context *ssl = calloc(1, sizeof(mbedtls_ssl_context));
+    mbedtls_ssl_context *ssl = tlsuv__calloc(1, sizeof(mbedtls_ssl_context));
 
     mbedtls_ssl_init(ssl);
     mbedtls_ssl_setup(ssl, &mbed_eng->config);
@@ -498,28 +498,28 @@ static int mbedtls_verify_signature(const struct tlsuv_certificate_s *c, enum ha
 static void mbedtls_free_ctx(tls_context *ctx) {
     struct mbedtls_context *c = (struct mbedtls_context *)ctx;
     if (c->own_key) {
-        c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
+        c->own_key->tlsuv__free((struct tlsuv_private_key_s *) c->own_key);
         c->own_key = NULL;
     }
 
     if (c->own_cert) {
         mbedtls_x509_crt_free(c->own_cert);
-        free(c->own_cert);
+        tlsuv__free(c->own_cert);
     }
 
-    free(c->ca);
+    tlsuv__free(c->ca);
 
-    free(c);
+    tlsuv__free(c);
 }
 
 static int mbedtls_reset(tlsuv_engine_t engine) {
     struct mbedtls_engine *e = (struct mbedtls_engine *)engine;
     if (e->session == NULL) {
-        e->session = calloc(1, sizeof(mbedtls_ssl_session));
+        e->session = tlsuv__calloc(1, sizeof(mbedtls_ssl_session));
     }
     if (mbedtls_ssl_get_session(e->ssl, e->session) != 0) {
         mbedtls_ssl_session_free(e->session);
-        free(e->session);
+        tlsuv__free(e->session);
         e->session = NULL;
     }
     e->io = NULL;
@@ -533,49 +533,49 @@ static void mbedtls_free(tlsuv_engine_t engine) {
 
     mbedtls_ssl_free(e->ssl);
     if (e->ssl) {
-        free(e->ssl);
+        tlsuv__free(e->ssl);
         e->ssl = NULL;
     }
-    free(e->ssl);
+    tlsuv__free(e->ssl);
     if (e->session) {
         mbedtls_ssl_session_free(e->session);
-        free(e->session);
+        tlsuv__free(e->session);
     }
 
     if (e->protocols) {
         for (int i = 0; e->protocols[i] != NULL; i++) {
-            free(e->protocols[i]);
+            tlsuv__free(e->protocols[i]);
         }
-        free(e->protocols);
+        tlsuv__free(e->protocols);
     }
     mbedtls_x509_crt_free(e->ca);
     mbedtls_ssl_config_free(&e->config);
     mbedtls_ctr_drbg_free(e->drbg);
     mbedtls_entropy_free(e->entropy);
-    free(e->drbg);
-    free(e->entropy);
-    free(e->ca);
-    free(e);
+    tlsuv__free(e->drbg);
+    tlsuv__free(e->entropy);
+    tlsuv__free(e->ca);
+    tlsuv__free(e);
 }
 
 static void mbedtls_free_cert(tlsuv_certificate_t cert) {
     struct cert_s *c = (struct cert_s *) cert;
     mbedtls_x509_crt_free(c->chain);
-    free(c);
+    tlsuv__free(c);
 }
 
 static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** protos, int len) {
     struct mbedtls_engine *e = (struct mbedtls_engine *)engine;
 
-    e->protocols = calloc(len + 1, sizeof(char*));
+    e->protocols = tlsuv__calloc(len + 1, sizeof(char*));
     for (int i = 0; i < len; i++) {
-        e->protocols[i] = strdup(protos[i]);
+        e->protocols[i] = tlsuv__strdup(protos[i]);
     }
     mbedtls_ssl_conf_alpn_protocols(&e->config, (const char **)e->protocols);
 }
 
 static int mbedtls_load_cert(tlsuv_certificate_t *c, const char *cert_buf, size_t cert_len) {
-    mbedtls_x509_crt *cert = calloc(1, sizeof(mbedtls_x509_crt));
+    mbedtls_x509_crt *cert = tlsuv__calloc(1, sizeof(mbedtls_x509_crt));
     if (cert_buf[cert_len - 1] != '\0') {
         cert_len += 1;
     }
@@ -585,11 +585,11 @@ static int mbedtls_load_cert(tlsuv_certificate_t *c, const char *cert_buf, size_
         if (rc < 0) {
             UM_LOG(WARN, "failed to load certificate");
             mbedtls_x509_crt_free(cert);
-            free(cert);
+            tlsuv__free(cert);
             cert = NULL;
         }
     }
-    struct cert_s *crt = calloc(1, sizeof(*crt));
+    struct cert_s *crt = tlsuv__calloc(1, sizeof(*crt));
     *crt = cert_api;
     crt->chain = cert;
     *c = (tlsuv_certificate_t) crt;
@@ -838,7 +838,7 @@ static int parse_pkcs7_certs(tlsuv_certificate_t *chain, const char *pkcs7, size
         UM_LOG(ERR, "base64 decoding parsing error: %d", rc);
         return rc;
     }
-    uint8_t *base64_decoded_pkcs7 = calloc(1, der_len + 1);
+    uint8_t *base64_decoded_pkcs7 = tlsuv__calloc(1, der_len + 1);
     rc = mbedtls_base64_decode(base64_decoded_pkcs7, der_len, &der_len, (const uint8_t *)pkcs7, pkcs7len);
     if (rc != 0) {
         UM_LOG(ERR, "base64 decoding parsing error: %d", rc);
@@ -925,14 +925,14 @@ static int parse_pkcs7_certs(tlsuv_certificate_t *chain, const char *pkcs7, size
         }
 
         if (certs == NULL) {
-            certs = calloc(1, sizeof(mbedtls_x509_crt));
+            certs = tlsuv__calloc(1, sizeof(mbedtls_x509_crt));
         }
         cert_len += (cbp - cert_buf);
         rc = mbedtls_x509_crt_parse(certs, cert_buf, cert_len);
         if (rc != 0) {
             UM_LOG(ERR, "failed to parse cert: %d", rc);
             mbedtls_x509_crt_free(certs);
-            free(certs);
+            tlsuv__free(certs);
             *chain = NULL;
             return rc;
         }
@@ -940,8 +940,8 @@ static int parse_pkcs7_certs(tlsuv_certificate_t *chain, const char *pkcs7, size
 
     } while (rc == 0);
 
-    free(der);
-    struct cert_s *c = calloc(1, sizeof(*c));
+    tlsuv__free(der);
+    struct cert_s *c = tlsuv__calloc(1, sizeof(*c));
     *c = cert_api;
     c->chain = certs;
     *chain = (tlsuv_certificate_t) c;
@@ -962,7 +962,7 @@ static int write_cert_pem(const struct tlsuv_certificate_s * cert, int full_chai
         c = c->next;
     }
 
-    uint8_t *pembuf = malloc(total_len + 1);
+    uint8_t *pembuf = tlsuv__malloc(total_len + 1);
     uint8_t *p = pembuf;
     c = ((struct cert_s*)cert)->chain;
     while (c != NULL) {
@@ -1047,7 +1047,7 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
     }
     on_error:
     if (ret == 0) {
-        *pem = strdup((const char*)pembuf);
+        *pem = tlsuv__strdup((const char*)pembuf);
         if (pemlen) {
             *pemlen = strlen((const char *)pembuf);
         }
