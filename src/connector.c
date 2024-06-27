@@ -78,7 +78,7 @@ struct tlsuv_proxy_connector_s {
     tlsuv_connect connect;
     int (*set_auth)();
     void (*cancel)(tlsuv_connector_req);
-    void (*tlsuv__free)(tlsuv_connector_t *self);
+    void (*free)(tlsuv_connector_t *self);
     
     tlsuv_proxy_t type;
     char *host;
@@ -361,7 +361,7 @@ tlsuv_connector_t *tlsuv_new_proxy_connector(tlsuv_proxy_t type, const char* hos
     c->connect = proxy_connect;
     c->cancel = proxy_cancel;
     c->set_auth = proxy_set_auth;
-    c->tlsuv__free = proxy_free;
+    c->free = proxy_free;
     return (tlsuv_connector_t *)c;
 }
 
