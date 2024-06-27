@@ -823,7 +823,7 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
             // if no ':' in position 2, back up to pickup the leading slash
             p--;
         }
-#elif
+#else
         p--; //on non-windows, always backup to pickup the leading slash
 #endif
         url->path = p;
