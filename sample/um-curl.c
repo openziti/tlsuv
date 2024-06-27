@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
     tlsuv_http_idle_keepalive(&app.clt, -1);
 
     tlsuv_private_key_t tlsKey = NULL;
-    tls_cert tlsCert = NULL;
+    tlsuv_certificate_t tlsCert = NULL;
     if (CA || (cert && key)) {
         tls = default_tls_context(CA, CA ? strlen(CA) + 1 : 0);
 
