@@ -14,6 +14,8 @@
 
 #include <uv.h>
 #include <malloc.h>
+#include <string.h>
+#include <assert.h>
 
 struct allocator_t {
     uv_malloc_func malloc_f;
@@ -32,8 +34,6 @@ static struct allocator_t ALLOC = {
 
 #if USE_OPENSSL
 #include <openssl/crypto.h>
-#include <string.h>
-#include <assert.h>
 
 static void * crypto_malloc(size_t num, const char *file, int line) {
     return ALLOC.malloc_f(num);

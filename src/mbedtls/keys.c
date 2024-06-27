@@ -30,7 +30,7 @@ static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *d
 static int pubkey_pem(tlsuv_public_key_t pk, char **pem, size_t *pemlen);
 
 static struct pub_key_s PUB_KEY_API = {
-        .tlsuv__free = pubkey_free,
+        .free = pubkey_free,
         .to_pem = pubkey_pem,
         .verify = pubkey_verify,
 };
@@ -43,7 +43,7 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md,
                         const char *data, size_t datalen, char *sig, size_t *siglen);
 
 static struct priv_key_s PRIV_KEY_API = {
-        .tlsuv__free = privkey_free,
+        .free = privkey_free,
         .to_pem = privkey_to_pem,
         .pubkey = privkey_pubkey,
         .sign = privkey_sign,

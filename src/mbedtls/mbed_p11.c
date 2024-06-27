@@ -14,6 +14,7 @@
 
 #include "mbed_p11.h"
 #include "p11_errors.h"
+#include "../alloc.h"
 
 #if _WIN32
 #define strncasecmp _strnicmp

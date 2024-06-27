@@ -160,7 +160,7 @@ struct cert_s {
 };
 
 static struct cert_s cert_api = {
-    .tlsuv__free = mbedtls_free_cert,
+    .free = mbedtls_free_cert,
     .to_pem = write_cert_pem,
     .verify = mbedtls_verify_signature,
     .get_expiration = cert_expiration,
@@ -193,7 +193,7 @@ static struct tlsuv_engine_s mbedtls_engine_api = {
         .read = mbedtls_read,
         .reset = mbedtls_reset,
         .strerror = mbedtls_eng_error,
-        .tlsuv__free = mbedtls_free,
+        .free = mbedtls_free,
 };
 
 static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *ca, size_t cabuf_len);
@@ -448,6 +448,8 @@ static size_t mbedtls_sig_to_asn1(const char *sig, size_t siglen, unsigned char 
                                                      MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE));
 
     memcpy(asn1sig, p, len);
+    mbedtls_mpi_free(&r);
+    mbedtls_mpi_free(&s);
     return len;
 }
 
@@ -498,7 +500,7 @@ static int mbedtls_verify_signature(const struct tlsuv_certificate_s *c, enum ha
 static void mbedtls_free_ctx(tls_context *ctx) {
     struct mbedtls_context *c = (struct mbedtls_context *)ctx;
     if (c->own_key) {
-        c->own_key->tlsuv__free((struct tlsuv_private_key_s *) c->own_key);
+        c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
         c->own_key = NULL;
     }
 
@@ -561,6 +563,7 @@ static void mbedtls_free(tlsuv_engine_t engine) {
 static void mbedtls_free_cert(tlsuv_certificate_t cert) {
     struct cert_s *c = (struct cert_s *) cert;
     mbedtls_x509_crt_free(c->chain);
+    tlsuv__free(c->chain);
     tlsuv__free(c);
 }
 

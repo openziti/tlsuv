@@ -20,6 +20,8 @@
 #include <mbedtls/asn1write.h>
 #include <mbedtls/oid.h>
 
+#include "alloc.h"
+
 static int p11_ecdsa_can_do(mbedtls_pk_type_t type);
 
 static int p11_ecdsa_sign(void *ctx, mbedtls_md_type_t md_alg,
