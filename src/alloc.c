@@ -13,7 +13,7 @@
 // limitations under the License.
 
 #include <uv.h>
-#include <malloc.h>
+#include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 
