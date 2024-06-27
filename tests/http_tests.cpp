@@ -339,7 +339,7 @@ TEST_CASE("pkcs11_client_cert_test","[http]") {
 
 TEST_CASE("client_cert_test","[http]") {
     UvLoopTest test;
-    tls_context *tls = NULL;
+    tls_context *tls = nullptr;
 
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);

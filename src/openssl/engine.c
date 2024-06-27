@@ -788,15 +788,16 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
 
     struct cert_s *crt = (struct cert_s *) cert;
     X509_STORE *store;
-    if (cert == NULL) {
+    if (crt == NULL) {
         if(key->get_certificate) {
-            if (key->get_certificate(key, &cert) != 0) {
+            if (key->get_certificate(key, (tlsuv_certificate_t *) &crt) != 0) {
                 return -1;
             }
             store = crt->cert;
         }
     } else {
         // owned by the caller
+        store = crt->cert;
         X509_STORE_up_ref(crt->cert);
     }
 
