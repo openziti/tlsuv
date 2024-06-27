@@ -809,13 +809,11 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
                     printf("The character '/' was not found in the string.\n");
                 }
             }
-            url->path = p;
-            url->path_len = strlen(p);
         } else {
             //handle one slash
-            url->path = p;
-            url->path_len = strlen(p);
         }
+        url->path = p;
+        url->path_len = strlen(p);
         return 0;
     }
 
