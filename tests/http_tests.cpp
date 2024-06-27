@@ -1128,6 +1128,9 @@ TEST_CASE("url parse", "[http]") {
     URL_TEST("wss://websocket.org/echo", 0, "wss", "websocket.org", 0, "/echo", nullptr);
     URL_TEST("websocket.org:443/echo", 0, nullptr, "websocket.org", 443, "/echo", nullptr);
     URL_TEST("file:///echo.txt", 0, "file", nullptr, 0, "/echo.txt", nullptr);
+    URL_TEST("file:/echo.txt", 0, "file", nullptr, 0, "/echo.txt", nullptr);
+    URL_TEST("file://host/echo.txt", 0, "file", "host", 0, "/echo.txt", nullptr);
+    URL_TEST("file:///c:/echo.txt", 0, "file", "host", 0, "c:/echo.txt", nullptr);
     URL_TEST("/path/only/echo.txt", 0, nullptr, nullptr, 0, "/path/only/echo.txt", nullptr);
     URL_TEST(":443/echo", -1, nullptr, "websocket.org", 443, "/echo", nullptr);
     URL_TEST("websocket.org:443echo", -1, nullptr, "websocket.org", 443, "/echo", nullptr);
