@@ -504,13 +504,7 @@ static void mbedtls_free_ctx(tls_context *ctx) {
         c->own_key = NULL;
     }
 
-    if (c->own_cert) {
-        mbedtls_x509_crt_free(c->own_cert);
-        tlsuv__free(c->own_cert);
-    }
-
     tlsuv__free(c->ca);
-
     tlsuv__free(c);
 }
 
