@@ -111,6 +111,7 @@ TEST_CASE("websocket fail tests", "[websocket]") {
     WHEN("resolve failure ") {
         int rc = tlsuv_websocket_connect(&r, clt, "ws://not.a.real.host", on_connect, on_ws_data);
         lt.run();
+        INFO("rc = " << rc);
         CHECK((rc == UV_EAI_NONAME || test.conn_status == UV_EAI_NONAME));
     }
 }

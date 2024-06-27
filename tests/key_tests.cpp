@@ -217,13 +217,13 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
     }
 
     WHEN(keyType << ": get key cert") {
-        tls_cert cert;
+        tlsuv_certificate_t cert;
         char *pem = nullptr;
         size_t pemlen;
         CHECK(key->get_certificate(key, &cert) == 0);
 
         THEN("should be able to write cert to PEM") {
-            CHECK(ctx->write_cert_to_pem(cert, 1, &pem, &pemlen) == 0);
+            CHECK(cert->to_pem(cert, 1, &pem, &pemlen) == 0);
             CHECK(pemlen > 0);
             CHECK(pem != nullptr);
             Catch::cout() << std::string(pem, pemlen) << std::endl;
@@ -241,9 +241,9 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
             size_t siglen = sizeof(sig);
 
             CHECK(0 == key->sign(key, hash_SHA256, data, datalen, sig, &siglen));
-            CHECK(0 == ctx->verify_signature(cert, hash_SHA256, data, datalen, sig, siglen));
+            CHECK(0 == cert->verify(cert, hash_SHA256, data, datalen, sig, siglen));
         }
-        ctx->free_cert(&cert);
+        cert->free(cert);
     }
 
     WHEN(keyType << ": sign and verify") {

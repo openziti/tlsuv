@@ -31,6 +31,7 @@
 
 #include "keys.h"
 
+
 // inspired by https://golang.org/src/crypto/x509/root_linux.go
 // Possible certificate files; stop after finding one.
 const char *const caFiles[] = {
@@ -48,7 +49,7 @@ struct openssl_ctx {
     SSL_CTX *ctx;
     struct priv_key_s *own_key;
     X509 *own_cert;
-    int (*cert_verify_f)(void *cert, void *v_ctx);
+    int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx);
     void *verify_ctx;
     unsigned char *alpn_protocols;
 
@@ -71,7 +72,7 @@ struct openssl_engine {
 
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len);
 static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
-                            tls_cert cert);
+                            tlsuv_certificate_t cert);
 static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key);
 
 tlsuv_engine_t new_openssl_engine(void *ctx, const char *host);
@@ -87,8 +88,7 @@ static const char* tls_get_alpn(tlsuv_engine_t self);
 
 static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len);
 
-static int
-tls_read(tlsuv_engine_t self, char *ssl_in, size_t *ssl_in_len, size_t out);
+static int tls_read(tlsuv_engine_t self, char *, size_t *, size_t );
 
 static int tls_close(tlsuv_engine_t self);
 
@@ -99,17 +99,15 @@ static const char *tls_eng_error(tlsuv_engine_t self);
 
 static void tls_free(tlsuv_engine_t self);
 static void tls_free_ctx(tls_context *ctx);
-static void tls_free_cert(tls_cert *cert);
 
-static void tls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx);
+static void tls_set_cert_verify(tls_context *ctx,
+                                int (*verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
+                                void *v_ctx);
 
-static int tls_verify_signature(void *cert, enum hash_algo md, const char *data, size_t datalen, const char *sig,
-                                    size_t siglen);
+static int parse_pkcs7_certs(tlsuv_certificate_t *chain, const char *pkcs7, size_t pkcs7len);
 
-static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len);
-
-static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
-static int load_cert(tls_cert *cert, const char *buf, size_t buflen);
+static int write_cert_pem(tlsuv_certificate_t cert, int full_chain, char **pem, size_t *pemlen);
+static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buflen);
 
 static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...);
 
@@ -128,12 +126,11 @@ static tls_context openssl_context_api = {
         .strerror = (const char *(*)(long)) tls_error,
         .new_engine = new_openssl_engine,
         .free_ctx = tls_free_ctx,
-        .free_cert = tls_free_cert,
         .set_own_cert = tls_set_own_cert,
         .set_cert_verify = tls_set_cert_verify,
-        .verify_signature =  tls_verify_signature,
+//        .verify_signature =  tls_verify_signature,
         .parse_pkcs7_certs = parse_pkcs7_certs,
-        .write_cert_to_pem = write_cert_pem,
+//        .write_cert_to_pem = write_cert_pem,
         .generate_key = gen_key,
         .load_key = load_key,
         .load_pkcs11_key = load_pkcs11_key,
@@ -208,7 +205,7 @@ static X509_STORE * load_certs(const char *buf, size_t buf_len) {
     return certs;
 }
 
-static int load_cert(tls_cert *cert, const char *buf, size_t buflen) {
+static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buflen) {
     X509 *c;
     // try as file
     FILE *crt_file = fopen(buf, "r");
@@ -229,8 +226,10 @@ static int load_cert(tls_cert *cert, const char *buf, size_t buflen) {
     X509_STORE *store = X509_STORE_new();
     X509_STORE_add_cert(store, c);
     X509_free(c);
-
-    *cert = store;
+    struct cert_s *crt = calloc(1, sizeof(*crt));
+    cert_init(crt);
+    crt->cert = store;
+    *cert = (tlsuv_certificate_t) crt;
     return 0;
 }
 
@@ -643,7 +642,10 @@ static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
     UM_LOG(VERB, "verifying %s", n);
 
     int rc = 1;
-    if (c->cert_verify_f && c->cert_verify_f(store, c->verify_ctx) != 0) {
+    struct cert_s cert;
+    cert_init(&cert);
+    cert.cert = store;
+    if (c->cert_verify_f && c->cert_verify_f((const struct tlsuv_certificate_s *) &cert, c->verify_ctx) != 0) {
         UM_LOG(WARN, "verify failed for certificate[%s]", n);
         rc = 0;
     }
@@ -653,7 +655,9 @@ static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
 
 
 
-static void tls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx) {
+static void tls_set_cert_verify(tls_context *ctx,
+                                int (*verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
+                                void *v_ctx) {
     struct openssl_ctx *c = (struct openssl_ctx*)ctx;
     c->cert_verify_f = verify_f;
     c->verify_ctx = v_ctx;
@@ -661,19 +665,6 @@ static void tls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, vo
     SSL_CTX_set_cert_verify_callback(c->ctx, cert_verify_cb, c);
 }
 
-static int tls_verify_signature(void *cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
-    X509_STORE *store = cert;
-    STACK_OF(X509_OBJECT ) *s = X509_STORE_get0_objects(store);
-    X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
-    EVP_PKEY *pk = X509_get_pubkey(c);
-    if (pk == NULL) {
-        unsigned long err = ERR_peek_error();
-        UM_LOG(WARN, "no pub key: %ld/%s", err, ERR_lib_error_string(err));
-    }
-    int rc = verify_signature(pk, md, data, datalen, sig, siglen);
-    EVP_PKEY_free(pk);
-    return rc;
-}
 
 static void tls_free_ctx(tls_context *ctx) {
     struct openssl_ctx *c = (struct openssl_ctx*)ctx;
@@ -719,13 +710,6 @@ static void tls_free(tlsuv_engine_t self) {
     free(e);
 }
 
-static void tls_free_cert(tls_cert *cert) {
-    X509_STORE *s = *cert;
-    if (s != NULL) {
-        X509_STORE_free(s);
-    }
-    *cert = NULL;
-}
 
 #define SSL_OP_CHECK(op, desc) do{ \
 if ((op) != 1) { \
@@ -768,9 +752,9 @@ static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key) {
     c->own_key = (struct priv_key_s *) key;
     SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, c->own_key->pkey), "set own key");
 
-    tls_cert cert;
+    tlsuv_certificate_t cert;
     if (key->get_certificate(key, &cert) == 0) {
-        X509_STORE *store = cert;
+        X509_STORE *store = ((struct cert_s*)cert)->cert;
         c->own_cert = tls_set_cert_internal(c->ctx, store);
         X509_STORE_free(store);
     }
@@ -782,7 +766,7 @@ static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key) {
 }
 
 static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
-                            tls_cert cert) {
+                            tlsuv_certificate_t cert) {
     struct openssl_ctx *c = (struct openssl_ctx*)ctx;
     SSL_CTX *ssl = c->ctx;
 
@@ -802,20 +786,22 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
         return 0;
     }
 
-    X509_STORE *store = cert;
-    if (cert == NULL) {
+    struct cert_s *crt = (struct cert_s *) cert;
+    X509_STORE *store = NULL;
+    if (crt == NULL) {
         if(key->get_certificate) {
-            if (key->get_certificate(key, &cert) != 0) {
+            if (key->get_certificate(key, (tlsuv_certificate_t *) &crt) != 0) {
                 return -1;
             }
-            store = cert;
+            store = crt->cert;
         }
     } else {
         // owned by the caller
-        X509_STORE_up_ref(store);
+        store = crt->cert;
+        X509_STORE_up_ref(crt->cert);
     }
 
-    if (cert == NULL) {
+    if (store == NULL) {
         return -1;
     }
 
@@ -979,7 +965,7 @@ static int tls_close(tlsuv_engine_t self) {
     return 0;
 }
 
-static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7buf, size_t pkcs7len) {
+static int parse_pkcs7_certs(tlsuv_certificate_t *chain, const char *pkcs7buf, size_t pkcs7len) {
 
     BIO *buf = BIO_new_mem_buf(pkcs7buf, (int)pkcs7len);
     BIO *b64 = BIO_new(BIO_f_base64());
@@ -1006,30 +992,15 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7buf, size_t pkcs7
         X509_STORE_add_cert(store, c);
     }
 
-    *chain = store;
+    struct cert_s *c = calloc(1, sizeof(*c));
+    cert_init(c);
+    c->cert = store;
+    *chain = (tlsuv_certificate_t) c;
     PKCS7_free(pkcs7);
     BIO_free_all(b64);
     return 0;
 }
 
-static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen) {
-    X509_STORE *store = cert;
-
-    BIO *pembio = BIO_new(BIO_s_mem());
-    X509 *c;
-    STACK_OF(X509_OBJECT) *s = X509_STORE_get0_objects(store);
-    for (int i = 0; i < sk_X509_OBJECT_num(s); i++) {
-        c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, i));
-        PEM_write_bio_X509(pembio, c);
-    }
-
-    *pemlen = BIO_ctrl_pending(pembio);
-    *pem = calloc(1, *pemlen + 1);
-    BIO_read(pembio, *pem, (int)*pemlen);
-
-    BIO_free_all(pembio);
-    return 0;
-}
 
 static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...) {
     struct priv_key_s *privkey = (struct priv_key_s *) key;

@@ -80,6 +80,12 @@ target_link_libraries(all_tests
 
 target_include_directories(all_tests PRIVATE ../src)
 
+add_custom_target(test-server
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/test_server
+        COMMAND go run ./test-server.go -ca ../certs/ca.pem -ca-key ../certs/ca.key
+
+)
+
 add_custom_target(run-tests
         BYPRODUCTS ${PROJECT_BINARY_DIR}/Testing/results.xml
         DEPENDS all_tests

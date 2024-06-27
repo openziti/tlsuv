@@ -143,7 +143,14 @@ struct tlsuv_engine_s {
 typedef struct tls_context_s tls_context;
 typedef struct tlsuv_public_key_s *tlsuv_public_key_t;
 typedef struct tlsuv_private_key_s *tlsuv_private_key_t;
-typedef void *tls_cert;
+typedef struct tlsuv_certificate_s *tlsuv_certificate_t;
+
+#define TLSUV_CERT_API                                                              \
+    void (*free)(struct tlsuv_certificate_s * cert);                                \
+    int (*to_pem)(const struct tlsuv_certificate_s * cert, int full, char **pem, size_t *pemlen);   \
+    int (*get_expiration)(const struct tlsuv_certificate_s * cert, struct tm *);          \
+    int (*verify)(const struct tlsuv_certificate_s * cert, enum hash_algo md,             \
+                  const char *data, size_t datalen, const char *sig, size_t siglen);
 
 #define TLSUV_PUBKEY_API                                                           \
     void (*free)(struct tlsuv_public_key_s * pubkey);                              \
@@ -157,8 +164,8 @@ typedef void *tls_cert;
                 const char *data, size_t datalen, char *sig, size_t *siglen);        \
     struct tlsuv_public_key_s *(*pubkey)(struct tlsuv_private_key_s * privkey);      \
     int (*to_pem)(struct tlsuv_private_key_s * privkey, char **pem, size_t *pemlen); \
-    int (*get_certificate)(struct tlsuv_private_key_s * privkey, tls_cert * cert);   \
-    int (*store_certificate)(struct tlsuv_private_key_s *privkey, tls_cert cert);
+    int (*get_certificate)(struct tlsuv_private_key_s * privkey, tlsuv_certificate_t * cert);   \
+    int (*store_certificate)(struct tlsuv_private_key_s *privkey, tlsuv_certificate_t cert);
 
 struct tlsuv_public_key_s {
     TLSUV_PUBKEY_API
@@ -168,13 +175,15 @@ struct tlsuv_private_key_s {
     TLSUV_PRIVKEY_API
 };
 
+struct tlsuv_certificate_s {
+    TLSUV_CERT_API
+};
+
 struct tls_context_s {
     /* creates new TLS engine for a host */
     tlsuv_engine_t (*new_engine)(void *ctx, const char *host);
 
     void (*free_ctx)(tls_context *ctx);
-
-    void (*free_cert)(tls_cert *cert);
 
     /**
      * \brief set client certfificate credentials.
@@ -189,7 +198,7 @@ struct tls_context_s {
      *
      * @return 0 for success, -1 on error (mismatched key/cert, or cert is not provided)
      */
-    int (*set_own_cert)(tls_context *ctx, tlsuv_private_key_t key, tls_cert cert);
+    int (*set_own_cert)(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certificate_t cert);
 
     /**
      * Sets custom server cert validation function.
@@ -201,20 +210,21 @@ struct tls_context_s {
      * @param v_ctx custom data passed into verification callback
      * \see tls_context_api::verify_signature()
      */
-    void (*set_cert_verify)(tls_context *ctx, int (*verify_f)(tls_cert cert, void *v_ctx), void *v_ctx);
+    void (*set_cert_verify)(tls_context *ctx,
+            int (*verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx), void *v_ctx);
 
-    /**
-     * verify signature using supplied TLS certificate handle
-     * @param cert
-     * @param algo
-     * @param data
-     * @param datalen
-     * @param sig
-     * @param siglen
-     */
-    int (*verify_signature)(tls_cert cert, enum hash_algo algo, const char *data, size_t datalen, const char *sig,
-                            size_t siglen);
-
+//    /**
+//     * verify signature using supplied TLS certificate handle
+//     * @param cert
+//     * @param algo
+//     * @param data
+//     * @param datalen
+//     * @param sig
+//     * @param siglen
+//     */
+//    int (*verify_signature)(tlsuv_certificate_t cert, enum hash_algo algo, const char *data, size_t datalen, const char *sig,
+//                            size_t siglen);
+//
     /**
      * Parses certificate chain in base64 encoded PKCS#7 format
      * @param chain
@@ -222,20 +232,20 @@ struct tls_context_s {
      * @param pkcs7len
      * @returns 0 on success, or error code
      */
-    int (*parse_pkcs7_certs)(tls_cert *chain, const char *pkcs7, size_t pkcs7len);
+    int (*parse_pkcs7_certs)(tlsuv_certificate_t *chain, const char *pkcs7, size_t pkcs7len);
 
-    /**
-     * Generate PEM representation of the TLS certificate or chain.
-     *
-     * PEM buffer is allocated and returned. It is the caller responsibily to free memory associated with it.
-     * @param cert TLS certificate handle
-     * @param full_chain output whole chain
-     * @param pem (out) address where allocated buffer pointer will be get stored
-     * @param pemlen size of produced PEM
-     * @returns 0 on success, or error code
-     */
-    int (*write_cert_to_pem)(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
-
+//    /**
+//     * Generate PEM representation of the TLS certificate or chain.
+//     *
+//     * PEM buffer is allocated and returned. It is the caller responsibily to free memory associated with it.
+//     * @param cert TLS certificate handle
+//     * @param full_chain output whole chain
+//     * @param pem (out) address where allocated buffer pointer will be get stored
+//     * @param pemlen size of produced PEM
+//     * @returns 0 on success, or error code
+//     */
+//    int (*write_cert_to_pem)(tlsuv_certificate_t cert, int full_chain, char **pem, size_t *pemlen);
+//
     /**
      * Load X509 certificate from a file or in-memory PEM
      * @param cert Certificate handle
@@ -243,7 +253,7 @@ struct tls_context_s {
      * @param buflen length of certificate string
      * @returns 0 on success or error code
      */
-    int (*load_cert)(tls_cert *cert, const char *buf, size_t buflen);
+    int (*load_cert)(tlsuv_certificate_t *cert, const char *buf, size_t buflen);
 
     /**
      * generate private key.

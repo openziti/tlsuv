@@ -77,7 +77,7 @@ struct mbedtls_context {
     size_t ca_len;
     struct priv_key_s *own_key;
     mbedtls_x509_crt *own_cert;
-    int (*cert_verify_f)(void *cert, void *v_ctx);
+    int (*cert_verify_f)(const struct tlsuv_certificate_s* , void *v_ctx);
     void *verify_ctx;
 };
 
@@ -99,19 +99,19 @@ struct mbedtls_engine {
 
     int ip_len;
     struct in6_addr addr;
-    int (*cert_verify_f)(void *cert, void *v_ctx);
+    int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx);
     void *verify_ctx;
     mbedtls_ctr_drbg_context *drbg;
     mbedtls_entropy_context *entropy;
 };
 
 static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** protos, int len);
-static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tls_cert cert);
+static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certificate_t cert);
 
 tlsuv_engine_t new_mbedtls_engine(void *ctx, const char *host);
 
-static void mbedtls_set_io(tlsuv_engine_t, io_ctx pVoid, io_read pFunction, io_write pFunction1);
-static void mbedtls_set_fd(tlsuv_engine_t, uv_os_fd_t i1);
+static void mbedtls_set_io(tlsuv_engine_t, io_ctx , io_read , io_write );
+static void mbedtls_set_fd(tlsuv_engine_t, uv_os_fd_t );
 
 static tls_handshake_state mbedtls_hs_state(tlsuv_engine_t engine);
 static tls_handshake_state
@@ -122,7 +122,7 @@ static const char* mbedtls_get_alpn(tlsuv_engine_t engine);
 static int mbedtls_write(tlsuv_engine_t engine, const char *data, size_t data_len);
 
 static int
-mbedtls_read(tlsuv_engine_t engine, char *ssl_in, size_t *ssl_in_len, size_t out);
+mbedtls_read(tlsuv_engine_t engine, char *, size_t *, size_t );
 
 static int mbedtls_close(tlsuv_engine_t engine);
 
@@ -136,32 +136,44 @@ static void mbedtls_free(tlsuv_engine_t engine);
 
 static void mbedtls_free_ctx(tls_context *ctx);
 
-static void mbedtls_free_cert(tls_cert *cert);
+static void mbedtls_free_cert(tlsuv_certificate_t cert);
 
-static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx);
+static void mbedtls_set_cert_verify(tls_context *ctx,
+                                    int (*verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx), void *v_ctx);
 
-static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char *data, size_t datalen, const char *sig,
-                                    size_t siglen);
+static int mbedtls_verify_signature(const struct tlsuv_certificate_s * cert, enum hash_algo md,
+                                    const char *data, size_t datalen, 
+                                    const char *sig, size_t siglen);
 
-static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len);
+static int parse_pkcs7_certs(tlsuv_certificate_t *chain, const char *pkcs7, size_t pkcs7len);
 
-static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen);
+static int write_cert_pem(const struct tlsuv_certificate_s * cert, int full_chain, char **pem, size_t *pemlen);
 
 static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...);
 
-static int mbedtls_load_cert(tls_cert *c, const char *cert_buf, size_t cert_len);
+static int mbedtls_load_cert(tlsuv_certificate_t *c, const char *cert_buf, size_t cert_len);
+static int cert_expiration(const struct tlsuv_certificate_s *cert, struct tm *time);
+
+struct cert_s {
+    TLSUV_CERT_API
+    mbedtls_x509_crt *chain;
+};
+
+static struct cert_s cert_api = {
+    .free = mbedtls_free_cert,
+    .to_pem = write_cert_pem,
+    .verify = mbedtls_verify_signature,
+    .get_expiration = cert_expiration,
+};
 
 static tls_context mbedtls_context_api = {
         .version = mbedtls_version,
         .strerror = mbedtls_error,
         .new_engine = new_mbedtls_engine,
         .free_ctx = mbedtls_free_ctx,
-        .free_cert = mbedtls_free_cert,
         .set_own_cert = mbedtls_set_own_cert,
         .set_cert_verify = mbedtls_set_cert_verify,
-        .verify_signature =  mbedtls_verify_signature,
         .parse_pkcs7_certs = parse_pkcs7_certs,
-        .write_cert_to_pem = write_cert_pem,
         .generate_key = gen_key,
         .load_key = load_key,
         .load_pkcs11_key = load_key_p11,
@@ -360,7 +372,10 @@ static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uin
         if (depth > 0) {
             *flags &= ~MBEDTLS_X509_BADCERT_NOT_TRUSTED;
         } else {
-            int rc = eng->cert_verify_f(crt, eng->verify_ctx);
+            struct cert_s c;
+            c = cert_api;
+            c.chain = crt;
+            int rc = eng->cert_verify_f((tlsuv_certificate_t) &c, eng->verify_ctx);
             if (rc == 0) {
                 *flags &= ~MBEDTLS_X509_BADCERT_NOT_TRUSTED;
             } else {
@@ -403,7 +418,9 @@ tlsuv_engine_t new_mbedtls_engine(void *ctx, const char *host) {
     return &mbed_eng->api;
 }
 
-static void mbedtls_set_cert_verify(tls_context *ctx, int (*verify_f)(void *cert, void *v_ctx), void *v_ctx) {
+static void mbedtls_set_cert_verify(tls_context *ctx,
+                                    int (*verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
+                                    void *v_ctx) {
     struct mbedtls_context *c = (struct mbedtls_context *)ctx;
     c->cert_verify_f = verify_f;
     c->verify_ctx = v_ctx;
@@ -434,7 +451,7 @@ static size_t mbedtls_sig_to_asn1(const char *sig, size_t siglen, unsigned char 
     return len;
 }
 
-static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
+static int mbedtls_verify_signature(const struct tlsuv_certificate_s *c, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
 
     int type;
     const mbedtls_md_info_t *md_info = NULL;
@@ -455,7 +472,7 @@ static int mbedtls_verify_signature(void *cert, enum hash_algo md, const char* d
             return -1;
     }
 
-    mbedtls_x509_crt *crt = cert;
+    mbedtls_x509_crt *crt = ((struct cert_s*)c)->chain;
 
     unsigned char hash[MBEDTLS_MD_MAX_SIZE];
     if (mbedtls_md(md_info, (uint8_t *)data, datalen, hash) != 0) {
@@ -541,11 +558,10 @@ static void mbedtls_free(tlsuv_engine_t engine) {
     free(e);
 }
 
-static void mbedtls_free_cert(tls_cert *cert) {
-    mbedtls_x509_crt *c = *cert;
-    mbedtls_x509_crt_free(c);
+static void mbedtls_free_cert(tlsuv_certificate_t cert) {
+    struct cert_s *c = (struct cert_s *) cert;
+    mbedtls_x509_crt_free(c->chain);
     free(c);
-    *cert = NULL;
 }
 
 static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** protos, int len) {
@@ -558,7 +574,7 @@ static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** proto
     mbedtls_ssl_conf_alpn_protocols(&e->config, (const char **)e->protocols);
 }
 
-static int mbedtls_load_cert(tls_cert *c, const char *cert_buf, size_t cert_len) {
+static int mbedtls_load_cert(tlsuv_certificate_t *c, const char *cert_buf, size_t cert_len) {
     mbedtls_x509_crt *cert = calloc(1, sizeof(mbedtls_x509_crt));
     if (cert_buf[cert_len - 1] != '\0') {
         cert_len += 1;
@@ -573,11 +589,14 @@ static int mbedtls_load_cert(tls_cert *c, const char *cert_buf, size_t cert_len)
             cert = NULL;
         }
     }
-    *c = cert;
+    struct cert_s *crt = calloc(1, sizeof(*crt));
+    *crt = cert_api;
+    crt->chain = cert;
+    *c = (tlsuv_certificate_t) crt;
     return rc;
 }
 
-static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tls_cert cert) {
+static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certificate_t cert) {
     struct mbedtls_context *c = (struct mbedtls_context *)ctx;
     int rc = 0;
 
@@ -598,7 +617,8 @@ static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tls_c
     }
 
     struct priv_key_s *pk = (struct priv_key_s *)key;
-    mbedtls_x509_crt *x509 = cert;
+    struct cert_s *crt = (struct cert_s *) cert;
+    mbedtls_x509_crt *x509 = crt->chain;
 
 #if MBEDTLS_VERSION_MAJOR == 3
     mbedtls_ctr_drbg_context ctr_drbg;
@@ -615,7 +635,7 @@ static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tls_c
 #endif
         rc = -1;
     } else {
-        c->own_cert = cert;
+        c->own_cert = crt->chain;
         c->own_key = pk;
     }
 
@@ -807,7 +827,7 @@ static int mbedtls_close(tlsuv_engine_t engine) {
 #define OID_PKCS7_DATA OID_PKCS7 "\x02"
 #define OID_PKCS7_SIGNED_DATA OID_PKCS7 "\x01"
 
-static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len) {
+static int parse_pkcs7_certs(tlsuv_certificate_t *chain, const char *pkcs7, size_t pkcs7len) {
     size_t der_len;
     unsigned char *p;
     unsigned char *end;
@@ -921,14 +941,17 @@ static int parse_pkcs7_certs(tls_cert *chain, const char *pkcs7, size_t pkcs7len
     } while (rc == 0);
 
     free(der);
-    *chain = certs;
+    struct cert_s *c = calloc(1, sizeof(*c));
+    *c = cert_api;
+    c->chain = certs;
+    *chain = (tlsuv_certificate_t) c;
     return 0;
 }
 
 #define PEM_BEGIN_CRT           "-----BEGIN CERTIFICATE-----\n"
 #define PEM_END_CRT             "-----END CERTIFICATE-----\n"
-static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pemlen) {
-    mbedtls_x509_crt *c = cert;
+static int write_cert_pem(const struct tlsuv_certificate_s * cert, int full_chain, char **pem, size_t *pemlen) {
+    mbedtls_x509_crt *c = ((struct cert_s*)cert)->chain;
 
     size_t total_len = 0;
     while (c != NULL) {
@@ -941,7 +964,7 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
 
     uint8_t *pembuf = malloc(total_len + 1);
     uint8_t *p = pembuf;
-    c = cert;
+    c = ((struct cert_s*)cert)->chain;
     while (c != NULL) {
         size_t len;
         mbedtls_pem_write_buffer(PEM_BEGIN_CRT, PEM_END_CRT, c->raw.p, c->raw.len, p, total_len - (p - pembuf), &len);
@@ -1031,4 +1054,19 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
     }
     mbedtls_x509write_csr_free(&csr);
     return ret;
+}
+
+static int cert_expiration(const struct tlsuv_certificate_s *cert, struct tm *time) {
+    if (cert == NULL || time == NULL) {
+        return UV_EINVAL;
+    }
+
+    mbedtls_x509_crt *crt = ((struct cert_s*)cert)->chain;
+    time->tm_year = crt->valid_to.year - 1900; // years since 1900
+    time->tm_mon = crt->valid_to.mon - 1; // months since Jan
+    time->tm_mday = crt->valid_to.day;
+    time->tm_hour = crt->valid_to.hour;
+    time->tm_min = crt->valid_to.min;
+    time->tm_sec = crt->valid_to.sec;
+    return 0;
 }

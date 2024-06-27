@@ -25,6 +25,19 @@
 #include "../um_debug.h"
 #include "keys.h"
 
+static int cert_to_pem(const struct tlsuv_certificate_s * c, int full, char **pem, size_t *pemlen);
+static void cert_free(tlsuv_certificate_t c);
+static int cert_verify(const struct tlsuv_certificate_s * c, enum hash_algo md, const char *data, size_t datalen, const char *sig, size_t siglen);
+static int cert_exp(const struct tlsuv_certificate_s *, struct tm *time);
+
+static struct cert_s cert_API = {
+        .free = cert_free,
+        .verify = cert_verify,
+        .to_pem = cert_to_pem,
+        .get_expiration = cert_exp,
+};
+
+
 static int pubkey_to_pem(tlsuv_public_key_t pub, char **pem, size_t *pemlen);
 static void pubkey_free(tlsuv_public_key_t k);
 static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *data, size_t datalen, const char *sig, size_t siglen);
@@ -42,8 +55,8 @@ static int privkey_to_pem(tlsuv_private_key_t pk, char **pem, size_t *pemlen);
 static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md,
                         const char *data, size_t datalen, char *sig, size_t *siglen);
 
-static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert);
-static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert);
+static int privkey_get_cert(tlsuv_private_key_t pk, tlsuv_certificate_t *cert);
+static int privkey_store_cert(tlsuv_private_key_t pk, tlsuv_certificate_t cert);
 
 static ECDSA_SIG *privkey_p11_sign_sig(const unsigned char *digest, int len, const BIGNUM *pSt, const BIGNUM *pBignumSt, EC_KEY *ec);
 static int privkey_p11_rsa_enc(int msglen, const unsigned char *msg,
@@ -106,6 +119,10 @@ void pub_key_init(struct pub_key_s *pubkey) {
 
 void priv_key_init(struct priv_key_s *privkey) {
     *privkey = PRIV_KEY_API;
+}
+
+void cert_init(struct cert_s *c) {
+    *c = cert_API;
 }
 
 static void pubkey_free(tlsuv_public_key_t k) {
@@ -498,7 +515,6 @@ error:
     return -1;
 }
 
-
 int gen_key(tlsuv_private_key_t *key) {
     int rc = 0;
 
@@ -563,7 +579,7 @@ static int privkey_p11_rsa_enc(int msglen, const unsigned char *msg,
     return rc != 0 ? rc : (int)siglen;
 }
 
-static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert) {
+static int privkey_get_cert(tlsuv_private_key_t pk, tlsuv_certificate_t *cert) {
     struct priv_key_s *key = (struct priv_key_s *) pk;
 
     p11_key_ctx *p11_key = NULL;
@@ -587,10 +603,13 @@ static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert) {
         const uint8_t *a = (const uint8_t *)der;
         X509 *c = d2i_X509(NULL, &a, (long)derlen);
 
+        struct cert_s *crt = calloc(1, sizeof(*crt));
+        cert_init(crt);
         X509_STORE *store = X509_STORE_new();
         X509_STORE_add_cert(store, c);
         X509_free(c);
-        *cert = store;
+        crt->cert = store;
+        *cert = (tlsuv_certificate_t) crt;
         free(der);
         return 0;
     }
@@ -598,7 +617,7 @@ static int privkey_get_cert(tlsuv_private_key_t pk, tls_cert *cert) {
     return -1;
 }
 
-static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert) {
+static int privkey_store_cert(tlsuv_private_key_t pk, tlsuv_certificate_t cert) {
     struct priv_key_s *key = (struct priv_key_s *) pk;
 
     p11_key_ctx *p11_key = NULL;
@@ -614,7 +633,7 @@ static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert) {
     if (p11_key == NULL) {
         return -1;
     }
-    X509_STORE *store = cert;
+    X509_STORE *store = ((struct cert_s*)cert)->cert;
 
     STACK_OF(X509_OBJECT) *objects = X509_STORE_get0_objects(store);
 
@@ -633,4 +652,61 @@ static int privkey_store_cert(tlsuv_private_key_t pk, tls_cert cert) {
     OPENSSL_free(der);
     OPENSSL_free(subj_der);
     return rc;
+}
+
+static void cert_free(tlsuv_certificate_t cert) {
+    struct cert_s *c = (struct cert_s *) cert;
+    X509_STORE *s = c->cert;
+    if (s != NULL) {
+        X509_STORE_free(s);
+    }
+    free(c);
+}
+
+static int cert_to_pem(const struct tlsuv_certificate_s * cert, int full_chain, char **pem, size_t *pemlen) {
+    X509_STORE *store = ((struct cert_s*)cert)->cert;
+
+    BIO *pembio = BIO_new(BIO_s_mem());
+    X509 *c;
+    STACK_OF(X509_OBJECT) *s = X509_STORE_get0_objects(store);
+    for (int i = 0; i < sk_X509_OBJECT_num(s); i++) {
+        c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, i));
+        PEM_write_bio_X509(pembio, c);
+        if (!full_chain) {
+            break;
+        }
+    }
+
+    *pemlen = BIO_ctrl_pending(pembio);
+    *pem = calloc(1, *pemlen + 1);
+    BIO_read(pembio, *pem, (int)*pemlen);
+
+    BIO_free_all(pembio);
+    return 0;
+}
+
+static int cert_verify(const struct tlsuv_certificate_s * cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
+    X509_STORE *store = ((struct cert_s*)cert)->cert;
+    STACK_OF(X509_OBJECT ) *s = X509_STORE_get0_objects(store);
+    X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
+    EVP_PKEY *pk = X509_get_pubkey(c);
+    if (pk == NULL) {
+        unsigned long err = ERR_peek_error();
+        UM_LOG(WARN, "no pub key: %ld/%s", err, ERR_lib_error_string(err));
+    }
+    int rc = verify_signature(pk, md, data, datalen, sig, siglen);
+    EVP_PKEY_free(pk);
+    return rc;
+}
+
+static int cert_exp(const struct tlsuv_certificate_s * cert, struct tm *time) {
+    if (time == NULL || cert == NULL) {
+        return UV_EINVAL;
+    }
+    
+    X509_STORE *store = ((struct cert_s*)cert)->cert;
+    STACK_OF(X509_OBJECT ) *s = X509_STORE_get0_objects(store);
+    X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
+    const ASN1_TIME *notAfter = X509_get0_notAfter(c);
+    return ASN1_TIME_to_tm(notAfter, time) == 1 ? 0 : -1;
 }

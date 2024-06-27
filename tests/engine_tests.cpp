@@ -97,18 +97,18 @@ fcwJ0v2IisYTCMavk0DJSj9Hd+coMSyTa7ghp8ja/0PSoQAxAA==
 )";
 
     tls_context *ctx = default_tls_context(nullptr, 0);
-    tls_cert chain;
+    tlsuv_certificate_t chain;
     REQUIRE(ctx->parse_pkcs7_certs(&chain, pkcs7, strlen(pkcs7)) == 0);
 
     char *pem;
     size_t pemlen;
-    REQUIRE(ctx->write_cert_to_pem(chain, 1, &pem, &pemlen) == 0);
+    REQUIRE(chain->to_pem(chain, 1, &pem, &pemlen) == 0);
     CHECK(pem != nullptr);
     CHECK(pemlen > 0);
     printf("\n%.*s\n", (int)pemlen, pem);
 
     free(pem);
-    ctx->free_cert(&chain);
+    chain->free(chain);
     ctx->free_ctx(ctx);
 }
 
@@ -154,8 +154,18 @@ rzqUvKOfg8HVwOSngZyPa4zgd5ieZfxcFnDc2IK4fnI=
 )";
     auto tls = default_tls_context(nullptr, 0);
 
-    tls_cert c;
+    tlsuv_certificate_t c;
     tls->load_cert(&c, certpem, strlen(certpem));
+
+    tm expire{};
+    CHECK(c->get_expiration(c, &expire) == 0);
+
+    //  Jun 29 02:26:51 2023
+    CHECK(expire.tm_year == 2023 - 1900);
+    CHECK(expire.tm_mon == 5);
+    CHECK(expire.tm_mday == 29);
+    CHECK(expire.tm_hour == 2);
+    CHECK(expire.tm_min == 26);
 
     auto input = "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbSI6Im90dCIsImV4cCI6MTY4MTMyNDg5OCwiaXNzIjoiaHR0cHM6Ly9jdHJsLmNsaW50LmRlbW8ub3BlbnppdGkub3JnOjg0NDEiLCJqdGkiOiI1OWQxOTgwOC0zYTEyLTQzNWEtYTM3My1iY2UwZTFmNzIxOTgiLCJzdWIiOiJ5bUxHZUlQaTQifQ";
     auto sig = "UE6IVn1c2xxPEp93J_dIkpjwaennq2HLzi8EJKkXyugRzYXANxj_peyQxwWythI4nT9RPS_gothILTFe8B3cew";
@@ -163,9 +173,9 @@ rzqUvKOfg8HVwOSngZyPa4zgd5ieZfxcFnDc2IK4fnI=
     char *sigbin = nullptr;
     size_t sigbinlen;
     tlsuv_base64url_decode(sig, &sigbin, &sigbinlen);
-    REQUIRE(tls->verify_signature(c, hash_SHA256, input, strlen(input), sigbin, sigbinlen) == 0);
+    REQUIRE(c->verify(c, hash_SHA256, input, strlen(input), sigbin, sigbinlen) == 0);
     free(sigbin);
-    tls->free_cert(&c);
+    c->free(c);
     tls->free_ctx(tls);
 }
 
