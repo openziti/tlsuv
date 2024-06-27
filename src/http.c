@@ -785,33 +785,47 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
 
     const char *p = urlstr;
 
-    int file_prefix_len=strlen("file:/");
+    int file_prefix_len = strlen("file:/");
     // special handling for file:/, file://, file://host/, file:///
     if (strncmp(urlstr, "file:/", file_prefix_len) == 0) {
         url->scheme = p;
         url->scheme_len = 4; // strlen("file")
         p += file_prefix_len;
 
-        if(p[0] == '/') {
+        if (p[0] == '/') {
             p++;
-            if(p[0] == '/') {
+            if (p[0] == '/') {
                 // file:/// means empty hostname
-                p ++;
+                p++;
             } else {
                 // file://path means there must be a hostname. find the next slash
                 char *pos = strchr(p, '/');
                 if (pos != NULL) {
-                    int index = pos - p;
-                    url->hostname= p;
+                    size_t index = pos - p;
+                    url->hostname = p;
                     url->hostname_len = index;
-                    p += index;
+                    p += index + 1;
                 } else {
-                    printf("The character '/' was not found in the string.\n");
+                    // poorly formatted entry. this would be just `file://` or `file://hostnameonly`
+                    url->hostname = p;
+                    url->hostname_len = strlen(p);
+                    return -1;
                 }
             }
         } else {
-            //handle one slash
+            //one slash - else empty on purpose to indicate this is expected to be no-op
         }
+
+#ifdef _WIN32
+        if (strlen(p) > 0 && p[1] == ':') {
+            // expect a windows path to have a drive letter c:, d:, etc.
+        } else {
+            // if no ':' in position 2, back up to pickup the leading slash
+            p--;
+        }
+#elif
+        p--; //on non-windows, always backup to pickup the leading slash
+#endif
         url->path = p;
         url->path_len = strlen(p);
         return 0;
@@ -822,7 +836,7 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
     int rc = sscanf(p, "%*[^:]%n://", &count);
     if (rc == 0 &&
         (p + count)[0] == ':' && (p + count)[1] == '/' && (p + count)[2] == '/'
-        ) {
+            ) {
         url->scheme = p;
         url->scheme_len = count;
         p += (count + 3);
@@ -861,7 +875,7 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
             return -1;
 
         if (lport > 0 && lport <= UINT16_MAX) {
-            url->port = (uint16_t)lport;
+            url->port = (uint16_t) lport;
             p = pend;
         } else {
             return -1;
