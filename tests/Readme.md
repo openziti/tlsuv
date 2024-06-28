@@ -15,7 +15,7 @@ The test server opens the following endpoints:
 Start test server:
 ```console
 cd ./tests/test_server
-go run ./test-server.go -keyfile ../certs/server.key -certfile ../certs/server.crt
+go run ./test-server.go -ca-key ../certs/server.key -ca ../certs/server.crt
 ```
 
 now you're ready to run tests
