@@ -1111,7 +1111,6 @@ TEST_CASE("test request cancel", "[http]") {
     }
 
 static void URL_TEST(const char *s, int RES, const char *SCHEME, const char *HOST, int PORT, const char *PATH, const char *QUERY) {
-    printf("URL: %s\n", s);
     tlsuv_url_s url = {0};
     CHECK(tlsuv_parse_url(&url, s) == RES);
     if ((RES) == 0) {
@@ -1122,7 +1121,11 @@ static void URL_TEST(const char *s, int RES, const char *SCHEME, const char *HOS
         CHECK(url.port == (PORT));
     }
 }
-
+#ifdef _WIN32
+#define LEADING_SLASH ""
+#else
+#define LEADING_SLASH "/"
+#endif
 TEST_CASE("url parse", "[http]") {
     URL_TEST("wss://websocket.org/echo?foo=bar", 0, "wss", "websocket.org", 0, "/echo", "foo=bar");
     URL_TEST("wss://websocket.org:443/echo?foo=bar", 0, "wss", "websocket.org", 443, "/echo", "foo=bar");
@@ -1133,8 +1136,8 @@ TEST_CASE("url parse", "[http]") {
     URL_TEST("file:/echo.txt", 0, "file", nullptr, 0, "/echo.txt", nullptr);
     URL_TEST("file://host/echo.txt", 0, "file", "host", 0, "/echo.txt", nullptr);
     URL_TEST("file:///some/path/to/echo.txt", 0, "file", nullptr, 0, "/some/path/to/echo.txt", nullptr);
-    URL_TEST("file:///c:/echo.txt", 0, "file", nullptr, 0, "c:/echo.txt", nullptr);
-    URL_TEST("file:///c:/some/other/path/to/echo.txt", 0, "file", nullptr, 0, "c:/some/other/path/to/echo.txt", nullptr);
+    URL_TEST("file:///c:/echo.txt", 0, "file", nullptr, 0, LEADING_SLASH "c:/echo.txt", nullptr);
+    URL_TEST("file:///c:/some/other/path/to/echo.txt", 0, "file", nullptr, 0, LEADING_SLASH "c:/some/other/path/to/echo.txt", nullptr);
 
     URL_TEST("file://", -1, "file", nullptr, 0, "/echo.txt", nullptr);
     URL_TEST("file://hostnameonly", -1, "file", "hostnameonly", 0, nullptr, nullptr);
