@@ -16,6 +16,8 @@ include(cmake/variables.cmake)
 include(CMakeDependentOption)
 include(GNUInstallDirs)
 
+option(TLSUV_HTTP "enable HTTP/websocket support" ON)
+
 set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls)")
 
 if(NOT (TLSUV_TLSLIB STREQUAL "openssl" OR TLSUV_TLSLIB STREQUAL "mbedtls"))
@@ -27,24 +29,28 @@ cmake_dependent_option(USE_MBEDTLS "Use mbedTLS" ON "TLSUV_TLSLIB STREQUAL mbedt
 
 set(tlsuv_sources
         src/tlsuv.c
-        # src/bio.c
-        src/http.c
-        src/tcp_src.c
         src/um_debug.c
         src/um_debug.h
-        src/websocket.c
-        src/http_req.c
-        src/tls_link.c
         src/base64.c
         src/tls_engine.c
-        src/compression.c
-        src/compression.h
         src/p11.c
         src/p11.h
         src/util.h
         src/connector.c
         src/alloc.c
 )
+
+if (TLSUV_HTTP)
+    list(APPEND tlsuv_sources
+            src/http.c
+            src/tcp_src.c
+            src/websocket.c
+            src/http_req.c
+            src/tls_link.c
+            src/compression.c
+            src/compression.h
+    )
+endif (TLSUV_HTTP)
 
 if(USE_OPENSSL)
     set(tlsImpl openssl)
@@ -80,9 +86,6 @@ else()
     find_library(TLSUV_LIBUV_LIB uv_a NAMES uv)
 endif()
 
-find_package(llhttp CONFIG REQUIRED)
-
-add_subdirectory(deps)
 
 add_library(tlsuv STATIC
         ${tlsuv_sources}
@@ -101,14 +104,24 @@ target_include_directories(tlsuv
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         )
 
-find_package(ZLIB REQUIRED)
-
 target_link_libraries(tlsuv
-        PUBLIC llhttp::llhttp_static
         PRIVATE ${TLSUV_LIBUV_LIB}
-        PUBLIC uv_link
-        PRIVATE ZLIB::ZLIB
-        )
+)
+
+
+if (TLSUV_HTTP)
+    find_package(llhttp CONFIG REQUIRED)
+
+    add_subdirectory(deps)
+
+    find_package(ZLIB REQUIRED)
+
+    target_link_libraries(tlsuv
+            PUBLIC llhttp::llhttp_static
+            PUBLIC uv_link
+            PRIVATE ZLIB::ZLIB
+    )
+endif (TLSUV_HTTP)
 
 if (APPLE)
     target_link_libraries(tlsuv PRIVATE

@@ -16,9 +16,13 @@
 #ifndef UV_MBED_COMMON_H
 #define UV_MBED_COMMON_H
 
+#if defined(TLSUV_HTTP)
 #include <tlsuv/http.h>
 
 void resp_cb(tlsuv_http_resp_t *resp, void *data);
 void body_cb(tlsuv_http_req_t *req, char *body, ssize_t len);
+#endif
+
 void logger(int level, const char *file, unsigned int line, const char *msg);
+
 #endif //UV_MBED_COMMON_H

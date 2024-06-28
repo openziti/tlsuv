@@ -3,7 +3,11 @@
 #define UV_MBED_FIXTURES_H
 
 #include "catch.hpp"
+#include "tlsuv/tls_engine.h"
 #include <uv.h>
+
+
+extern tls_context *testServerTLS();
 
 template<typename T> T* t_alloc() {
     return (T*)calloc(1, sizeof(T));

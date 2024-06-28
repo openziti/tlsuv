@@ -13,6 +13,8 @@
 // limitations under the License.
 
 
+#include <time.h>
+#include <stdio.h>
 #include "common.h"
 
 void logger(int level, const char *file, unsigned int line, const char *msg) {
@@ -26,6 +28,7 @@ void logger(int level, const char *file, unsigned int line, const char *msg) {
 #endif
 }
 
+#if defined(TLSUV_HTTP)
 void resp_cb(tlsuv_http_resp_t *resp, void *data) {
     if (resp->req->client->tls) {
             printf("Using %s\n", resp->req->client->tls->version());
@@ -54,3 +57,5 @@ void body_cb(tlsuv_http_req_t *req, char *body, ssize_t len) {
         printf("%*.*s", (int) len, (int) len, body);
     }
 }
+
+#endif

@@ -18,9 +18,7 @@
 #include <uv.h>
 
 #include "connector.h"
-#include "tcp_src.h"
 #include "tls_engine.h"
-#include "tls_link.h"
 #include "queue.h"
 
 #ifdef __cplusplus

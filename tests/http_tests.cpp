@@ -46,26 +46,7 @@ std::string testServerURL(const string& type) {
     return "";
 }
 
-class testServer {
-public:
-    tls_context* TLS() {
-        return tls;
-    }
-    testServer() {
-        tls = default_tls_context(test_server_CA, strlen(test_server_CA));
-    }
 
-    ~testServer() {
-        tls->free_ctx(tls);
-    }
-private:
-    tls_context* tls;
-};
-
-tls_context* testServerTLS() {
-    static testServer srv;
-    return srv.TLS();
-}
 
 static const tlsuv_connector_t *proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", "13128");
 
