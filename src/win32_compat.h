@@ -18,18 +18,9 @@
 
 #if _WIN32
 
-#define strdup _strdup
+#define tlsuv__strdup _strdup
 #define strcasecmp _stricmp
 #define strncasecmp _strnicmp
 
-#if !defined (strndup_DEFINED)
-#define strndup_DEFINED
-static char* strndup(const char* p, size_t len) {
-    char *s = malloc(len + 1);
-    strncpy(s, p, len);
-    s[len] = '\0';
-    return s;
-}
-#endif // strndup_DEFINED
 #endif
 #endif //UV_MBED_WIN32_COMPAT_H

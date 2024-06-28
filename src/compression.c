@@ -17,6 +17,8 @@
 #include <zlib.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "alloc.h"
 #include "um_debug.h"
 
 #include "compression.h"
@@ -45,11 +47,11 @@ struct tlsuv_http_inflater_s {
 };
 
 static void* comp_alloc(void *ctx, unsigned int c, unsigned int s) {
-    return calloc(c, s);
+    return tlsuv__calloc(c, s);
 }
 
 static void comp_free(void *ctx, void *p) {
-    free(p);
+    tlsuv__free(p);
 }
 
 #if __linux__ || defined(__FreeBSD__)
@@ -117,7 +119,7 @@ const char *um_available_encoding(void) {
 http_inflater_t *um_get_inflater(const char *encoding, data_cb cb, void *ctx) {
     um_available_encoding();
 
-    http_inflater_t *inf = calloc(1, sizeof(http_inflater_t));
+    http_inflater_t *inf = tlsuv__calloc(1, sizeof(http_inflater_t));
     inf->s.zalloc = comp_alloc;
     inf->s.zfree = comp_free;
     if (strcmp(encoding, "gzip") == 0)
@@ -125,7 +127,7 @@ http_inflater_t *um_get_inflater(const char *encoding, data_cb cb, void *ctx) {
     else if (strcmp(encoding, "deflate") == 0)
         inflateInit(&inf->s);
     else {
-        free(inf);
+        tlsuv__free(inf);
         return NULL;
     }
 
@@ -137,7 +139,7 @@ http_inflater_t *um_get_inflater(const char *encoding, data_cb cb, void *ctx) {
 void um_free_inflater(http_inflater_t *inflater) {
     if (inflater) {
         inflateEnd_f(&inflater->s);
-        free(inflater);
+        tlsuv__free(inflater);
     }
 }
 

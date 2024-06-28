@@ -24,6 +24,7 @@
 #include "../p11.h"
 #include "../um_debug.h"
 #include "keys.h"
+#include "../alloc.h"
 
 static int cert_to_pem(const struct tlsuv_certificate_s * c, int full, char **pem, size_t *pemlen);
 static void cert_free(tlsuv_certificate_t c);
@@ -128,7 +129,7 @@ void cert_init(struct cert_s *c) {
 static void pubkey_free(tlsuv_public_key_t k) {
     struct pub_key_s *pub = (struct pub_key_s *) k;
     EVP_PKEY_free(pub->pkey);
-    free(pub);
+    tlsuv__free(pub);
 }
 
 static int verify_ecdsa_sig(EC_KEY *ec, const EVP_MD *hash, const char* data, size_t datalen, const char* sig, size_t siglen) {
@@ -208,7 +209,7 @@ static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *d
 static void privkey_free(tlsuv_private_key_t k) {
     struct priv_key_s *priv = (struct priv_key_s *) k;
     EVP_PKEY_free(priv->pkey);
-    free(priv);
+    tlsuv__free(priv);
 }
 
 static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *data, size_t datalen, char *sig, size_t *siglen) {
@@ -243,7 +244,7 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *d
 
 static tlsuv_public_key_t privkey_pubkey(tlsuv_private_key_t pk) {
     struct priv_key_s *priv = (struct priv_key_s *) pk;
-    struct pub_key_s *pub = calloc(1, sizeof(*pub));
+    struct pub_key_s *pub = tlsuv__calloc(1, sizeof(*pub));
     *pub = PUB_KEY_API;
 
     // there is probably a more straight-forward way,
@@ -268,7 +269,7 @@ static int privkey_to_pem(tlsuv_private_key_t pk, char **pem, size_t *pemlen) {
         UM_LOG(WARN, "failed to generate PEM for private key: %ld/%s", err, ERR_lib_error_string(err));
     } else {
         size_t len = BIO_ctrl_pending(b);
-        *pem = calloc(1, len + 1);
+        *pem = tlsuv__calloc(1, len + 1);
         BIO_read(b, *pem, (int) len);
         *pemlen = len;
     }
@@ -289,7 +290,7 @@ static int pubkey_to_pem(tlsuv_public_key_t pub, char **pem, size_t *pemlen) {
         UM_LOG(WARN, "failed to generate PEM for public key: %ld/%s", err, ERR_lib_error_string(err));
     } else {
         size_t len = BIO_ctrl_pending(b);
-        *pem = calloc(1, len + 1);
+        *pem = tlsuv__calloc(1, len + 1);
         BIO_read(b, *pem, (int) len);
         *pemlen = len;
     }
@@ -314,7 +315,7 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
         UM_LOG(WARN, "failed to load key: %ld/%s", err, ERR_lib_error_string(err));
         rc = -1;
     } else {
-        struct priv_key_s *privkey = calloc(1, sizeof(struct priv_key_s));
+        struct priv_key_s *privkey = tlsuv__calloc(1, sizeof(struct priv_key_s));
         priv_key_init(privkey);
         privkey->pkey = pk;
         *key = (tlsuv_private_key_t) privkey;
@@ -342,7 +343,7 @@ static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, 
             goto error;
         }
 
-        free(value);
+        tlsuv__free(value);
         value = NULL;
     }
 
@@ -369,7 +370,7 @@ static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, 
                 goto error;
             }
         }
-        free(value);
+        tlsuv__free(value);
         value = NULL;
     }
 
@@ -387,7 +388,7 @@ static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, 
     error:
     if (os) ASN1_STRING_free(os);
     if (ec) EC_KEY_free(ec);
-    free(value);
+    tlsuv__free(value);
 
     return -1;
 }
@@ -405,14 +406,14 @@ static int load_pkcs11_rsa(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id,
         goto error;
     }
     e = BN_bin2bn(value, (int)len, NULL);
-    free(value);
+    tlsuv__free(value);
     value = NULL;
 
     if (p11_get_key_attr(p11_key, CKA_MODULUS, (char**)&value, &len) != 0) {
         goto error;
     }
     n = BN_bin2bn(value, (int)len, NULL);
-    free(value);
+    tlsuv__free(value);
     value = NULL;
 
     RSA_set0_key(rsa, n, e, NULL);
@@ -424,23 +425,23 @@ static int load_pkcs11_rsa(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id,
 error:
     BN_free(e);
     BN_free(n);
-    free(value);
+    tlsuv__free(value);
     return -1;
 }
 
 int gen_pkcs11_key(tlsuv_private_key_t *key, const char *pkcs11driver, const char *slot, const char *pin, const char *label) {
-    p11_context *p11 = calloc(1, sizeof(*p11));
+    p11_context *p11 = tlsuv__calloc(1, sizeof(*p11));
     p11_key_ctx *p11_key = NULL;
     EVP_PKEY *pkey = NULL;
 
     int rc = p11_init(p11, pkcs11driver, slot, pin);
     if (rc != 0) {
         UM_LOG(WARN, "failed to init pkcs#11 token driver[%s] slot[%s]: %d/%s", pkcs11driver, slot, rc, p11_strerror(rc));
-        free(p11);
+        tlsuv__free(p11);
         return rc;
     }
 
-    p11_key = calloc(1, sizeof(*p11_key));
+    p11_key = tlsuv__calloc(1, sizeof(*p11_key));
     if (p11_gen_key(p11, p11_key, label) != 0) {
         goto error;
     }
@@ -457,7 +458,7 @@ int gen_pkcs11_key(tlsuv_private_key_t *key, const char *pkcs11driver, const cha
             goto error;
     }
 
-    struct priv_key_s *private_key = calloc(1, sizeof(struct priv_key_s));
+    struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
     *private_key = PRIV_KEY_API;
     private_key->pkey = pkey;
     *key = (tlsuv_private_key_t)private_key;
@@ -465,25 +466,25 @@ int gen_pkcs11_key(tlsuv_private_key_t *key, const char *pkcs11driver, const cha
     return 0;
 
     error:
-    free(p11_key);
-    free(p11);
+    tlsuv__free(p11_key);
+    tlsuv__free(p11);
     if(pkey) EVP_PKEY_free(pkey);
     return -1;
 }
 
 int load_pkcs11_key(tlsuv_private_key_t *key, const char *lib, const char *slot, const char *pin, const char *id, const char *label) {
-    p11_context *p11 = calloc(1, sizeof(*p11));
+    p11_context *p11 = tlsuv__calloc(1, sizeof(*p11));
     p11_key_ctx *p11_key = NULL;
     EVP_PKEY *pkey = NULL;
 
     int rc = p11_init(p11, lib, slot, pin);
     if (rc != 0) {
         UM_LOG(WARN, "failed to init pkcs#11 token driver[%s] slot[%s]: %d/%s", lib, slot, rc, p11_strerror(rc));
-        free(p11);
+        tlsuv__free(p11);
         return rc;
     }
 
-    p11_key = calloc(1, sizeof(*p11_key));
+    p11_key = tlsuv__calloc(1, sizeof(*p11_key));
     rc = p11_load_key(p11, p11_key, id, label);
     if (rc != 0) {
         UM_LOG(WARN, "failed to load pkcs#11 key id[%s] label[%s]: %d/%s", id, label, rc, p11_strerror(rc));
@@ -501,7 +502,7 @@ int load_pkcs11_key(tlsuv_private_key_t *key, const char *lib, const char *slot,
             goto error;
     }
 
-    struct priv_key_s *private_key = calloc(1, sizeof(struct priv_key_s));
+    struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
     *private_key = PRIV_KEY_API;
     private_key->pkey = pkey;
     *key = (tlsuv_private_key_t)private_key;
@@ -509,8 +510,8 @@ int load_pkcs11_key(tlsuv_private_key_t *key, const char *lib, const char *slot,
     return 0;
 
 error:
-    free(p11_key);
-    free(p11);
+    tlsuv__free(p11_key);
+    tlsuv__free(p11);
     if(pkey) EVP_PKEY_free(pkey);
     return -1;
 }
@@ -531,7 +532,7 @@ int gen_key(tlsuv_private_key_t *key) {
     }
 
     if (rc == 0) {
-        struct priv_key_s *private_key = calloc(1, sizeof(struct priv_key_s));
+        struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
         *private_key = PRIV_KEY_API;
         private_key->pkey = pk;
         *key = (tlsuv_private_key_t)private_key;
@@ -603,14 +604,14 @@ static int privkey_get_cert(tlsuv_private_key_t pk, tlsuv_certificate_t *cert) {
         const uint8_t *a = (const uint8_t *)der;
         X509 *c = d2i_X509(NULL, &a, (long)derlen);
 
-        struct cert_s *crt = calloc(1, sizeof(*crt));
+        struct cert_s *crt = tlsuv__calloc(1, sizeof(*crt));
         cert_init(crt);
         X509_STORE *store = X509_STORE_new();
         X509_STORE_add_cert(store, c);
         X509_free(c);
         crt->cert = store;
         *cert = (tlsuv_certificate_t) crt;
-        free(der);
+        tlsuv__free(der);
         return 0;
     }
 
@@ -660,7 +661,7 @@ static void cert_free(tlsuv_certificate_t cert) {
     if (s != NULL) {
         X509_STORE_free(s);
     }
-    free(c);
+    tlsuv__free(c);
 }
 
 static int cert_to_pem(const struct tlsuv_certificate_s * cert, int full_chain, char **pem, size_t *pemlen) {
@@ -678,7 +679,7 @@ static int cert_to_pem(const struct tlsuv_certificate_s * cert, int full_chain, 
     }
 
     *pemlen = BIO_ctrl_pending(pembio);
-    *pem = calloc(1, *pemlen + 1);
+    *pem = tlsuv__calloc(1, *pemlen + 1);
     BIO_read(pembio, *pem, (int)*pemlen);
 
     BIO_free_all(pembio);

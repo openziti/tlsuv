@@ -13,6 +13,8 @@
 // limitations under the License.
 
 #include "tlsuv/websocket.h"
+
+#include "alloc.h"
 #include "http_req.h"
 #include "portable_endian.h"
 #include "um_debug.h"
@@ -67,7 +69,7 @@ int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_
     ws->loop = loop;
     ws->type = UV_IDLE;
     ws->src = src;
-    ws->req = calloc(1, sizeof(tlsuv_http_req_t));
+    ws->req = tlsuv__calloc(1, sizeof(tlsuv_http_req_t));
 
     char randbuf[24];
     uv_random(NULL, NULL, randbuf, sizeof(randbuf), 0, NULL);
@@ -142,7 +144,7 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
     }
 
     if (u.hostname != NULL) {
-        host = strndup(u.hostname, u.hostname_len);
+        host = tlsuv__strndup(u.hostname, u.hostname_len);
     }
     else {
         UM_LOG(ERR, "invalid URL: no host");
@@ -165,12 +167,12 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
 
     const char *path = DEFAULT_PATH;
     if (u.path != NULL) {
-        path = strndup(u.path, u.path_len);
+        path = tlsuv__strndup(u.path, u.path_len);
     }
 
     http_req_init(ws->req, "GET", path);
     if (path != DEFAULT_PATH) {
-        free((char*)path);
+        tlsuv__free((char*)path);
     }
     set_http_header(&ws->req->req_headers, "host", host);
 
@@ -196,7 +198,7 @@ int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf,
     }
     uint8_t mask[4];
     uv_random(NULL, NULL, mask, sizeof(mask), 0, NULL);
-    char *frame = malloc(headerlen + buf->len);
+    char *frame = tlsuv__malloc(headerlen + buf->len);
 
     frame[0] = WS_FIN | OpCode_BIN;
     char *ptr = frame + 1;
@@ -223,9 +225,9 @@ int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf,
     bufs.len = headerlen + buf->len;
     bufs.base = frame;
 
-    ws_write_t *ws_wreq = calloc(1, sizeof(ws_write_t));
+    ws_write_t *ws_wreq = tlsuv__calloc(1, sizeof(ws_write_t));
     ws_wreq->wr = req;
-    ws_wreq->bufs = malloc(sizeof(uv_buf_t));
+    ws_wreq->bufs = tlsuv__malloc(sizeof(uv_buf_t));
     ws_wreq->bufs[0] = bufs;
     ws_wreq->nbufs = 1;
     ws_wreq->cb = cb;
@@ -274,10 +276,10 @@ static void ws_write_cb(uv_link_t *l, int nwrote, void *data) {
         ws_wreq->cb(wr, nwrote);
     }
     for (int i=0; i < ws_wreq->nbufs; i++) {
-        free(ws_wreq->bufs[i].base);
+        tlsuv__free(ws_wreq->bufs[i].base);
     }
-    free(ws_wreq->bufs);
-    free(ws_wreq);
+    tlsuv__free(ws_wreq->bufs);
+    tlsuv__free(ws_wreq);
 }
 
 int ws_read_start(uv_link_t *l) {
@@ -286,13 +288,13 @@ int ws_read_start(uv_link_t *l) {
 
     tlsuv_websocket_t *ws = l->data;
     uv_buf_t buf;
-    buf.base = malloc(8196);
+    buf.base = tlsuv__malloc(8196);
     buf.len = http_req_write(ws->req, buf.base, 8196);
 
     UM_LOG(VERB, "starting WebSocket handshake(sending %zd bytes)[%.*s]", buf.len, (int)buf.len, buf.base);
 
-    ws_write_t *ws_wreq = calloc(1, sizeof(ws_write_t));
-    ws_wreq->bufs = malloc(sizeof(uv_buf_t));
+    ws_write_t *ws_wreq = tlsuv__calloc(1, sizeof(ws_write_t));
+    ws_wreq->bufs = tlsuv__malloc(sizeof(uv_buf_t));
     ws_wreq->bufs[0] = buf;
     ws_wreq->nbufs = 1;
 
@@ -321,7 +323,7 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
             UM_LOG(ERR, "failed to parse connect/upgrade response");
             ws->conn_req->cb(ws->conn_req, -1);
             http_req_free(ws->req);
-            free(ws->req);
+            tlsuv__free(ws->req);
             ws->req = NULL;
             failed = true;
         } else {
@@ -337,14 +339,14 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
                 }
                 ws->conn_req = NULL;
                 http_req_free(ws->req);
-                free(ws->req);
+                tlsuv__free(ws->req);
                 ws->req = NULL;
             }
         }
     }
 
     if (failed || processed == nread) {
-        free(buf->base);
+        tlsuv__free(buf->base);
         return;
     }
 
@@ -394,7 +396,7 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
             UM_LOG(INFO, "got unsupported frame %hd", op);
     }
 
-    free(buf->base);
+    tlsuv__free(buf->base);
 }
 
 static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
@@ -402,7 +404,7 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
     uint8_t mask[4];
     uv_buf_t buf;
     buf.len = 2 + sizeof(mask) + len;
-    buf.base = malloc(buf.len);
+    buf.base = tlsuv__malloc(buf.len);
 
     buf.base[0] = WS_FIN | OpCode_Pong;
     buf.base[1] = (char)(WS_MASK | (0x7f & len));
@@ -418,8 +420,8 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
         }
     }
 
-    ws_write_t *ws_wreq = calloc(1, sizeof(ws_write_t));
-    ws_wreq->bufs = malloc(sizeof(uv_buf_t));
+    ws_write_t *ws_wreq = tlsuv__calloc(1, sizeof(ws_write_t));
+    ws_wreq->bufs = tlsuv__malloc(sizeof(uv_buf_t));
     ws_wreq->bufs[0] = buf;
     ws_wreq->nbufs = 1;
 
@@ -431,11 +433,11 @@ static void on_ws_close(tlsuv_websocket_t *ws) {
 
     if (ws->req) {
         http_req_free(ws->req);
-        free(ws->req);
+        tlsuv__free(ws->req);
         ws->req = NULL;
     }
     if (ws->host) {
-        free(ws->host);
+        tlsuv__free(ws->host);
         ws->host = NULL;
     }
     if (ws->tls && ws->tls_link.engine) {

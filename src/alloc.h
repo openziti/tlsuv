@@ -12,25 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef TLSUV_BIO_H
-#define TLSUV_BIO_H
+#ifndef TLSUV_ALLOC_H
+#define TLSUV_ALLOC_H
 
-#include "tlsuv/queue.h"
-#include <stdint.h>
+#include <stdlib.h>
 
-typedef struct tlsuv_bio_s {
-    size_t available;
-    size_t headoffset;
-    unsigned int qlen;
-    STAILQ_HEAD(msgq, msg) message_q;
-} tlsuv_BIO;
+extern void *tlsuv__malloc(size_t size);
+extern void *tlsuv__calloc(size_t n, size_t size);
+extern void *tlsuv__realloc(void *addr, size_t size);
+extern void tlsuv__free(void *addr);
 
-// create new BIO
-tlsuv_BIO *tlsuv_BIO_new(void);
-void tlsuv_BIO_free(tlsuv_BIO *bio);
+extern char* tlsuv__strdup(const char *s);
+extern char* tlsuv__strndup(const char *s, size_t len);
 
-int tlsuv_BIO_put(tlsuv_BIO *bio, const uint8_t *buf, size_t len);
-int tlsuv_BIO_read(tlsuv_BIO *bio, uint8_t *buf, size_t len);
-size_t tlsuv_BIO_available(tlsuv_BIO *bio);
 
-#endif//TLSUV_BIO_H
+#endif //TLSUV_ALLOC_H

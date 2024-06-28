@@ -21,6 +21,7 @@
 #include <string.h>
 #include <stdarg.h>
 
+#include "../alloc.h"
 #include "../um_debug.h"
 #include <tlsuv/tlsuv.h>
 
@@ -171,7 +172,7 @@ static const char *tls_eng_error(tlsuv_engine_t self) {
 }
 
 tls_context *new_openssl_ctx(const char *ca, size_t ca_len) {
-    struct openssl_ctx *c = calloc(1, sizeof(struct openssl_ctx));
+    struct openssl_ctx *c = tlsuv__calloc(1, sizeof(struct openssl_ctx));
     c->api = openssl_context_api;
     init_ssl_context(c, ca, ca_len);
 
@@ -226,7 +227,7 @@ static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buflen) 
     X509_STORE *store = X509_STORE_new();
     X509_STORE_add_cert(store, c);
     X509_free(c);
-    struct cert_s *crt = calloc(1, sizeof(*crt));
+    struct cert_s *crt = tlsuv__calloc(1, sizeof(*crt));
     cert_init(crt);
     crt->cert = store;
     *cert = (tlsuv_certificate_t) crt;
@@ -297,7 +298,7 @@ static X509_STORE** process_chains(X509_STORE *store, int *count) {
 
     idx = 0;
     int root_count = sk_X509_num(roots);
-    X509_STORE **stores = calloc(root_count, sizeof (X509_STORE*));
+    X509_STORE **stores = tlsuv__calloc(root_count, sizeof (X509_STORE*));
     while(sk_X509_num(roots) > 0) {
         X509 *r = sk_X509_pop(roots);
         X509_STORE *s = X509_STORE_new();
@@ -573,7 +574,7 @@ void info_cb(const SSL *s, int where, int ret) {
 tlsuv_engine_t new_openssl_engine(void *ctx, const char *host) {
     struct openssl_ctx *context = ctx;
 
-    struct openssl_engine *engine = calloc(1, sizeof(struct openssl_engine));
+    struct openssl_engine *engine = tlsuv__calloc(1, sizeof(struct openssl_engine));
     engine->api = openssl_engine_api;
 
     engine->ssl = SSL_new(context->ctx);
@@ -617,7 +618,7 @@ static void set_protocols(tlsuv_engine_t self, const char** protocols, int len) 
         protolen += strlen(protocols[i]) + 1;
     }
 
-    unsigned char *alpn_protocols = malloc(protolen + 1);
+    unsigned char *alpn_protocols = tlsuv__malloc(protolen + 1);
     unsigned char *p = alpn_protocols;
     for (int i=0; i < len; i++) {
         size_t plen = strlen(protocols[i]);
@@ -627,7 +628,7 @@ static void set_protocols(tlsuv_engine_t self, const char** protocols, int len) 
     }
     *p = 0;
     SSL_set_alpn_protos(e->ssl, alpn_protocols, strlen((char*)alpn_protocols));
-    free(alpn_protocols);
+    tlsuv__free(alpn_protocols);
 }
 
 static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
@@ -669,7 +670,7 @@ static void tls_set_cert_verify(tls_context *ctx,
 static void tls_free_ctx(tls_context *ctx) {
     struct openssl_ctx *c = (struct openssl_ctx*)ctx;
     if (c->alpn_protocols) {
-        free(c->alpn_protocols);
+        tlsuv__free(c->alpn_protocols);
     }
     if (c->own_key) {
         c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
@@ -680,10 +681,10 @@ static void tls_free_ctx(tls_context *ctx) {
         for (int i = 0; i < c->ca_chains_count; i++) {
             X509_STORE_free(c->ca_chains[i]);
         }
-        free(c->ca_chains);
+        tlsuv__free(c->ca_chains);
     }
     SSL_CTX_free(c->ctx);
-    free(c);
+    tlsuv__free(c);
 }
 
 static int tls_reset(tlsuv_engine_t self) {
@@ -705,9 +706,9 @@ static void tls_free(tlsuv_engine_t self) {
     SSL_free(e->ssl);
 
     if (e->alpn) {
-        free(e->alpn);
+        tlsuv__free(e->alpn);
     }
-    free(e);
+    tlsuv__free(e);
 }
 
 
@@ -872,7 +873,7 @@ static const char* tls_get_alpn(tlsuv_engine_t self) {
     unsigned int protolen;
     SSL_get0_alpn_selected(eng->ssl, &proto, &protolen);
 
-    eng->alpn = calloc(1, protolen + 1);
+    eng->alpn = tlsuv__calloc(1, protolen + 1);
     strncpy(eng->alpn, (const char*)proto, protolen);
     return eng->alpn;
 }
@@ -992,7 +993,7 @@ static int parse_pkcs7_certs(tlsuv_certificate_t *chain, const char *pkcs7buf, s
         X509_STORE_add_cert(store, c);
     }
 
-    struct cert_s *c = calloc(1, sizeof(*c));
+    struct cert_s *c = tlsuv__calloc(1, sizeof(*c));
     cert_init(c);
     c->cert = store;
     *chain = (tlsuv_certificate_t) c;
@@ -1041,7 +1042,7 @@ goto on_error;            \
         UM_LOG(WARN, "%s => %s", op, tls_error(ret));
     } else {
         size_t len = BIO_ctrl_pending(b);
-        *pem = calloc(1, len + 1);
+        *pem = tlsuv__calloc(1, len + 1);
         BIO_read(b, *pem, (int)len);
         if (pemlen) {
             *pemlen = len;
@@ -1147,9 +1148,6 @@ static long engine_bio_ctrl(BIO *b, int cmd, long larg, void *pargs) {
             ret = 96; // random guess
             break;
         case BIO_CTRL_DGRAM_SET_PEEK_MODE: // 71
-            //((custom_bio_data_t *)BIO_get_data(b))->peekmode = !!larg;
-            ret = 0;
-            break;
         case BIO_CTRL_PUSH: // 6
         case BIO_CTRL_POP: // 7
         case BIO_CTRL_DGRAM_SET_NEXT_TIMEOUT: // 45

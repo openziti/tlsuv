@@ -27,7 +27,7 @@ cmake_dependent_option(USE_MBEDTLS "Use mbedTLS" ON "TLSUV_TLSLIB STREQUAL mbedt
 
 set(tlsuv_sources
         src/tlsuv.c
-        src/bio.c
+        # src/bio.c
         src/http.c
         src/tcp_src.c
         src/um_debug.c
@@ -43,6 +43,7 @@ set(tlsuv_sources
         src/p11.h
         src/util.h
         src/connector.c
+        src/alloc.c
 )
 
 if(USE_OPENSSL)

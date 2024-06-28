@@ -20,6 +20,8 @@
 #include <mbedtls/asn1write.h>
 #include <mbedtls/oid.h>
 
+#include "alloc.h"
+
 static int p11_ecdsa_can_do(mbedtls_pk_type_t type);
 
 static int p11_ecdsa_sign(void *ctx, mbedtls_md_type_t md_alg,
@@ -66,7 +68,7 @@ int p11_load_ecdsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_c
     mbedtls_ecp_group_id grp_id = 0;
     mbedtls_oid_get_ec_grp(&oid, &grp_id);
 
-    mbedtls_ecdsa_context *ecdsa = calloc(1, sizeof(mbedtls_ecdsa_context));
+    mbedtls_ecdsa_context *ecdsa = tlsuv__calloc(1, sizeof(mbedtls_ecdsa_context));
 
     mbedtls_ecp_keypair_init(ecdsa);
     mbedtls_ecp_group_load(&ecdsa->MBEDTLS_PRIVATE(grp), grp_id);
@@ -188,8 +190,8 @@ static int p11_ecdsa_verify(void *ctx, mbedtls_md_type_t md_alg,
 static void p11_ecdsa_free(void *ctx) {
     mp11_key_ctx *p11key = ctx;
     mbedtls_ecp_keypair_free(p11key->pub);
-    free(p11key->pub);
-    free(ctx);
+    tlsuv__free(p11key->pub);
+    tlsuv__free(ctx);
 }
 
 static size_t p11_ecdsa_bitlen(const void *ctx) {

@@ -23,6 +23,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../alloc.h"
+
 static int p11_rsa_can_do(mbedtls_pk_type_t type);
 
 static int p11_rsa_sign(void *ctx, mbedtls_md_type_t md_alg,
@@ -61,14 +63,14 @@ int p11_load_rsa(mbedtls_pk_context *pk, struct mp11_key_ctx_s *p11key, mp11_con
     if (rc != CKR_OK) {
         return MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
     }
-    pubattr[0].pValue = malloc(pubattr[0].ulValueLen);
-    pubattr[1].pValue = malloc(pubattr[1].ulValueLen);
+    pubattr[0].pValue = tlsuv__malloc(pubattr[0].ulValueLen);
+    pubattr[1].pValue = tlsuv__malloc(pubattr[1].ulValueLen);
     rc = p11->funcs->C_GetAttributeValue(p11->session, p11key->pub_handle, pubattr, 2);
     if (rc != CKR_OK) {
         return MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
     }
 
-    mbedtls_rsa_context *rsa = malloc(sizeof(mbedtls_rsa_context));
+    mbedtls_rsa_context *rsa = tlsuv__malloc(sizeof(mbedtls_rsa_context));
     mbedtls_platform_zeroize(rsa, sizeof(mbedtls_rsa_context));
 #if MBEDTLS_VERSION_MAJOR == 3
     mbedtls_rsa_init(rsa /*, MBEDTLS_RSA_PKCS_V15, MBEDTLS_MD_SHA256*/);
@@ -132,7 +134,7 @@ static int p11_rsa_sign(void *ctx, mbedtls_md_type_t md_alg,
         return MBEDTLS_ERR_PLATFORM_HW_ACCEL_FAILED;
     }
 
-    CK_BYTE *msg = malloc(hash_len + oid_len);
+    CK_BYTE *msg = tlsuv__malloc(hash_len + oid_len);
     memcpy(msg, oid, oid_len);
     memcpy(msg + oid_len, hash, hash_len);
 
@@ -167,8 +169,8 @@ static int p11_rsa_verify(void *ctx, mbedtls_md_type_t md_alg,
 static void p11_rsa_free(void *ctx) {
     mp11_key_ctx *p11key = ctx;
     mbedtls_rsa_free(p11key->pub);
-    free(p11key->pub);
-    free(ctx);
+    tlsuv__free(p11key->pub);
+    tlsuv__free(ctx);
 }
 
 static size_t p11_rsa_bitlen(const void *ctx) {
