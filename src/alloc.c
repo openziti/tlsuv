@@ -93,7 +93,7 @@ void tlsuv__free(void *addr) {
 
 extern char* tlsuv__strndup(const char* s, size_t len) {
     assert(s != NULL);
-    char *r = malloc(len + 1);
+    char *r = tlsuv__malloc(len + 1);
     memcpy(r, s, len);
     r[len] = 0;
     return r;
