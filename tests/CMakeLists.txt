@@ -39,14 +39,19 @@ if (USE_OPENSSL)
 endif()
 
 set(test_srcs
-        http_tests.cpp
-        ws_tests.cpp
         engine_tests.cpp
         stream_tests.cpp
-        compression_tests.cpp
         key_tests.cpp
         connector_tests.cpp
 )
+
+if (TLSUV_HTTP)
+    list(APPEND test_srcs
+            http_tests.cpp
+            ws_tests.cpp
+            compression_tests.cpp
+    )
+endif()
 
 
 add_executable(all_tests
@@ -94,6 +99,10 @@ add_custom_target(run-tests
 include(CTest)
 add_test(key_tests all_tests [key])
 add_test(engine_tests all_tests [engine])
-add_test(http_tests all_tests [http])
-add_test(ws_tests all_tests [websocket])
-add_test(uv_mbed all_tests [stream])
+add_test(stream_tests all_tests [stream])
+
+if (TLSUV_HTTP)
+    add_test(http_tests all_tests [http])
+    add_test(ws_tests all_tests [websocket])
+endif (TLSUV_HTTP)
+

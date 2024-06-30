@@ -11,7 +11,7 @@
       "hidden": true,
       "cacheVariables": {
         "tlsuv_DEVELOPER_MODE": "ON",
-        "VCPKG_MANIFEST_FEATURES": "test;samples"
+        "VCPKG_MANIFEST_FEATURES": "http;test;samples"
       }
     },
     {

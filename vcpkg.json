@@ -2,17 +2,16 @@
   "name": "tlsuv",
   "version-semver": "1.0.0",
   "dependencies": [
-    "libuv",
-    "zlib",
-    "llhttp"
+    "libuv"
   ],
-  "default-features": [ "tls" ],
+  "default-features": [ "tls", "http" ],
   "features": {
     "tls": {
       "description": "default TLS implementation",
       "dependencies": [
         {
-          "name": "openssl"
+          "name": "tlsuv",
+          "features": [ "openssl" ]
         }
       ]
     },
@@ -27,6 +26,13 @@
         {
           "name": "mbedtls"
         }
+      ]
+    },
+    "http": {
+      "description": "adds HTTP and websocket support",
+      "dependencies": [
+        "zlib",
+        "llhttp"
       ]
     },
     "test": {

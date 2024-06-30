@@ -10,7 +10,8 @@ or [OpenSSL](https://www.openssl.org/)
 ## Features
 * async TLS over TCP
 * flexible TLS engine support
-* [pkcs#11](https://en.wikipedia.org/wiki/PKCS_11) support with default(mbedTLS) engine
+* HTTP and websocket clients
+* [pkcs#11](https://en.wikipedia.org/wiki/PKCS_11) support with default(OpenSSL) engine
 
 ## API
 API is attempted to be consistent with [libuv API](http://docs.libuv.org/en/v1.x/api.html)
@@ -20,9 +21,42 @@ API is attempted to be consistent with [libuv API](http://docs.libuv.org/en/v1.x
 * Darwin/MacOS
 * Windows
 
+## Using in your project
+The simplest way to integrate `tlsuv` in your project is to include it in your CMake build 
+with [`FetchContent`](https://cmake.org/cmake/help/latest/module/FetchContent.html)
+
+```cmake
+    FetchContent_Declare(tlsuv
+            GIT_REPOSITORY https://github.com/openziti/tlsuv.git
+            GIT_TAG v0.29.5 # use latest release version
+            )
+    FetchContent_MakeAvailable(tlsuv)
+
+    target_link_libraries(your_app PRIVATE tlsuv)
+```
+
+## Selectable Features
+HTTP support is a selectable feature (ON by default) and can be disabled by adding `-DTLSUV_HTTP=OFF` during CMake 
+configuration step. This will also reduce dependencies list.
+
+## Dependencies
+TLSUV depends on the following libraries:
+
+| Library                                    | Notes                                                                                                                                                                                    |
+|--------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [libuv](https://github.com/libuv/libuv)    |                                                                                                                                                                                          | 
+| TLS                                        | [OpenSSL](https://github.com/openssl/openssl)(default) or<br/> [mbedTLS](https://github.com/mbedtls/mbedtls)(`TLSUV_TLSLIB=mbedtls`). <br/>Some features are only available with OpenSSL |
+| [llhttp](https://github.com/nodejs/llhttp) | only with HTTP enabled                                                                                                                                                                   |
+| [zlib](https://github.com/madler/zlib)     | only with HTTP enabled                                                                                                                                                                   |
+
+
+CMake configuration process will attempt to resolve the above dependencies via `find_package()` it is up to consuming project
+to provide them.
+ 
 ## TLS engine support (BYFE - Bring Your Favorite Engine)
-If using mbedTLS does not work for you,
-for example you're already using another TLS library for your project, there is a way to use it inside _uv-mbed_.
+If either of two TLS library options are not working for, there is a mechanism to dynamically provide TLS implementation.
+
+For example, you're already using another TLS library for your project, there is a way to use it inside _tlsuv_.
 Two API [interfaces are defined](include/tlsuv/tls_engine.h) for that purpose:
 
 - `tls_context` is roughly equivalent to `mbedtls_ssl_config` or `SSL_CTX`in OpenSSL and is used to create instances
@@ -30,55 +64,18 @@ of `tls_engine` for individual connections
 - `tls_engine` is an object for handling handshake and encryption for a single connection.
 Similar in purpose to `mbedtls_ssl_ctx` or `SSL` in OpenSSL
 
-### OpenSSL use
-*UPDATE* OpenSSL is now supported _out-of-the-box_. You can enable it by adding `-DUSE_OPENSSL=on` option 
-to your CMake generation step. It requires to have OpenSSL installed on your build system as well as available at
-runtime as a shared library.
-
-## Build
-* Dependencies (libuv, and mbedTLS) are specified as [git submodules](https://git-scm.com/book/en/v2/Git-Tools-Submodules).
-Make sure to get them with `$ git submodule update --init --recursive`
-* We use [Cmake](https://cmake.org) as our build system.
-Any of the standard generators(`makefile`, [`ninja`](https://ninja-build.org/))
-should be working fine, let us know if you see any issues.
-
-#### Windows
-Building on windows:
-* ensure cmake is on your path
-* cd to root of checkout
-* mkdir build
-* cd build
-* after checking out the project - open a visual studio command prompt
-    * if vs 2017 issue: `cmake -G "Visual Studio 15 2017" .. -DCMAKE_INSTALL_INCLUDEDIR=include`
-    * if vs 2019 issue: `cmake -G "Visual Studio 16 2019" .. -DCMAKE_INSTALL_INCLUDEDIR=include`
-* test building with cmake/msbuild:
-    * `cmake --build . --config Debug`
-* execute the sample application and verify the output looks like the following (note: exe is at sample\Debug\sample.exe)
-
-        c:\git\uv-mbed\2017>sample\Debug\sample.exe
-        request sent 0
-        HTTP/1.1 301 Moved Permanently
-        Location: https://www.google.com/
-        Content-Type: text/html; charset=UTF-8
-        Date: Fri, 24 May 2019 05:30:28 GMT
-        Expires: Sun, 23 Jun 2019 05:30:28 GMT
-        Cache-Control: public, max-age=2592000
-        Server: gws
-        Content-Length: 220
-        X-XSS-Protection: 0
-        X-Frame-Options: SAMEORIGIN
-        Alt-Svc: quic=":443"; ma=2592000; v="46,44,43,39"
-        Connection: close
-
-        <HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">
-        <TITLE>301 Moved</TITLE></HEAD><BODY>
-        <H1>301 Moved</H1>
-        The document has moved
-        <A HREF="https://www.google.com/">here</A>.
-        </BODY></HTML>
-        =====================
-        connection closed
-        mbed is closed
+## Building standalone 
+See [development](HACKING.md) instruction for building this project standalone 
+for checking out samples, or contributing.
 
 
+## Getting Help
 
+------------
+Please use these community resources for getting help. We use GitHub [issues](https://github.com/openziti/tlsuv/issues)
+for tracking bugs and feature requests and have limited bandwidth to address them.
+
+- Read [the docs](https://docs.openziti.io/)
+- Ask a question on [Discourse](https://openziti.discourse.group/)
+
+Copyright&copy; 2018-2024. NetFoundry, Inc.

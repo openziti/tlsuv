@@ -19,7 +19,30 @@
 #include "fixtures.h"
 #include "catch.hpp"
 
-extern tls_context *testServerTLS();
+#define to_str_(x) #x
+#define to_str(x) to_str_(x)
+static const char *test_server_CA = to_str(TEST_SERVER_CA);
+
+class testServer {
+public:
+    tls_context* TLS() {
+        return tls;
+    }
+    testServer() {
+        tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+    }
+
+    ~testServer() {
+        tls->free_ctx(tls);
+    }
+private:
+    tls_context* tls;
+};
+
+tls_context* testServerTLS() {
+    static testServer srv;
+    return srv.TLS();
+}
 
 TEST_CASE("stream connect fail", "[stream]") {
     UvLoopTest test;
