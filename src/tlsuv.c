@@ -122,7 +122,6 @@ static void on_internal_close(uv_handle_t *h) {
         clt->conn_req = NULL;
         if (req->cb) {
             req->cb(req, UV_ECANCELED);
-            req->cb = NULL;
         }
     }
 
