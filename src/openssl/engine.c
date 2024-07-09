@@ -31,6 +31,7 @@
 #include <assert.h>
 
 #include "keys.h"
+#include "../keychain.h"
 
 
 // inspired by https://golang.org/src/crypto/x509/root_linux.go
@@ -136,6 +137,11 @@ static tls_context openssl_context_api = {
         .load_key = load_key,
         .load_pkcs11_key = load_pkcs11_key,
         .generate_pkcs11_key = gen_pkcs11_key,
+#if defined(TLSUV_KEYCHAIN_SUPPORT)
+        .generate_keychain_key = gen_keychain_key,
+        .load_keychain_key = load_keychain_key,
+        .remove_keychain_key = remove_keychain_key,
+#endif
         .load_cert = load_cert,
         .generate_csr_to_pem = generate_csr,
 };

@@ -16,6 +16,7 @@
 #include "p11.h"
 #include "util.h"
 
+#include <iostream>
 #include <cstring>
 #include <tlsuv/tls_engine.h>
 
@@ -298,6 +299,123 @@ TEST_CASE("gen-pkcs11-key", "[key]") {
         free(pem);
     }
     key->free(key);
+    tls->free_ctx(tls);
+}
+
+TEST_CASE("keychain", "[key]") {
+    auto tls = default_tls_context(nullptr, 0);
+    if (tls->load_keychain_key == nullptr) {
+        tls->free_ctx(tls);
+        SKIP("keychain not supported");
+    }
+
+    uv_timeval64_t now;
+    uv_gettimeofday(&now);
+    auto name = "testkey-" + std::to_string(now.tv_sec);
+
+    GIVEN("generated private key") {
+        fprintf(stderr, "using name: %s\n", name.c_str());
+        tlsuv_private_key_t pk{};
+        REQUIRE(tls->load_keychain_key(&pk, name.c_str()) != 0);
+
+        REQUIRE(tls->generate_keychain_key(&pk, name.c_str()) == 0);
+
+        char data[1024];
+        uv_random(nullptr, nullptr, data, sizeof(data), 0, nullptr);
+        size_t datalen = sizeof(data);
+
+        char sig[512];
+        memset(sig, 0, sizeof(sig));
+        size_t siglen = sizeof(sig);
+
+        THEN("it can sign data") {
+            REQUIRE(0 == pk->sign(pk, hash_SHA256, data, datalen, sig, &siglen));
+
+            AND_THEN("verify with its public key") {
+                auto pub = pk->pubkey(pk);
+                REQUIRE(pub != nullptr);
+
+                char *pem = nullptr;
+                size_t pem_len = 0;
+                CHECK(pub->to_pem(pub, &pem, &pem_len) == 0);
+                CHECK(pem != NULL);
+                if (pem) {
+                    CHECK_THAT(pem, Catch::Matchers::StartsWith("-----BEGIN PUBLIC KEY-----"));
+                    std::cout << std::string(pem, pem_len) << std::endl;
+                    free(pem);
+                }
+                CHECK(0 == pub->verify(pub, hash_SHA256, data, datalen, sig, siglen));
+                pub->free(pub);
+            }
+
+            AND_THEN("key could be loaded") {
+                tlsuv_private_key_t pk2{};
+                REQUIRE(0 == tls->load_keychain_key(&pk2, name.c_str()));
+                pk2->free(pk2);
+            }
+        }
+        pk->free(pk);
+        REQUIRE(0 == tls->remove_keychain_key(name.c_str()));
+    }
+
+    tls->free_ctx(tls);
+}
+
+TEST_CASE("keychain-manual", "[.]") {
+    auto tls = default_tls_context(nullptr, 0);
+    if (tls->load_keychain_key == nullptr) {
+        tls->free_ctx(tls);
+        SKIP("keychain not supported");
+    }
+
+    uv_timeval64_t now;
+    uv_gettimeofday(&now);
+    auto name = std::string("testkey-1");
+
+    GIVEN("existing private key") {
+        fprintf(stderr, "using name: %s\n", name.c_str());
+        tlsuv_private_key_t pk{};
+        REQUIRE(tls->load_keychain_key(&pk, name.c_str()) != 0);
+
+        char data[1024];
+        uv_random(nullptr, nullptr, data, sizeof(data), 0, nullptr);
+        size_t datalen = sizeof(data);
+
+        char sig[512];
+        memset(sig, 0, sizeof(sig));
+        size_t siglen = sizeof(sig);
+
+        THEN("it can sign data") {
+            REQUIRE(0 == pk->sign(pk, hash_SHA256, data, datalen, sig, &siglen));
+
+            AND_THEN("verify with its public key") {
+                auto pub = pk->pubkey(pk);
+                REQUIRE(pub != nullptr);
+
+                char *pem = nullptr;
+                size_t pem_len = 0;
+                CHECK(pub->to_pem(pub, &pem, &pem_len) == 0);
+                CHECK(pem != NULL);
+                if (pem) {
+                    CHECK_THAT(pem, Catch::Matchers::StartsWith("-----BEGIN PUBLIC KEY-----"));
+                    std::cout << std::string(pem, pem_len) << std::endl;
+                    free(pem);
+                }
+                CHECK(0 == pub->verify(pub, hash_SHA256, data, datalen, sig, siglen));
+                pub->free(pub);
+            }
+
+            pk->free(pk);
+
+            AND_THEN("key could be loaded") {
+                REQUIRE(0 == tls->load_keychain_key(&pk, name.c_str()));
+                pk->free(pk);
+            }
+        }
+
+        REQUIRE(0 == tls->remove_keychain_key(name.c_str()));
+    }
+
     tls->free_ctx(tls);
 }
 

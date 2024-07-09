@@ -283,6 +283,10 @@ struct tls_context_s {
 
     int (*load_pkcs11_key)(tlsuv_private_key_t *pk, const char* pkcs11driver, const char *slot, const char *pin, const char *id, const char *label);
 
+    int (*generate_keychain_key)(tlsuv_private_key_t *pk, const char *id);
+    int (*load_keychain_key)(tlsuv_private_key_t *pk, const char *name);
+    int (*remove_keychain_key)(const char *name);
+
     /**
      * Create x509 signing request in PEM format
      * @param pk private key used for request

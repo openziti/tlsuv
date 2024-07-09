@@ -44,7 +44,9 @@ int gen_key(tlsuv_private_key_t *key);
 int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen);
 int gen_pkcs11_key(tlsuv_private_key_t *pk, const char *pkcs11driver, const char *slot, const char *pin, const char *label);
 int load_pkcs11_key(tlsuv_private_key_t *k, const char *lib, const char *slot, const char *pin, const char *id, const char *label);
-
+int load_keychain_key(tlsuv_private_key_t *pk, const char *name);
+int gen_keychain_key(tlsuv_private_key_t *pk, const char *name);
+int remove_keychain_key(const char *name);
 
 int verify_signature (EVP_PKEY *pk, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen);
 
