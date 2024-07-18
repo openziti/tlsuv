@@ -15,11 +15,6 @@
 #ifndef TLSUV_KEYCHAIN_H
 #define TLSUV_KEYCHAIN_H
 
-#if __APPLE__
-#define TLSUV_KEYCHAIN_SUPPORT
-#endif
-
-#if defined(TLSUV_KEYCHAIN_SUPPORT)
 enum keychain_key_type {
     keychain_key_invalid,
     keychain_key_ec,
@@ -57,5 +52,4 @@ int keychain_key_sign(keychain_key_t k, const uint8_t * data, size_t datalen,
 
 void keychain_free_key(keychain_key_t k);
 
-#endif // defined(TLSUV_KEYCHAIN_SUPPORT)
 #endif //TLSUV_KEYCHAIN_H
