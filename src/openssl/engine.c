@@ -137,9 +137,9 @@ static tls_context openssl_context_api = {
         .load_key = load_key,
         .load_pkcs11_key = load_pkcs11_key,
         .generate_pkcs11_key = gen_pkcs11_key,
-        .generate_keychain_key = gen_keychain_key,
-        .load_keychain_key = load_keychain_key,
-        .remove_keychain_key = remove_keychain_key,
+//        .generate_keychain_key = gen_keychain_key,
+//        .load_keychain_key = load_keychain_key,
+//        .remove_keychain_key = remove_keychain_key,
         .load_cert = load_cert,
         .generate_csr_to_pem = generate_csr,
 };
@@ -179,7 +179,9 @@ tls_context *new_openssl_ctx(const char *ca, size_t ca_len) {
     struct openssl_ctx *c = tlsuv__calloc(1, sizeof(struct openssl_ctx));
     c->api = openssl_context_api;
     if (tlsuv_keychain() != NULL) {
-
+        c->api.generate_keychain_key = gen_keychain_key;
+        c->api.load_keychain_key = load_keychain_key;
+        c->api.remove_keychain_key = remove_keychain_key;
     }
     init_ssl_context(c, ca, ca_len);
 

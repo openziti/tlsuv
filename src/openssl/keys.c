@@ -201,7 +201,7 @@ int verify_signature (EVP_PKEY *pk, enum hash_algo md, const char* data, size_t 
         return -1;
     }
 
-    int rc = EVP_DigestVerifyFinal(digestor, sig, siglen);
+    int rc = EVP_DigestVerifyFinal(digestor, (const uint8_t *)sig, siglen);
     EVP_MD_CTX_free(digestor);
 
     if (rc != 1 && EVP_PKEY_id(pk) == EVP_PKEY_EC) {
@@ -254,7 +254,7 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *d
         rc = -1;
     }
 
-    if (EVP_DigestSignFinal(digest, sig, siglen) != 1) {
+    if (EVP_DigestSignFinal(digest, (uint8_t *)sig, siglen) != 1) {
         unsigned long err = ERR_get_error();
         UM_LOG(WARN, "failed to sign digest %ld/%s", err, ERR_lib_error_string(err));
         rc = -1;
@@ -527,7 +527,7 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
         EVP_PKEY_fromdata_init(pkey_ctx);
         int r = EVP_PKEY_fromdata(pkey_ctx, pkey, EVP_PKEY_PRIVATE_KEY, (OSSL_PARAM[]){
                 OSSL_PARAM_octet_string("pub", pub, publen),
-                OSSL_PARAM_utf8_string("group",  group, 0),
+                OSSL_PARAM_utf8_string("group",  (void*)group, 0),
                 OSSL_PARAM_END
         });
 
@@ -545,7 +545,7 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
         EC_KEY_free(key); // decrease refcount
     } else if (keychain_key_type(k) == keychain_key_rsa) {
         pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
-        const unsigned char *p = pub;
+        const unsigned char *p = (uint8_t *)pub;
         RSA *rsa = d2i_RSAPublicKey(NULL, &p, (long)publen);
         RSA_set_ex_data(rsa, kc_rsa_idx, k);
         RSA_set_method(rsa, ext_rsa_method);
@@ -886,9 +886,11 @@ int privkey_ext_sign(int type,
         return orig_ec_sign(type, d, dlen, s, slen, n1, n2, ec);
     }
 
-    if (keychain_key_sign(kc_key, d, dlen, s, slen, 0) != 0) {
+    size_t l = *slen;
+    if (keychain_key_sign(kc_key, d, dlen, s, &l, 0) != 0) {
         return 0;
     }
+    *slen = (int)l;
 
     return 1;
 }
