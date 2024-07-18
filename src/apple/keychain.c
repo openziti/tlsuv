@@ -9,8 +9,17 @@
 static const char* keychain_strerror(OSStatus s) {
     static char err[1024];
     CFStringRef e = SecCopyErrorMessageString(s, NULL);
-    CFStringGetCString(e, err, sizeof(err), kCFStringEncodingUTF8);
-    CFRelease(e);
+    if (e == NULL) {
+        snprintf(err, sizeof(err), "unknown error code[%d]", s);
+    } else {
+        const char *str = CFStringGetCStringPtr(e, kCFStringEncodingUTF8);
+        if (str) {
+            snprintf(err, sizeof(err), "%s", str);
+        } else if (!CFStringGetCString(e, err, sizeof(err), kCFStringEncodingUTF8)) {
+            snprintf(err, sizeof(err), "<could not extract error message>");
+        }
+        CFRelease(e);
+    }
     return err;
 }
 
@@ -19,7 +28,12 @@ static const char* keychain_errmsg(CFErrorRef err) {
     if (err == NULL) return "OK";
 
     CFStringRef desc = CFErrorCopyDescription(err);
-    CFStringGetCString(desc, msg, sizeof(msg), kCFStringEncodingUTF8);
+    const char *str = CFStringGetCStringPtr(desc, kCFStringEncodingUTF8);
+    if (str) {
+        snprintf(msg, sizeof(msg), "%s", str);
+    } else if (!CFStringGetCString(desc, msg, sizeof(msg), kCFStringEncodingUTF8)) {
+        snprintf(msg, sizeof(msg), "<could not extract error message>");
+    }
     CFRelease(desc);
     return msg;
 }
