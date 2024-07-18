@@ -311,7 +311,7 @@ TEST_CASE("keychain", "[key]") {
 
     uv_timeval64_t now;
     uv_gettimeofday(&now);
-    auto name = "testkey-" + std::to_string(now.tv_sec);
+    auto name = "testkey-" + std::to_string(now.tv_usec);
 
     GIVEN("generated private key") {
         fprintf(stderr, "using name: %s\n", name.c_str());
@@ -328,10 +328,10 @@ TEST_CASE("keychain", "[key]") {
         memset(sig, 0, sizeof(sig));
         size_t siglen = sizeof(sig);
 
-        THEN("it can sign data") {
+        WHEN ("it can sign data") {
             REQUIRE(0 == pk->sign(pk, hash_SHA256, data, datalen, sig, &siglen));
 
-            AND_THEN("verify with its public key") {
+            THEN("verify with its public key") {
                 auto pub = pk->pubkey(pk);
                 REQUIRE(pub != nullptr);
 
@@ -347,13 +347,17 @@ TEST_CASE("keychain", "[key]") {
                 CHECK(0 == pub->verify(pub, hash_SHA256, data, datalen, sig, siglen));
                 pub->free(pub);
             }
+        }
 
-            AND_THEN("key could be loaded") {
-                tlsuv_private_key_t pk2{};
-                REQUIRE(0 == tls->load_keychain_key(&pk2, name.c_str()));
+        WHEN("it can be loaded by name") {
+            tlsuv_private_key_t pk2{};
+            int rc2 = tls->load_keychain_key(&pk2, name.c_str());
+            THEN("loaded successfully") {
+                REQUIRE(rc2 == 0);
                 pk2->free(pk2);
             }
         }
+
         pk->free(pk);
         REQUIRE(0 == tls->remove_keychain_key(name.c_str()));
     }
@@ -370,12 +374,12 @@ TEST_CASE("keychain-manual", "[.]") {
 
     uv_timeval64_t now;
     uv_gettimeofday(&now);
-    auto name = std::string("testkey-1");
+    auto name = std::string(getenv("TEST_KEYCHAIN_KEY"));
 
     GIVEN("existing private key") {
         fprintf(stderr, "using name: %s\n", name.c_str());
         tlsuv_private_key_t pk{};
-        REQUIRE(tls->load_keychain_key(&pk, name.c_str()) != 0);
+        REQUIRE(tls->load_keychain_key(&pk, name.c_str()) == 0);
 
         char data[1024];
         uv_random(nullptr, nullptr, data, sizeof(data), 0, nullptr);
@@ -404,16 +408,8 @@ TEST_CASE("keychain-manual", "[.]") {
                 CHECK(0 == pub->verify(pub, hash_SHA256, data, datalen, sig, siglen));
                 pub->free(pub);
             }
-
             pk->free(pk);
-
-            AND_THEN("key could be loaded") {
-                REQUIRE(0 == tls->load_keychain_key(&pk, name.c_str()));
-                pk->free(pk);
-            }
         }
-
-        REQUIRE(0 == tls->remove_keychain_key(name.c_str()));
     }
 
     tls->free_ctx(tls);

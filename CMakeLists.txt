@@ -38,6 +38,7 @@ set(tlsuv_sources
         src/util.h
         src/connector.c
         src/alloc.c
+        src/keychain.c
 )
 
 if (APPLE)
