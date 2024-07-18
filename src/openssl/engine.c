@@ -137,11 +137,9 @@ static tls_context openssl_context_api = {
         .load_key = load_key,
         .load_pkcs11_key = load_pkcs11_key,
         .generate_pkcs11_key = gen_pkcs11_key,
-#if defined(TLSUV_KEYCHAIN_SUPPORT)
         .generate_keychain_key = gen_keychain_key,
         .load_keychain_key = load_keychain_key,
         .remove_keychain_key = remove_keychain_key,
-#endif
         .load_cert = load_cert,
         .generate_csr_to_pem = generate_csr,
 };
@@ -180,6 +178,9 @@ static const char *tls_eng_error(tlsuv_engine_t self) {
 tls_context *new_openssl_ctx(const char *ca, size_t ca_len) {
     struct openssl_ctx *c = tlsuv__calloc(1, sizeof(struct openssl_ctx));
     c->api = openssl_context_api;
+    if (tlsuv_keychain() != NULL) {
+
+    }
     init_ssl_context(c, ca, ca_len);
 
     return &c->api;

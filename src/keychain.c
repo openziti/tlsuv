@@ -41,24 +41,31 @@ void tlsuv_set_keychain(keychain_t *kc) {
 }
 
 int keychain_gen_key(keychain_key_t *pk, enum keychain_key_type type, const char *name) {
+    if (tlsuv_keychain() == NULL) return -1;
     return tlsuv_keychain()->gen_key(pk, type, name);
 }
 int keychain_load_key(keychain_key_t *pk, const char *name) {
+    if (tlsuv_keychain() == NULL) return -1;
     return tlsuv_keychain()->load_key(pk, name);
 }
 int keychain_rem_key(const char *name) {
+    if (tlsuv_keychain() == NULL) return -1;
     return tlsuv_keychain()->rem_key(name);
 }
 enum keychain_key_type keychain_key_type(keychain_key_t k) {
+    if (tlsuv_keychain() == NULL) return keychain_key_invalid;
     return tlsuv_keychain()->key_type(k);
 }
 int keychain_key_public(keychain_key_t k, char *buf, size_t *len) {
+    if (tlsuv_keychain() == NULL) return -1;
     return tlsuv_keychain()->key_public(k, buf, len);
 }
 int keychain_key_sign(keychain_key_t k, const uint8_t * data, size_t datalen,
                       uint8_t *sig, size_t *siglen, int p) {
+    if (tlsuv_keychain() == NULL) return -1;
     return tlsuv_keychain()->key_sign(k, data, datalen, sig, siglen, p);
 }
 void keychain_free_key(keychain_key_t k) {
+    if (tlsuv_keychain() == NULL) return;
     tlsuv_keychain()->free_key(k);
 }
