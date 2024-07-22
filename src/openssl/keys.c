@@ -20,11 +20,14 @@
 #include <openssl/x509.h>
 
 #include <tlsuv/tlsuv.h>
+#include <assert.h>
+#include <openssl/param_build.h>
 
 #include "../p11.h"
 #include "../um_debug.h"
 #include "keys.h"
 #include "../alloc.h"
+#include "../keychain.h"
 
 static int cert_to_pem(const struct tlsuv_certificate_s * c, int full, char **pem, size_t *pemlen);
 static void cert_free(tlsuv_certificate_t c);
@@ -59,10 +62,17 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md,
 static int privkey_get_cert(tlsuv_private_key_t pk, tlsuv_certificate_t *cert);
 static int privkey_store_cert(tlsuv_private_key_t pk, tlsuv_certificate_t cert);
 
-static ECDSA_SIG *privkey_p11_sign_sig(const unsigned char *digest, int len, const BIGNUM *pSt, const BIGNUM *pBignumSt, EC_KEY *ec);
-static int privkey_p11_rsa_enc(int msglen, const unsigned char *msg,
-                                unsigned char *enc,
-                                RSA *rsa, int padding);
+// sign methods with pkcs11 token or native keychain
+static ECDSA_SIG *privkey_ext_ecdsa(const unsigned char *digest, int len,
+                                    const BIGNUM *n1, const BIGNUM *n2, EC_KEY *ec);
+static int privkey_ext_sign(int,
+                            const unsigned char *d, int dlen, unsigned char *s, unsigned int *slen,
+                            const BIGNUM *n1, const BIGNUM *n2, EC_KEY *ec);
+
+static int privkey_ext_rsa_enc(int msglen, const unsigned char *msg,
+                               unsigned char *enc,
+                               RSA *rsa, int padding);
+
 
 static struct priv_key_s PRIV_KEY_API = {
         .free = privkey_free,
@@ -73,44 +83,60 @@ static struct priv_key_s PRIV_KEY_API = {
         .store_certificate = privkey_store_cert,
 };
 
-static EC_KEY_METHOD *p11_ec_method;
-static RSA_METHOD *p11_rsa_method;
+static int (*orig_ec_sign)(int, const unsigned char *, int, unsigned char *, unsigned int *,
+                           const BIGNUM *, const BIGNUM *, EC_KEY *);
+
+static EC_KEY_METHOD *ext_ec_method;
+static RSA_METHOD *ext_rsa_method;
 static int p11_ec_idx = 0;
 static int p11_rsa_idx = 0;
+static int kc_ec_idx = 0;
+static int kc_rsa_idx = 0;
 static uv_once_t init_once;
 
-static void p11_ec_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
-                           int idx, long argl, void *argp)
-{
-    if (ptr != NULL && idx == p11_ec_idx) {
-        p11_key_free(ptr);
+static void key_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                           int idx, long argl, void *argp) {
+    (void)parent;
+    (void)ad;
+    (void)argl;
+    (void)argp;
+
+    if (ptr != NULL) {
+        if (idx == p11_ec_idx || idx == p11_rsa_idx) {
+            p11_key_free(ptr);
+        } else if (idx == kc_ec_idx || idx == kc_rsa_idx) {
+            keychain_free_key(ptr);
+        }
     }
 }
 
 static void init() {
-    p11_ec_idx = EC_KEY_get_ex_new_index(0, "tlsuv-ec-pkcs11", NULL, NULL, p11_ec_ex_free);
-    p11_rsa_idx = RSA_get_ex_new_index(0, "tlsuv-rsa-pkcs11", NULL, NULL, p11_ec_ex_free);
+    p11_ec_idx = EC_KEY_get_ex_new_index(0, "tlsuv-ec-pkcs11", NULL, NULL, key_ex_free);
+    p11_rsa_idx = RSA_get_ex_new_index(0, "tlsuv-rsa-pkcs11", NULL, NULL, key_ex_free);
 
-    p11_ec_method = EC_KEY_METHOD_new(EC_KEY_OpenSSL());
-    int (*orig_sign)(int, const unsigned char *, int, unsigned char *, unsigned int *, const BIGNUM *, const BIGNUM *, EC_KEY *);
-    EC_KEY_METHOD_get_sign(p11_ec_method, &orig_sign, NULL, NULL);
-    EC_KEY_METHOD_set_sign(p11_ec_method, orig_sign, NULL, privkey_p11_sign_sig);
+    kc_ec_idx = EC_KEY_get_ex_new_index(0, "tlsuv-ec-keychain", NULL, NULL,key_ex_free);
+    kc_rsa_idx = RSA_get_ex_new_index(0, "tlsuv-rsa-keychain", NULL, NULL, key_ex_free);
 
-    p11_rsa_method = RSA_meth_dup(RSA_get_default_method());
-    RSA_meth_set_priv_enc(p11_rsa_method, privkey_p11_rsa_enc);
+    // EC method used with native keychain or pkcs#11 keys
+    ext_ec_method = EC_KEY_METHOD_new(EC_KEY_OpenSSL());
+    EC_KEY_METHOD_get_sign(ext_ec_method, &orig_ec_sign, NULL, NULL);
+    EC_KEY_METHOD_set_sign(ext_ec_method, privkey_ext_sign, NULL, privkey_ext_ecdsa);
+
+    ext_rsa_method = RSA_meth_dup(RSA_get_default_method());
+    RSA_meth_set_priv_enc(ext_rsa_method, privkey_ext_rsa_enc);
 }
 
-static void set_ec_p11_impl(EC_KEY *ec, p11_key_ctx *p11_key) {
+static void set_ec_ext_impl(EC_KEY *ec, int idx, void *ext_key) {
     uv_once(&init_once, init);
 
-    EC_KEY_set_method(ec, p11_ec_method);
-    EC_KEY_set_ex_data(ec, p11_ec_idx, p11_key);
+    EC_KEY_set_method(ec, ext_ec_method);
+    EC_KEY_set_ex_data(ec, idx, ext_key);
 }
 
 static void set_rsa_p11_impl(RSA *rsa, p11_key_ctx *p11_key) {
     uv_once(&init_once, init);
 
-    RSA_set_method(rsa, p11_rsa_method);
+    RSA_set_method(rsa, ext_rsa_method);
     RSA_set_ex_data(rsa, p11_rsa_idx, p11_key);
 }
 
@@ -167,8 +193,18 @@ int verify_signature (EVP_PKEY *pk, enum hash_algo md, const char* data, size_t 
         default:
             break;
     }
-    
-    if (EVP_PKEY_id(pk) == EVP_PKEY_EC) {
+
+    EVP_MD_CTX *digestor = EVP_MD_CTX_new();
+    if (EVP_DigestVerifyInit(digestor, NULL, hash, NULL, pk) != 1 ||
+        EVP_DigestVerifyUpdate(digestor, data, datalen) != 1) {
+        UM_LOG(WARN, "failed to create digest: %s", tls_error(ERR_get_error()));
+        return -1;
+    }
+
+    int rc = EVP_DigestVerifyFinal(digestor, (const uint8_t *)sig, siglen);
+    EVP_MD_CTX_free(digestor);
+
+    if (rc != 1 && EVP_PKEY_id(pk) == EVP_PKEY_EC) {
         const uint8_t *p = (const uint8_t*)sig;
         ECDSA_SIG *ecdsa_sig = d2i_ECDSA_SIG(NULL, &p, (int) siglen);
 
@@ -182,23 +218,7 @@ int verify_signature (EVP_PKEY *pk, enum hash_algo md, const char* data, size_t 
 
         ECDSA_SIG_free(ecdsa_sig);
     }
-
-    int rc = 0;
-    EVP_MD_CTX *digestor = EVP_MD_CTX_new();
-    EVP_PKEY_CTX *pctx = NULL;
-
-    if (!EVP_DigestVerifyInit(digestor, &pctx, hash, NULL, pk)) {
-        unsigned long err = ERR_get_error();
-        UM_LOG(WARN, "failed to setup digest %ld/%s", err, ERR_lib_error_string(err));
-        rc = -1;
-    } else if (EVP_DigestVerify(digestor, (const uint8_t *) sig, siglen, (const uint8_t *) data, datalen) != 1) {
-        unsigned long err = ERR_get_error();
-        UM_LOG(WARN, "failed to verify digest %ld/%s", err, ERR_lib_error_string(err));
-        rc = -1;
-    }
-    EVP_MD_CTX_free(digestor);
-
-    return rc;
+    return (rc == 1) ? 0 : -1;
 }
 
 static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *data, size_t datalen, const char *sig, size_t siglen) {
@@ -226,17 +246,20 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *d
         default:
             break;
     }
-    if (!EVP_DigestSignInit(digest, &pctx, hash, NULL, priv->pkey)) {
+
+    if ((EVP_DigestSignInit(digest, &pctx, hash, NULL, priv->pkey) != 1) ||
+        (EVP_DigestSignUpdate(digest, data, datalen) != 1)) {
         unsigned long err = ERR_get_error();
         UM_LOG(WARN, "failed to setup digest %ld/%s", err, ERR_lib_error_string(err));
         rc = -1;
-    } else {
-        if (EVP_DigestSign(digest, (uint8_t *)sig, siglen, (const uint8_t *) data, datalen) != 1) {
-            unsigned long err = ERR_get_error();
-            UM_LOG(WARN, "failed to sign digest %ld/%s", err, ERR_lib_error_string(err));
-            rc = -1;
-        }
     }
+
+    if (EVP_DigestSignFinal(digest, (uint8_t *)sig, siglen) != 1) {
+        unsigned long err = ERR_get_error();
+        UM_LOG(WARN, "failed to sign digest %ld/%s", err, ERR_lib_error_string(err));
+        rc = -1;
+    }
+
     EVP_MD_CTX_free(digest);
     return rc;
 }
@@ -245,7 +268,7 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *d
 static tlsuv_public_key_t privkey_pubkey(tlsuv_private_key_t pk) {
     struct priv_key_s *priv = (struct priv_key_s *) pk;
     struct pub_key_s *pub = tlsuv__calloc(1, sizeof(*pub));
-    *pub = PUB_KEY_API;
+    pub_key_init(pub);
 
     // there is probably a more straight-forward way,
     // but I did not find it
@@ -374,7 +397,7 @@ static int load_pkcs11_ec(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id, 
         value = NULL;
     }
 
-    set_ec_p11_impl(ec, p11_key);
+    set_ec_ext_impl(ec, p11_ec_idx, p11_key);
 
     if (!EVP_PKEY_set1_EC_KEY(pkey, ec)) {
         unsigned long err = ERR_get_error();
@@ -429,7 +452,10 @@ error:
     return -1;
 }
 
+
 int gen_pkcs11_key(tlsuv_private_key_t *key, const char *pkcs11driver, const char *slot, const char *pin, const char *label) {
+    uv_once(&init_once, init);
+
     p11_context *p11 = tlsuv__calloc(1, sizeof(*p11));
     p11_key_ctx *p11_key = NULL;
     EVP_PKEY *pkey = NULL;
@@ -472,7 +498,136 @@ int gen_pkcs11_key(tlsuv_private_key_t *key, const char *pkcs11driver, const cha
     return -1;
 }
 
+int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
+    uv_once(&init_once, init);
+
+    int rc = 0;
+    EVP_PKEY_CTX *pkey_ctx = NULL;
+    char pub[1024];
+    size_t publen = sizeof(pub);
+    if (keychain_key_public(k, pub, &publen) != 0) {
+        UM_LOG(WARN, "failed to load public key from keychain");
+        rc = -1;
+        goto error;
+    }
+
+    if (keychain_key_type(k) == keychain_key_ec) {
+
+        const char *group = NULL;
+        size_t keysize = (publen/2) * 8;
+        if (keysize == 256) {
+            group = SN_X9_62_prime256v1;
+        } else if (keysize == 384) {
+            group = SN_secp384r1;
+        } else if (keysize == 1042) {
+            group = SN_secp521r1;
+        }
+
+        pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
+        EVP_PKEY_fromdata_init(pkey_ctx);
+        int r = EVP_PKEY_fromdata(pkey_ctx, pkey, EVP_PKEY_PRIVATE_KEY, (OSSL_PARAM[]){
+                OSSL_PARAM_octet_string("pub", pub, publen),
+                OSSL_PARAM_utf8_string("group",  (void*)group, 0),
+                OSSL_PARAM_END
+        });
+
+        if(r != 1) {
+            unsigned long err = ERR_get_error();
+            UM_LOG(ERR, "failed to set EC pubkey for key id[%s] label[%s]: %ld/%s", "id", "label", err, ERR_lib_error_string(err));
+            rc = -1;
+            goto error;
+        }
+
+        EC_KEY *key = EVP_PKEY_get1_EC_KEY(*pkey);
+        EC_KEY_set_ex_data(key, kc_ec_idx, k);
+        EC_KEY_set_method(key, ext_ec_method);
+        EVP_PKEY_set1_EC_KEY(*pkey, key);
+        EC_KEY_free(key); // decrease refcount
+    } else if (keychain_key_type(k) == keychain_key_rsa) {
+        pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
+        const unsigned char *p = (uint8_t *)pub;
+        RSA *rsa = d2i_RSAPublicKey(NULL, &p, (long)publen);
+        RSA_set_ex_data(rsa, kc_rsa_idx, k);
+        RSA_set_method(rsa, ext_rsa_method);
+
+        *pkey = EVP_PKEY_new();
+        int r = EVP_PKEY_set1_RSA(*pkey, rsa);
+        if(r != 1) {
+            unsigned long err = ERR_get_error();
+            UM_LOG(ERR, "failed to set RSA pubkey for key id[%s] label[%s]: %ld/%s", "id", "label", err, ERR_lib_error_string(err));
+            goto error;
+        }
+    }
+
+    return rc;
+
+error:
+    if (pkey_ctx) EVP_PKEY_CTX_free(pkey_ctx);
+    return -1;
+}
+
+int gen_keychain_key(tlsuv_private_key_t *key, const char *name) {
+    uv_once(&init_once, init);
+
+    EVP_PKEY *pkey = NULL;
+
+    keychain_key_t k = NULL;
+    long err = keychain_gen_key(&k, keychain_key_ec, name);
+    if (err != 0) {
+        goto error;
+    }
+
+    load_kc_key(&pkey, k);
+
+    struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
+    *private_key = PRIV_KEY_API;
+    private_key->pkey = pkey;
+    *key = (tlsuv_private_key_t)private_key;
+
+    return 0;
+
+    error:
+    if (k) {
+        keychain_free_key(k);
+    }
+
+    return -1;
+
+}
+
+int load_keychain_key(tlsuv_private_key_t *key, const char *name) {
+    uv_once(&init_once, init);
+
+    EVP_PKEY *pkey = NULL;
+
+    keychain_key_t k = NULL;
+    long err = keychain_load_key(&k, name);
+    if (err != 0) {
+        goto error;
+    }
+
+    if (load_kc_key(&pkey, k) != 0) {
+        goto error;
+    }
+
+    struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
+    *private_key = PRIV_KEY_API;
+    private_key->pkey = pkey;
+    *key = (tlsuv_private_key_t)private_key;
+
+    return 0;
+
+    error:
+    if (k) {
+        keychain_free_key(k);
+    }
+
+    return -1;
+}
+
 int load_pkcs11_key(tlsuv_private_key_t *key, const char *lib, const char *slot, const char *pin, const char *id, const char *label) {
+    uv_once(&init_once, init);
+
     p11_context *p11 = tlsuv__calloc(1, sizeof(*p11));
     p11_key_ctx *p11_key = NULL;
     EVP_PKEY *pkey = NULL;
@@ -494,9 +649,7 @@ int load_pkcs11_key(tlsuv_private_key_t *key, const char *lib, const char *slot,
     pkey = EVP_PKEY_new();
     switch (p11_key->key_type) {
         case CKK_EC: load_pkcs11_ec(pkey, p11_key, id, label); break;
-        case CKK_RSA:
-            load_pkcs11_rsa(pkey, p11_key, id, label);
-            break;
+        case CKK_RSA: load_pkcs11_rsa(pkey, p11_key, id, label); break;
         default:
             UM_LOG(WARN, "unsupported pkcs11 key type: %lu", p11_key->key_type);
             goto error;
@@ -542,40 +695,52 @@ int gen_key(tlsuv_private_key_t *key) {
     return rc;
 }
 
-static ECDSA_SIG *privkey_p11_sign_sig(const unsigned char *digest, int len, const BIGNUM *pSt, const BIGNUM *pBignumSt, EC_KEY *ec) {
+static ECDSA_SIG *privkey_ext_ecdsa(const unsigned char *digest, int len,
+                                    const BIGNUM *n1, const BIGNUM *n2,
+                                    EC_KEY *ec) {
     p11_key_ctx *p11_key = EC_KEY_get_ex_data(ec, p11_ec_idx);
 
+    ECDSA_SIG *ecdsa_sig = NULL;
     uint8_t sig[512];
     size_t siglen = sizeof(sig);
-    int rc = p11_key_sign(p11_key, digest, len, sig, &siglen, 0);
-    if (rc != 0) {
-        return NULL;
+
+    if (p11_key) {
+        int rc = p11_key_sign(p11_key, digest, len, sig, &siglen, 0);
+        if (rc != 0) {
+            return NULL;
+        }
+        BIGNUM *r = BN_bin2bn(sig, (int)siglen/2, NULL);
+        BIGNUM *s = BN_bin2bn(sig + siglen/2, (int)siglen/2, NULL);
+        ecdsa_sig = ECDSA_SIG_new();
+        ECDSA_SIG_set0(ecdsa_sig, r, s);
     }
-
-    BIGNUM *r = BN_bin2bn(sig, (int)siglen/2, NULL);
-	BIGNUM *s = BN_bin2bn(sig + siglen/2, (int)siglen/2, NULL);
-	ECDSA_SIG *ecdsa_sig = ECDSA_SIG_new();
-	ECDSA_SIG_set0(ecdsa_sig, r, s);
-
     return ecdsa_sig;
 }
 
 // OpenSSL using encrypt method for signing)
-static int privkey_p11_rsa_enc(int msglen, const unsigned char *msg,
-                                unsigned char *enc,
-                                RSA *rsa, int padding) {
+static int privkey_ext_rsa_enc(int msglen, const unsigned char *msg,
+                               unsigned char *enc,
+                               RSA *rsa, int padding) {
     p11_key_ctx *p11_key = RSA_get_ex_data(rsa, p11_rsa_idx);
+    keychain_key_t kc_key = RSA_get_ex_data(rsa, kc_rsa_idx);
 
-    CK_MECHANISM_TYPE mech = 0;
+    int rc = 0;
     size_t siglen = RSA_size(rsa);
-    if (padding == RSA_PKCS1_PADDING) {
-        mech = CKM_RSA_PKCS;
-    } else if (padding == RSA_NO_PADDING) {
-        mech = CKM_RSA_X_509;
-    } else if (padding == RSA_X931_PADDING) {
-        mech = CKM_RSA_X9_31;
+
+    if (p11_key) {
+        CK_MECHANISM_TYPE mech = 0;
+        if (padding == RSA_PKCS1_PADDING) {
+            mech = CKM_RSA_PKCS;
+        } else if (padding == RSA_NO_PADDING) {
+            mech = CKM_RSA_X_509;
+        } else if (padding == RSA_X931_PADDING) {
+            mech = CKM_RSA_X9_31;
+        }
+        rc = p11_key_sign(p11_key, msg, msglen, enc, &siglen, mech);
+    } else if (kc_key) {
+        rc = keychain_key_sign(kc_key, msg, msglen, enc, &siglen, padding);
+        UM_LOG(DEBG, "keychain sign rc = %d len = %zd", rc, siglen);
     }
-    int rc = p11_key_sign(p11_key, msg, msglen, enc, &siglen, mech);
 
     return rc != 0 ? rc : (int)siglen;
 }
@@ -710,4 +875,26 @@ static int cert_exp(const struct tlsuv_certificate_s * cert, struct tm *time) {
     X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
     const ASN1_TIME *notAfter = X509_get0_notAfter(c);
     return ASN1_TIME_to_tm(notAfter, time) == 1 ? 0 : -1;
+}
+
+
+int privkey_ext_sign(int type,
+                     const unsigned char *d, int dlen, unsigned char *s, unsigned int *slen,
+                     const BIGNUM *n1, const BIGNUM *n2, EC_KEY *ec) {
+    keychain_key_t kc_key = EC_KEY_get_ex_data(ec, kc_ec_idx);
+    if (kc_key == NULL) {
+        return orig_ec_sign(type, d, dlen, s, slen, n1, n2, ec);
+    }
+
+    size_t l = *slen;
+    if (keychain_key_sign(kc_key, d, dlen, s, &l, 0) != 0) {
+        return 0;
+    }
+    *slen = (int)l;
+
+    return 1;
+}
+
+int remove_keychain_key(const char *name) {
+    return keychain_rem_key(name);
 }

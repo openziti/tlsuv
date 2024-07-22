@@ -38,7 +38,14 @@ set(tlsuv_sources
         src/util.h
         src/connector.c
         src/alloc.c
+        src/keychain.c
 )
+
+if (APPLE)
+    list(APPEND tlsuv_sources
+            src/apple/keychain.c
+    )
+endif (APPLE)
 
 if (TLSUV_HTTP)
     list(APPEND tlsuv_sources
