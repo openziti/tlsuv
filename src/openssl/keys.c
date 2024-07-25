@@ -511,6 +511,32 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
         goto error;
     }
 
+    // check if pub key is ASN.1 SubjectPublicKeyInfo format
+    // https://docs.openssl.org/3.3/man3/X509_PUBKEY_new/#synopsis
+    const uint8_t *p = pub;
+    X509_PUBKEY *x509_pub = d2i_X509_PUBKEY(NULL, &p, (long)publen);
+    if (x509_pub != NULL) {
+        EVP_PKEY *pk1 = X509_PUBKEY_get(x509_pub);
+        X509_PUBKEY_free(x509_pub);
+        int key_type = EVP_PKEY_get_base_id(pk1);
+        if (key_type == EVP_PKEY_EC) {
+            EC_KEY *key = EVP_PKEY_get1_EC_KEY(pk1);
+            EC_KEY_set_ex_data(key, kc_ec_idx, k);
+            EC_KEY_set_method(key, ext_ec_method);
+            EVP_PKEY_set1_EC_KEY(pk1, key);
+            EC_KEY_free(key); // decrease refcount
+        } else if (key_type == EVP_PKEY_RSA) {
+            RSA *rsa = EVP_PKEY_get0_RSA(pk1);
+            RSA_set_ex_data(rsa, kc_rsa_idx, k);
+            RSA_set_method(rsa, ext_rsa_method);
+        } else {
+            EVP_PKEY_free(pk1);
+            return -1;
+        }
+        *pkey = pk1;
+        return 0;
+    }
+
     if (keychain_key_type(k) == keychain_key_ec) {
 
         const char *group = NULL;
