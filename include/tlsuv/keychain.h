@@ -1,12 +1,14 @@
-//
-// Created by Eugene Kobyakov on 7/24/24.
-//
 
 #ifndef TLSUV_KEYCHAIN_H
 #define TLSUV_KEYCHAIN_H
 
+#if __cplusplus
+#include <cstddef>
+#include <cstdint>
+#else
 #include <stddef.h>
 #include <stdint.h>
+#endif
 
 enum keychain_key_type {
     keychain_key_invalid,
@@ -31,8 +33,13 @@ struct keychain_s {
     void (*free_key)(keychain_key_t k);
 };
 
-const keychain_t* tlsuv_keychain();
+#if __cplusplus
+extern "C" {
+#endif
+const keychain_t *tlsuv_keychain();
 void tlsuv_set_keychain(keychain_t *);
-
+#if __cplusplus
+}
+#endif
 
 #endif //TLSUV_KEYCHAIN_H
