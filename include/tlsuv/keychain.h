@@ -26,6 +26,7 @@ struct keychain_s {
     int (*rem_key)(const char *name);
 
     enum keychain_key_type (*key_type)(keychain_key_t k);
+    int (*key_bits)(keychain_key_t);
     int (*key_public)(keychain_key_t k, char *buf, size_t *len);
     int (*key_sign)(keychain_key_t k, const uint8_t * data, size_t datalen,
                     uint8_t *sig, size_t *siglen, int p);

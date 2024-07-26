@@ -6,6 +6,8 @@
 #include "../keychain.h"
 #include "um_debug.h"
 
+static SecKeyRef find_private_key(const char *name, OSStatus *code);
+
 static const char* keychain_strerror(OSStatus s) {
     static char err[1024];
     CFStringRef e = SecCopyErrorMessageString(s, NULL);
@@ -39,8 +41,15 @@ static const char* keychain_errmsg(CFErrorRef err) {
 }
 
 static int gen_key(keychain_key_t *pk, enum keychain_key_type type, const char *name) {
-    UM_LOG(DEBG, "generating key %s", name);
-    static int32_t ec_size = 256;
+    SecKeyRef existing = find_private_key(name, NULL);
+    if (existing != NULL) {
+        UM_LOG(WARN, "key[%s] already exists", name);
+        CFRelease(existing);
+        return EEXIST;
+    }
+
+    UM_LOG(DEBG, "generating key[%s]", name);
+    static int32_t ec_size = 521;
     static int rsa_size = 4096;
 
     CFNumberRef bits = NULL;
@@ -52,12 +61,12 @@ static int gen_key(keychain_key_t *pk, enum keychain_key_type type, const char *
         bits = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &rsa_size);
         cf_key_type = kSecAttrKeyTypeRSA;
     } else {
-        return -1;
+        return EINVAL;
     }
     
     CFDataRef tag = CFDataCreate(kCFAllocatorDefault, (const uint8_t *)name, (CFIndex) strlen(name));
     CFStringRef label = CFStringCreateWithCString(kCFAllocatorDefault, name, kCFStringEncodingUTF8);
-
+    
     CFMutableDictionaryRef params = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, NULL, NULL);
     CFDictionaryAddValue(params, kSecAttrKeyClass, kSecAttrKeyClassPrivate);
     CFDictionaryAddValue(params, kSecReturnRef, kCFBooleanTrue);
@@ -70,7 +79,24 @@ static int gen_key(keychain_key_t *pk, enum keychain_key_type type, const char *
 
     CFErrorRef error = NULL;
     SecKeyRef key = SecKeyCreateRandomKey(params, &error);
+    SecKeyRef pub = SecKeyCopyPublicKey(key);
 
+    // store public key back so that pubkey data can be loaded after
+    // https://forums.developer.apple.com/forums/thread/8030
+    CFMutableDictionaryRef pubparams = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, NULL, NULL);
+    CFDictionaryAddValue(pubparams, kSecAttrApplicationTag, tag);
+    CFDictionaryAddValue(pubparams, kSecAttrLabel, label);
+    CFDictionarySetValue(pubparams, kSecAttrIsExtractable, kCFBooleanTrue);
+    CFDictionaryAddValue(pubparams, kSecAttrIsPermanent, kCFBooleanTrue);
+    CFDictionarySetValue(pubparams, kSecValueRef, pub);
+
+    OSStatus pubadd = SecItemAdd(pubparams, NULL);
+    if (pubadd != errSecSuccess) {
+        UM_LOG(WARN, "failed to store pubkey to keychain: %s", keychain_strerror(pubadd));
+    }
+
+    CFRelease(pubparams);
+    CFRelease(pub);
     CFRelease(params);
     CFRelease(tag);
     CFRelease(label);
@@ -89,6 +115,8 @@ static int key_size(keychain_key_t k) {
     CFNumberRef num = CFDictionaryGetValue(atts, kSecAttrKeySizeInBits);
     int val = 0;
     CFNumberGetValue(num, kCFNumberNSIntegerType, &val);
+    CFRelease(num);
+    CFRelease(atts);
     return val;
 }
 
@@ -124,7 +152,7 @@ static int key_public(keychain_key_t k, char *buf, size_t *len) {
     if (err != NULL) {
         UM_LOG(ERR, "failed to retrieve public key: %s", keychain_errmsg(err));
         CFRelease(pub);
-        return -1;
+        return (int)CFErrorGetCode(err);
     }
 
     CFIndex publen = CFDataGetLength(d);
@@ -152,11 +180,15 @@ static int key_sign(keychain_key_t k,
             algorithm = kSecKeyAlgorithmECDSASignatureDigestX962SHA256;
             break;
         case keychain_key_rsa:
-            algorithm = kSecKeyAlgorithmRSASignatureDigestPKCS1v15Raw;
+            if (p == 1) { // RSA_PKCS1_PADDING
+                algorithm = kSecKeyAlgorithmRSASignatureDigestPKCS1v15Raw;
+            } else if (p == 3) { // RSA_NO_PADDING
+                algorithm = kSecKeyAlgorithmRSASignatureRaw;
+            }
             break;
         default:
             UM_LOG(ERR, "unsupported key type");
-            return -1;
+            return EINVAL;
     };
 
     CFDataRef d = CFDataCreate(kCFAllocatorDefault, data, (CFIndex)datalen);
@@ -174,7 +206,7 @@ static int key_sign(keychain_key_t k,
     }
 
     UM_LOG(WARN, "failed to sign data: %s", keychain_errmsg(err));
-    return -1;
+    return (int) CFErrorGetCode(err);
 }
 
 static void free_key(keychain_key_t k) {
@@ -204,9 +236,7 @@ static int rem_key(const char *name) {
     return 0;
 }
 
-static int load_key(keychain_key_t *k, const char *name) {
-    UM_LOG(INFO, "loading key %s", name);
-
+static SecKeyRef find_private_key(const char *name, OSStatus *code) {
     CFDataRef tag = CFDataCreate(kCFAllocatorDefault, (const uint8_t *)name, (CFIndex) strlen(name));
 
     CFMutableDictionaryRef q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, NULL, NULL);
@@ -220,19 +250,31 @@ static int load_key(keychain_key_t *k, const char *name) {
     CFRelease(q);
     CFRelease(tag);
 
+    if (code) *code = r;
+
     if (r == errSecSuccess) {
         assert(ref != NULL);
-        *k = (keychain_key_t) ref;
-        return 0;
+        assert(CFGetTypeID(ref) == SecKeyGetTypeID());
+        return (SecKeyRef)ref;
     }
+    
+    return NULL;
+}
 
-    if (ref) {
-        CFRelease(ref);
+static int load_key(keychain_key_t *k, const char *name) {
+    UM_LOG(INFO, "loading key %s", name);
+
+    OSStatus r;
+    SecKeyRef key = find_private_key(name, &r);
+
+    if (k != NULL) {
+        *k = (keychain_key_t) key;
     }
-
-    *k = NULL;
-    UM_LOG(ERR, "failed to load key[%s]: %s", name, keychain_strerror(r));
-    return -1;
+    if (r != errSecSuccess) {
+        UM_LOG(ERR, "failed to load key[%s]: %s", name, keychain_strerror(r));
+        return ENOENT;
+    }
+    return 0;
 }
 
 static keychain_t apple_keychain = {
@@ -241,6 +283,7 @@ static keychain_t apple_keychain = {
         .free_key = free_key,
         .rem_key = rem_key,
         .key_type = key_type,
+        .key_bits = key_size,
         .key_public = key_public,
         .key_sign = key_sign,
 };
