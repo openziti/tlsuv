@@ -500,15 +500,16 @@ int gen_pkcs11_key(tlsuv_private_key_t *key, const char *pkcs11driver, const cha
 
 int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
     uv_once(&init_once, init);
+    const keychain_t *keychain = tlsuv_keychain();
+    assert(keychain);
 
     int rc = 0;
     EVP_PKEY_CTX *pkey_ctx = NULL;
-    char pub[1024];
+    char pub[8 * 1024];
     size_t publen = sizeof(pub);
     if (keychain_key_public(k, pub, &publen) != 0) {
         UM_LOG(WARN, "failed to load public key from keychain");
-        rc = -1;
-        goto error;
+        return -1;
     }
 
     // check if pub key is ASN.1 SubjectPublicKeyInfo format
@@ -538,15 +539,20 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
     }
 
     if (keychain_key_type(k) == keychain_key_ec) {
+        int bits = keychain->key_bits(k);
+        if (bits < 0) {
+            UM_LOG(ERR, "invalid key size");
+            return -1;
+        }
 
         const char *group = NULL;
-        size_t keysize = (publen/2) * 8;
-        if (keysize == 256) {
-            group = SN_X9_62_prime256v1;
-        } else if (keysize == 384) {
-            group = SN_secp384r1;
-        } else if (keysize == 1042) {
-            group = SN_secp521r1;
+        switch(bits) {
+            case 256: group = SN_X9_62_prime256v1; break;
+            case 384: group = SN_secp384r1; break;
+            case 521: group = SN_secp521r1; break;
+            default:
+                UM_LOG(ERR, "unsupported EC key size[%d]", bits);
+                return -1;
         }
 
         pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
@@ -581,15 +587,14 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
         if(r != 1) {
             unsigned long err = ERR_get_error();
             UM_LOG(ERR, "failed to set RSA pubkey for key id[%s] label[%s]: %ld/%s", "id", "label", err, ERR_lib_error_string(err));
+            rc = -1;
             goto error;
         }
     }
 
-    return rc;
-
 error:
     if (pkey_ctx) EVP_PKEY_CTX_free(pkey_ctx);
-    return -1;
+    return rc;
 }
 
 int gen_keychain_key(tlsuv_private_key_t *key, const char *name) {

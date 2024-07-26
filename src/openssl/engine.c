@@ -1043,7 +1043,7 @@ goto on_error;            \
 }}while(0)
     
     ssl_check(X509_REQ_set_pubkey(req, pk));
-    ssl_check(X509_REQ_sign(req, pk, EVP_sha1()));
+    ssl_check(X509_REQ_sign(req, pk, EVP_sha256()));
     ssl_check(PEM_write_bio_X509_REQ(b, req));
 
     on_error:
