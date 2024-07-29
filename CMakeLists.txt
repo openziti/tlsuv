@@ -35,6 +35,7 @@ set(tlsuv_sources
         src/tls_engine.c
         src/p11.c
         src/p11.h
+        src/socket.c
         src/util.h
         src/connector.c
         src/alloc.c
