@@ -514,7 +514,7 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
 
     // check if pub key is ASN.1 SubjectPublicKeyInfo format
     // https://docs.openssl.org/3.3/man3/X509_PUBKEY_new/#synopsis
-    const uint8_t *p = pub;
+    const uint8_t *p = (const uint8_t *)pub;
     X509_PUBKEY *x509_pub = d2i_X509_PUBKEY(NULL, &p, (long)publen);
     if (x509_pub != NULL) {
         EVP_PKEY *pk1 = X509_PUBKEY_get(x509_pub);
@@ -527,7 +527,7 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
             EVP_PKEY_set1_EC_KEY(pk1, key);
             EC_KEY_free(key); // decrease refcount
         } else if (key_type == EVP_PKEY_RSA) {
-            RSA *rsa = EVP_PKEY_get0_RSA(pk1);
+            RSA *rsa = (RSA*)EVP_PKEY_get0_RSA(pk1);
             RSA_set_ex_data(rsa, kc_rsa_idx, k);
             RSA_set_method(rsa, ext_rsa_method);
         } else {
