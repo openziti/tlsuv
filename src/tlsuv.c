@@ -27,6 +27,7 @@
 #define ioctl ioctlsocket
 #define get_error() WSAGetLastError()
 #else
+#define closesocket(s) close(s)
 #define get_error() errno
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -151,9 +152,11 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
     clt->close_cb = close_cb;
 
     if (clt->connect_req) {
+        UM_LOG(VERB, "cancel before connector cb");
         const void *cr = clt->connect_req;
-        clt->connect_req = NULL;
         clt->connector->cancel(cr);
+        // defer closing until connector callback is called
+        return 0;
     }
 
     if (clt->tls_engine) {
@@ -162,11 +165,7 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
 
     if (clt->watcher.type == UV_POLL) {
         uv_poll_stop(&clt->watcher);
-#if _WIN32
         closesocket(clt->sock);
-#else
-        close(clt->sock);
-#endif
     } else {
         // if uv_poll has not been set up create a throwaway handle to defer close_cb
         uv_idle_init(clt->loop, (uv_idle_t*)&clt->watcher);
@@ -502,6 +501,14 @@ static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
     uv_connect_t *r = ctx;
     tlsuv_stream_t *clt = (tlsuv_stream_t *)r->handle;
     clt->connect_req = NULL;
+
+    // app closed stream before it connected
+    if (clt->close_cb) {
+        UM_LOG(VERB, "closed before connect: %d/%s", status, uv_strerror(status));
+        on_internal_close((uv_handle_t *) &clt->watcher);
+        return;
+    }
+
     if (status == 0) {
         tlsuv_stream_open(clt->conn_req, clt, sock, clt->conn_req->cb);
         return;

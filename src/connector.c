@@ -145,6 +145,10 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addr) {
         status = UV_ECANCELED;
     }
 
+    if (cr->cancel) {
+        status = UV_ECANCELED;
+    }
+
     if (status != 0) {
         cr->cb(cr->sock, status, cr->ctx);
         tlsuv__free(r);
@@ -193,18 +197,24 @@ tlsuv_connector_req default_connect(uv_loop_t *loop, const tlsuv_connector_t *se
 void default_cancel(tlsuv_connector_req req) {
     UM_LOG(VERB, "cancelling");
     struct conn_req_s *r = (struct conn_req_s *) req;
-
     r->cancel = true;
-    if (uv_cancel((uv_req_t *) &r->resolve) != 0) {
-        shutdown(r->sock, SHUT_RDWR);
+
+    if (uv_cancel((uv_req_t *) &r->resolve) == 0 || r->sock == -1) {
+        // successfully canceled resolve request before it started or completed
+        // nothing more to do
+        return;
+    }
+
+    // resolve request completed, socket created and is connecting now
+    UM_LOG(VERB, "shutting down socket: %d", r->sock);
+    shutdown(r->sock, SHUT_RDWR);
 #if _WIN32
-        // on windows shutting down/closing socket does not trigger poll event
+    // on windows shutting down/closing socket does not trigger poll event
         uv_poll_stop(&r->poll);
         closesocket(r->sock);
         r->cb((uv_os_sock_t)-1, UV_ECANCELED, r->ctx);
         uv_close((uv_handle_t *) &r->poll, on_poll_close);
 #endif
-    }
 }
 
 struct proxy_connect_req {

@@ -172,6 +172,8 @@ TEST_CASE("proxy request fail", "[stream]") {
 TEST_CASE("cancel connect", "[stream]") {
     UvLoopTest test;
 
+    int timeout = GENERATE(1, 10, 100, 1000);
+
     auto s = new tlsuv_stream_t;
     tls_context *tls = default_tls_context(nullptr, 0);
     tlsuv_stream_init(test.loop, s, tls);
@@ -188,12 +190,13 @@ TEST_CASE("cancel connect", "[stream]") {
 
     s->data = &test_ctx;
 
-    uv_connect_t cr;
-    cr.data = &test_ctx;
-    int rc = tlsuv_stream_connect(&cr, s, "1.1.1.1", 5555, [](uv_connect_t *r, int status) {
+    auto cr = (uv_connect_t *)calloc(1, sizeof(uv_connect_t));
+    cr->data = &test_ctx;
+    int rc = tlsuv_stream_connect(cr, s, "one.one.one.one", 5555, [](uv_connect_t *r, int status) {
         auto ctx = (struct test_ctx *) r->data;
         ctx->connect_result = status;
         ctx->connect_called = true;
+        free(r);
     });
 
     uv_timer_t t;
@@ -211,8 +214,7 @@ TEST_CASE("cancel connect", "[stream]") {
         tlsuv_stream_close(c, closeCb);
         uv_close(reinterpret_cast<uv_handle_t *>(t), nullptr);
     };
-    uv_timer_start(&t, timer_cb, 1000, 0);
-
+    uv_timer_start(&t, timer_cb, timeout, 0);
     test.run();
 
     CHECK(rc == 0);
