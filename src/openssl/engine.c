@@ -204,8 +204,7 @@ static X509_STORE * load_certs(const char *buf, size_t buf_len) {
         }
     } else {
         // try as PEM
-        BIO *crt_bio = BIO_new(BIO_s_mem());
-        BIO_write(crt_bio, buf, (int)buf_len);
+        BIO *crt_bio = BIO_new_mem_buf(buf, (int)buf_len);
         while((c = PEM_read_bio_X509(crt_bio, NULL, NULL, NULL)) != NULL) {
             X509_STORE_add_cert(certs, c);
             X509_free(c);
@@ -216,26 +215,15 @@ static X509_STORE * load_certs(const char *buf, size_t buf_len) {
 }
 
 static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buflen) {
-    X509 *c;
-    // try as file
-    FILE *crt_file = fopen(buf, "r");
-    if (crt_file != NULL) {
-        c = PEM_read_X509(crt_file, NULL, NULL, NULL);
-    } else {
-        // try as PEM
-        BIO *crt_bio = BIO_new(BIO_s_mem());
-        BIO_write(crt_bio, buf, (int)buflen);
-        c = PEM_read_bio_X509(crt_bio, NULL, NULL, NULL);
-        BIO_free(crt_bio);
-    }
+    X509_STORE *store = load_certs(buf, buflen);
 
-    if (c == NULL) {
+    STACK_OF(X509_OBJECT) *certs = X509_STORE_get0_objects(store);
+    int count = sk_X509_OBJECT_num(certs);
+    if (count == 0) {
+        X509_STORE_free(store);
         return -1;
     }
 
-    X509_STORE *store = X509_STORE_new();
-    X509_STORE_add_cert(store, c);
-    X509_free(c);
     struct cert_s *crt = tlsuv__calloc(1, sizeof(*crt));
     cert_init(crt);
     crt->cert = store;
