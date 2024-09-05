@@ -1,24 +1,24 @@
 {
-  "version": 2,
+  "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 14,
+    "minor": 25,
     "patch": 0
   },
   "configurePresets": [
+    {
+      "name": "vcpkg",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
     {
       "name": "dev-mode",
       "hidden": true,
       "cacheVariables": {
         "tlsuv_DEVELOPER_MODE": "ON",
         "VCPKG_MANIFEST_FEATURES": "http;test;samples"
-      }
-    },
-    {
-      "name": "vcpkg",
-      "hidden": true,
-      "cacheVariables": {
-        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
       }
     },
     {
@@ -32,11 +32,6 @@
       "name": "ninja",
       "hidden": true,
       "generator": "Ninja"
-    },
-    {
-      "name": "ninja-multi-config",
-      "hidden": true,
-      "generator": "Ninja Multi-Config"
     },
     {
       "name": "ci-std",
@@ -71,14 +66,14 @@
     {
       "name": "ci-unix",
       "hidden": true,
-      "inherits": ["flags-unix", "ci-std", "ninja-multi-config"],
+      "inherits": ["flags-unix", "ci-std"],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
     },
     {
       "name": "ci-win64",
-      "inherits": ["flags-windows", "ci-std", "ninja"],
+      "inherits": ["flags-windows", "ci-std", "vcpkg-win64-static"],
       "architecture": {
         "value": "x64",
         "strategy": "external"
@@ -88,57 +83,20 @@
     {
       "name": "ci-build",
       "binaryDir": "${sourceDir}/build",
+      "inherits": [ "ninja", "vcpkg", "dev-mode" ],
       "hidden": true
     },
     {
       "name": "ci-macOS",
-      "inherits": ["ci-build", "ci-unix", "dev-mode", "vcpkg"]
+      "inherits": ["ci-build", "ci-unix"]
     },
     {
       "name": "ci-ubuntu",
-      "inherits": ["ci-build", "ci-unix", "vcpkg", "dev-mode"]
+      "inherits": ["ci-build", "ci-unix"]
     },
     {
       "name": "ci-windows",
-      "inherits": ["ci-build", "ci-win64", "dev-mode", "vcpkg", "vcpkg-win64-static"]
-    }
-  ],
-  "buildPresets": [
-    {
-      "name": "ci-ubuntu",
-      "configurePreset": "ci-ubuntu"
-    },
-    {
-      "name": "ci-macOS",
-      "configurePreset": "ci-macOS"
-    },
-    {
-      "name": "ci-windows",
-      "configurePreset": "ci-windows"
-    }
-  ],
-  "testPresets": [
-    {
-      "name": "test-env",
-      "hidden": true,
-      "environment": {
-        "TLSUV_TEST_LOG": "7"
-      }
-    },
-    {
-      "name": "ci-ubuntu",
-      "configurePreset": "ci-ubuntu",
-      "inherits": [ "test-env" ]
-    },
-    {
-      "name": "ci-macOS",
-      "configurePreset": "ci-macOS",
-      "inherits": [ "test-env" ]
-    },
-    {
-      "name": "ci-windows",
-      "configurePreset": "ci-windows",
-      "inherits": [ "test-env" ]
+      "inherits": ["ci-build", "ci-win64"]
     }
   ]
 }

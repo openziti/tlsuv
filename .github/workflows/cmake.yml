@@ -62,19 +62,16 @@ jobs:
       with:
         configurePreset: ci-${{ matrix.os }}
         configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}`, `-DVCPKG_MANIFEST_FEATURES='test;samples;${{ matrix.tls }}'` ]"
-        buildPreset: ci-${{ matrix.os }}
-        testPreset: ci-${{ matrix.os }}
-        testPresetAdditionalArgs: "[ `--output-on-failure`, `--no-compress-output` ]"
+
+    - name: Build
+      run: cmake --build ./build
+
+    - name: Test
+      run: ctest --test-dir ./build --output-on-failure --no-compress-output
 
     - name: Memory Check
-      uses: lukka/run-cmake@v10
       if: always() && matrix.os == 'ubuntu'
-      with:
-        configurePreset: ci-${{ matrix.os }}
-        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}`,`-DVCPKG_MANIFEST_FEATURES='${{ matrix.tls }};test;samples'` ]"
-        buildPreset: ci-${{ matrix.os }}
-        testPreset: ci-${{ matrix.os }}
-        testPresetAdditionalArgs: "[ `--test-dir`, `${{ github.workspace }}/build`,  `--output-on-failure`, `--no-compress-output`, `-T`, `MemCheck` ]"
+      run: ctest --test-dir ./build --output-on-failure --no-compress-output -T MemCheck
 
     - name: upload test report
       if: always()
