@@ -68,11 +68,13 @@ jobs:
         configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}`, `-DVCPKG_MANIFEST_FEATURES='test;samples;${{ matrix.tls }}'` ]"
 
     - name: Build
+      shell: bash
       run: cmake --build ./build
 
     - name: Test
       env:
         TLSUV_TEST_LOG: 7
+      shell: bash
       run: ctest --test-dir ./build --output-on-failure --no-compress-output
 
 #    - name: Memory Check
