@@ -139,6 +139,7 @@ TEST_CASE("conn failures", "[http]") {
     REQUIRE(resp.code == UV_ECONNREFUSED);
 
     tlsuv_http_close(&clt, nullptr);
+    test.run();
 }
 
 
@@ -282,6 +283,7 @@ TEST_CASE("http_tests", "[http]") {
     }
     tlsuv_http_close(&clt, nullptr);
     tlsuv_set_global_connector(nullptr);
+    test.run();
 }
 
 #if defined(HSM_LIB)
@@ -316,6 +318,7 @@ TEST_CASE("pkcs11_client_cert_test","[http]") {
     tlsuv_http_close(&clt, nullptr);
     if (tls)
         tls->free_ctx(tls);
+    test.run();
 }
 #endif
 
@@ -428,6 +431,8 @@ TEST_CASE("client_cert_test","[http]") {
     tlsuv_http_close(&clt, nullptr);
     if (tls)
         tls->free_ctx(tls);
+
+    test.run();
 }
 
 const int ONE_SECOND = 1000000;
@@ -470,6 +475,7 @@ TEST_CASE("client_idle_test","[http]") {
 
         tlsuv_http_close(&clt, nullptr);
     }
+    test.run();
 }
 
 // hidden test
@@ -538,6 +544,7 @@ TEST_CASE("basic_test", "[http]") {
     tlsuv_http_close(&clt, nullptr);
 
     tlsuv_set_global_connector(nullptr);
+    test.run();
 }
 
 TEST_CASE("invalid CA", "[http]") {
@@ -555,6 +562,7 @@ TEST_CASE("invalid CA", "[http]") {
     }
 
     tlsuv_http_close(&clt, nullptr);
+    test.run();
 }
 
 
@@ -573,6 +581,7 @@ TEST_CASE("http_prefix", "[http]") {
     CHECK_THAT(resp.headers["Content-Length"], Equals("256"));
 
     tlsuv_http_close(&clt, nullptr);
+    test.run();
 }
 
 TEST_CASE("http_prefix_after", "[http]") {
@@ -592,6 +601,7 @@ TEST_CASE("http_prefix_after", "[http]") {
     CHECK_THAT(resp.headers["Content-Length"], Equals("256"));
 
     tlsuv_http_close(&clt, nullptr);
+    test.run();
 }
 
 TEST_CASE("content_length_test", "[http]") {
@@ -630,6 +640,7 @@ TEST_CASE("content_length_test", "[http]") {
     }
 
     tlsuv_http_close(&clt, nullptr);
+    test.run();
 }
 
 TEST_CASE("multiple requests", "[http]") {
@@ -685,6 +696,7 @@ TEST_CASE("multiple requests", "[http]") {
     }
 
     tlsuv_http_close(&clt, nullptr);
+    test.run();
 }
 
 // test proper client->engine cleanup between requests
@@ -708,6 +720,7 @@ TEST_CASE("TLS reconnect", "[http]") {
     CHECK(resp2.code == 200);
 
     tlsuv_http_close(&clt, nullptr);
+    test.run();
 }
 
 typedef struct verify_ctx_s {
@@ -751,6 +764,7 @@ TEST_CASE("large POST(GH-87)", "[http][gh-87]") {
 
     tlsuv_http_close(&clt, nullptr);
     free(buf);
+    test.run();
 }
 
 TEST_CASE("TLS verify with JWT", "[http]") {
@@ -802,6 +816,7 @@ TEST_CASE("TLS verify with JWT", "[http]") {
 
     free(vtx.sig);
     tls->free_ctx(tls);
+    test.run();
 }
 
 TEST_CASE("TLS to IP address", "[http]") {
@@ -822,6 +837,7 @@ TEST_CASE("TLS to IP address", "[http]") {
     CHECK(resp.headers["Content-Type"] == "application/dns-json");
     CHECK_THAT(resp.body, Catch::Matchers::ContainsSubstring("\"Answer\":[{\"name\":\"google.com\""));
     tlsuv_http_close(&clt, nullptr);
+    test.run();
 }
 
 TEST_CASE("connect timeout", "[http]") {
@@ -848,6 +864,7 @@ TEST_CASE("connect timeout", "[http]") {
     CHECK(resp.code == UV_ETIMEDOUT);
     CHECK(resp2.code == UV_ETIMEDOUT);
     tlsuv_http_close(&clt, nullptr);
+    test.run();
 }
 
 
@@ -902,6 +919,7 @@ TEST_CASE("HTTP deflate", "[http]") {
     std::cout << resp.req_body << std::endl;
 
     tlsuv_http_close(&clt, nullptr);
+    test.run();
 }
 
 TEST_CASE("URL encode", "[http]") {
@@ -938,6 +956,7 @@ TEST_CASE("URL encode", "[http]") {
 
     tlsuv_http_close(&clt, nullptr);
     json_value_free(j);
+    test.run();
 }
 
 class testdata {
@@ -988,6 +1007,7 @@ TEST_CASE("form test", "[http]") {
     tlsuv_http_close(&clt, nullptr);
 
     json_value_free(jval);
+    test.run();
 }
 
 TEST_CASE("form test too big", "[http]") {
@@ -1020,6 +1040,7 @@ TEST_CASE("form test too big", "[http]") {
     REQUIRE(resp.status == "form data too big");
 
     tlsuv_http_close(&clt, nullptr);
+    test.run();
 }
 
 TEST_CASE("test req header too big", "[http]") {
@@ -1050,6 +1071,7 @@ TEST_CASE("test req header too big", "[http]") {
         REQUIRE(resp.status == "request header too big");
 
         tlsuv_http_close(&clt, nullptr);
+        test.run();
     }
 }
 
@@ -1082,6 +1104,7 @@ TEST_CASE("test request cancel", "[http]") {
     CHECK(td.resp2.code == UV_ECANCELED);
 
     tlsuv_http_close(&td.clt, nullptr);
+    test.run();
 }
 
 #define TEST_FIELD(f, VAL)                              \
