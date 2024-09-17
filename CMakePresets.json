@@ -50,8 +50,8 @@
       "name": "flags-unix",
       "hidden": true,
       "cacheVariables": {
-        "CMAKE_C_FLAGS": "",
-        "CMAKE_CXX_FLAGS": ""
+        "CMAKE_C_FLAGS": "-fsanitize=address -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address -fno-omit-frame-pointer"
       }
     },
     {

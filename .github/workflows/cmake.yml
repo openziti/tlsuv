@@ -58,7 +58,7 @@ jobs:
         Start-Process -FilePath ${{ github.workspace }}/build/test-server -ArgumentList "-ca-key","./tests/certs/ca.key","-ca","./tests/certs/ca.pem"
 
     - uses: lukka/run-cmake@v10
-      name: Build and Test
+      name: Configure
       with:
         configurePreset: ci-${{ matrix.os }}
         configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}`, `-DVCPKG_MANIFEST_FEATURES='test;samples;${{ matrix.tls }}'` ]"
@@ -67,6 +67,8 @@ jobs:
       run: cmake --build ./build
 
     - name: Test
+      env:
+        TLSUV_TEST_LOG: 7
       run: ctest --test-dir ./build --output-on-failure --no-compress-output
 
     - name: Memory Check
