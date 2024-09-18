@@ -11,6 +11,7 @@
       "dependencies": [
         {
           "name": "tlsuv",
+          "default-features": false,
           "features": [ "openssl" ]
         }
       ]
@@ -22,11 +23,7 @@
 
     "mbedtls": {
       "description": "use mbedTLS",
-      "dependencies": [
-        {
-          "name": "mbedtls"
-        }
-      ]
+      "dependencies": [ "mbedtls" ]
     },
     "http": {
       "description": "adds HTTP and websocket support",
@@ -56,9 +53,18 @@
           "platform": "windows"
         }
       ]
+    },
+    "all-deps": {
+      "description": "All dependencies",
+      "dependencies": [
+        {
+          "name": "tlsuv",
+          "features": [ "test", "samples", "mbedtls" ]
+        }
+      ]
     }
   },
   "overrides": [
   ],
-  "builtin-baseline": "53bef8994c541b6561884a8395ea35715ece75db"
+  "builtin-baseline": "3508985146f1b1d248c67ead13f8f54be5b4f5da"
 }
