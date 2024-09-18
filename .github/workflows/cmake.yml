@@ -12,8 +12,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, macOS, windows]
-        tls: [ openssl, mbedtls ]
+        include:
+          - os: ubuntu
+            tls: openssl
+          - os: ubuntu
+            tls: mbedtls
+          - os: macOS
+            tls: openssl
+          - os: macOS
+            tls: mbedtls
+          - os: windows
+            tls: openssl
+            triplet: x64-windows-static-md
+          - os: windows
+            tls: mbedtls
+            triplet: x64-windows-static-md
 
     steps:
     - name: Install tools
@@ -33,9 +46,20 @@ jobs:
 
     - uses: lukka/get-cmake@latest
 
-    - uses: lukka/run-vcpkg@v10
+    - name: Cache ${{ matrix.target }} deps
+      id: cache
+      uses: actions/cache@v4
       with:
-        vcpkgGitCommitId: '53bef8994c541b6561884a8395ea35715ece75db'
+        path: vcpkg
+        key: dependencies-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('./vcpkg.json') }}
+
+    - uses: lukka/run-vcpkg@v11
+      env:
+        VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
+      with:
+        doNotCache: true
+        runVcpkgInstall: true
+        runVcpkgFormatString: '[`install`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--x-feature=mbedtls`, `--x-feature=test`, `--x-feature=samples`]'
 
     - name: Setup Golang with cache
       uses: magnetikonline/action-golang-cache@v4
