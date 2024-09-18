@@ -2,6 +2,8 @@ name: C/C++ CI
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -40,7 +42,7 @@ jobs:
       run: |
         brew install pkg-config softhsm
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         fetch-depth: '0'
 
@@ -50,7 +52,7 @@ jobs:
       id: cache
       uses: actions/cache@v4
       with:
-        path: vcpkg
+        path: vcpkg/packages
         key: dependencies-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('./vcpkg.json') }}
 
     - uses: lukka/run-vcpkg@v11
@@ -59,7 +61,7 @@ jobs:
       with:
         doNotCache: true
         runVcpkgInstall: true
-        runVcpkgFormatString: '[`install`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--x-feature=mbedtls`, `--x-feature=test`, `--x-feature=samples`]'
+        runVcpkgFormatString: '[`install`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--x-feature=all-deps`]'
 
     - name: Setup Golang with cache
       uses: magnetikonline/action-golang-cache@v4
@@ -102,7 +104,7 @@ jobs:
 
     - name: upload test report
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.os }}-${{ matrix.tls }}-TestReport
         path: ${{ github.workspace }}/build/Testing/
