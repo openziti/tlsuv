@@ -42,7 +42,7 @@ jobs:
       run: |
         brew install pkg-config softhsm
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         fetch-depth: '0'
 
@@ -104,7 +104,7 @@ jobs:
 
     - name: upload test report
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.os }}-${{ matrix.tls }}-TestReport
         path: ${{ github.workspace }}/build/Testing/
