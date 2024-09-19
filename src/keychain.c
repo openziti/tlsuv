@@ -18,7 +18,7 @@
 #include <assert.h>
 #include "keychain.h"
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || _WIN32
 extern keychain_t* platform_keychain();
 #endif
 
@@ -26,7 +26,7 @@ static keychain_t *KEYCHAIN;
 static uv_once_t init_guard;
 
 static void init() {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || _WIN32
     tlsuv_set_keychain(platform_keychain());
 #endif
 }

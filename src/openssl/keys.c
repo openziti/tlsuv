@@ -110,7 +110,7 @@ static void key_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
     }
 }
 
-static void init() {
+static void init(void) {
     p11_ec_idx = EC_KEY_get_ex_new_index(0, "tlsuv-ec-pkcs11", NULL, NULL, key_ex_free);
     p11_rsa_idx = RSA_get_ex_new_index(0, "tlsuv-rsa-pkcs11", NULL, NULL, key_ex_free);
 
@@ -577,7 +577,7 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
         EC_KEY_free(key); // decrease refcount
     } else if (keychain_key_type(k) == keychain_key_rsa) {
         pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
-        const unsigned char *p = (uint8_t *)pub;
+        p = (uint8_t *)pub;
         RSA *rsa = d2i_RSAPublicKey(NULL, &p, (long)publen);
         RSA_set_ex_data(rsa, kc_rsa_idx, k);
         RSA_set_method(rsa, ext_rsa_method);

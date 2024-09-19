@@ -16,14 +16,12 @@
 #include "p11.h"
 #include "util.h"
 
-#include <iostream>
 #include <cstring>
+#include <iostream>
 #include <tlsuv/tls_engine.h>
 
 #define xstr(s) str__(s)
 #define str__(s) #s
-
-
 
 
 TEST_CASE("key gen", "[key]") {
@@ -35,7 +33,7 @@ TEST_CASE("key gen", "[key]") {
     char *pem;
     size_t pemlen;
     REQUIRE(key->to_pem(key, &pem, &pemlen) == 0);
-    printf("priv key:\n%.*s\n", (int)pemlen, pem);
+    printf("priv key:\n%.*s\n", (int) pemlen, pem);
 
     tlsuv_private_key_t k1;
     char *pem2;
@@ -78,7 +76,7 @@ static void check_key(tlsuv_private_key_t key) {
     CHECK(-1 == pub->verify(pub, hash_SHA256, data, datalen, sig, siglen));
     CHECK(0 == key->sign(key, hash_SHA256, data, datalen, sig, &siglen));
     CHECK(0 == pub->verify(pub, hash_SHA256, data, datalen, sig, siglen));
-    sig[0] = (char)(sig[0] ^ 0xff);
+    sig[0] = (char) (sig[0] ^ 0xff);
     CHECK(-1 == pub->verify(pub, hash_SHA256, data, datalen, sig, siglen));
 
     pub->free(pub);
@@ -158,7 +156,7 @@ TEST_CASE("gen csr", "[engine]") {
                                    "CN", "CSR test",
                                    NULL) == 0);
     CHECK(pemlen == strlen(pem));
-    printf("CSR:\n%.*s\n", (int)pemlen, pem);
+    printf("CSR:\n%.*s\n", (int) pemlen, pem);
     free(pem);
     pem = nullptr;
 
@@ -191,7 +189,7 @@ TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
     CHECK(rc == 0);
     REQUIRE(key != nullptr);
 
-    WHEN(keyType <<": private key PEM") {
+    WHEN(keyType << ": private key PEM") {
         char *pem;
         size_t pemlen;
         rc = key->to_pem(key, &pem, &pemlen);
@@ -329,7 +327,7 @@ TEST_CASE("keychain", "[key]") {
         memset(sig, 0, sizeof(sig));
         size_t siglen = sizeof(sig);
 
-        WHEN ("it can sign data") {
+        WHEN("it can sign data") {
             REQUIRE(0 == pk->sign(pk, hash_SHA256, data, datalen, sig, &siglen));
 
             THEN("verify with its public key") {
