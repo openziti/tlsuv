@@ -8,6 +8,8 @@
 #include "util.h"
 
 #include <Security/Security.h>
+#include <Security/SecKeychain.h>
+#include <Security/SecureTransport.h>
 
 static tls_context ctx_api;
 static struct tlsuv_private_key_s sec_key_api;

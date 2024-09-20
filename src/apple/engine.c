@@ -5,6 +5,9 @@
 #include "context.h"
 #include <uv.h>
 
+#include <security/Security.h>
+#include <security/SecureTransport.h>
+
 struct sectransport_engine {
     struct tlsuv_engine_s api;
     CFArrayRef policies;
