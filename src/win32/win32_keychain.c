@@ -78,7 +78,7 @@ static wchar_t* name_to_wchar(const char *name) {
 static int gen_key(keychain_key_t *key, enum keychain_key_type type, const char *name){
     init();
     static wchar_t *algos[] = {
-            NCRYPT_ECDH_P521_ALGORITHM,
+            NCRYPT_ECDSA_P521_ALGORITHM,
             NCRYPT_ECDSA_P384_ALGORITHM,
             NCRYPT_ECDSA_P256_ALGORITHM,
             NCRYPT_ECDSA_ALGORITHM,
