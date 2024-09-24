@@ -503,6 +503,12 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
     const keychain_t *keychain = tlsuv_keychain();
     assert(keychain);
 
+    enum keychain_key_type type = keychain_key_type(k);
+    if (type == keychain_key_invalid) {
+        UM_LOG(ERR, "unsupported key type");
+        return -1;
+    }
+
     int rc = 0;
     EVP_PKEY_CTX *pkey_ctx = NULL;
     char pub[8 * 1024];
@@ -538,7 +544,7 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
         return 0;
     }
 
-    if (keychain_key_type(k) == keychain_key_ec) {
+    if (type == keychain_key_ec) {
         int bits = keychain->key_bits(k);
         if (bits < 0) {
             UM_LOG(ERR, "invalid key size");
@@ -575,7 +581,7 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
         EC_KEY_set_method(key, ext_ec_method);
         EVP_PKEY_set1_EC_KEY(*pkey, key);
         EC_KEY_free(key); // decrease refcount
-    } else if (keychain_key_type(k) == keychain_key_rsa) {
+    } else if (type == keychain_key_rsa) {
         pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
         p = (uint8_t *)pub;
         RSA *rsa = d2i_RSAPublicKey(NULL, &p, (long)publen);
