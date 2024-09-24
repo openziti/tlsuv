@@ -169,14 +169,14 @@ static int key_public(keychain_key_t k, char *buf, size_t *len) {
 static int key_sign(keychain_key_t k,
                     const uint8_t * data, size_t datalen,
                     uint8_t *sig, size_t *siglen, int p) {
-    UM_LOG(DEBG, "signing");
+    UM_LOG(DEBG, "signing %zd bytes opts[%d]", datalen, p);
     SecKeyRef key = k;
     CFErrorRef err = NULL;
     SecKeyAlgorithm algorithm;
 
     switch (key_type(k)) {
         case keychain_key_ec:
-            algorithm = kSecKeyAlgorithmECDSASignatureDigestX962SHA256;
+            algorithm = kSecKeyAlgorithmECDSASignatureDigestX962;
             break;
         case keychain_key_rsa:
             if (p == 1) { // RSA_PKCS1_PADDING
