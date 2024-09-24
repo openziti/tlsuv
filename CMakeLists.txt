@@ -46,7 +46,11 @@ if (APPLE)
     list(APPEND tlsuv_sources
             src/apple/keychain.c
     )
-endif (APPLE)
+elseif (WIN32)
+    list(APPEND tlsuv_sources
+            src/win32/win32_keychain.c
+    )
+endif ()
 
 if (TLSUV_HTTP)
     list(APPEND tlsuv_sources
@@ -155,8 +159,13 @@ elseif(USE_OPENSSL)
 endif()
 
 if (WIN32)
-    target_compile_definitions(tlsuv PRIVATE WIN32_LEAN_AND_MEAN)
-    target_link_libraries(tlsuv PUBLIC crypt32)
+    target_compile_definitions(tlsuv
+            PRIVATE WIN32_LEAN_AND_MEAN
+            PRIVATE WINVER=0x0A00
+            PRIVATE _WIN32_WINNT=0x0A00
+            PRIVATE _CRT_SECURE_NO_WARNINGS
+    )
+    target_link_libraries(tlsuv PUBLIC crypt32 ncrypt)
 endif()
 
 install(DIRECTORY include/tlsuv DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

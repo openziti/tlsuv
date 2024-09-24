@@ -252,7 +252,7 @@ l += a_size;\
             }
             req->req_body_size = (ssize_t)req_len;
             char length_str[16];
-            snprintf(length_str, sizeof(length_str), "%ld", req_len);
+            snprintf(length_str, sizeof(length_str), "%zd", req_len);
             set_http_header(&req->req_headers, "Content-Length", length_str);
         }
     }
