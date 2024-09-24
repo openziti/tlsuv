@@ -50,6 +50,7 @@ static void do_init(void) {
 
     if (rc != ERROR_SUCCESS) {
         UM_LOG(ERR, "failed to initialize Windows keychain: %s", win32_error(rc));
+        return;
     }
 
     wchar_t name[1024];
