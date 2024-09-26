@@ -112,7 +112,7 @@ jobs:
       if: steps.build.outcome == 'success'
       run: |
         cd build
-        ctest --output-on-failure --no-compress-output --output-junit TEST-results.xml -T test
+        ctest --output-on-failure --no-compress-output -T test
 
     - name: Memory Check
       if: steps.build.outcome == 'success' && matrix.image == 'ubuntu'
@@ -120,13 +120,13 @@ jobs:
         TLSUV_TEST_LOG: 7
       run: |
         cd build
-        ctest --output-on-failure --no-compress-output --output-junit TEST-memcheck.xml -T memcheck
+        ctest --output-on-failure --no-compress-output -T memcheck
 
     - name: upload test summary
       if: steps.build.outcome == 'success'
       uses: mikepenz/action-junit-report@v4
       with:
-        report_paths: ${{ github.workspace }}/build/TEST-*.xml
+        report_paths: ${{ github.workspace }}/build/**/TEST-*.xml
 
     - name: upload test report
       if: steps.build.outcome == 'success'

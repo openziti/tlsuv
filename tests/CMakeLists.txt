@@ -97,12 +97,16 @@ add_custom_target(run-tests
         COMMAND $<TARGET_FILE:all_tests> -r xml -o ${PROJECT_BINARY_DIR}/Testing/results.xml)
 
 include(CTest)
-add_test(key_tests all_tests [key])
-add_test(engine_tests all_tests [engine])
-add_test(stream_tests all_tests [stream])
+macro(mk_test tag)
+    add_test(${tag}_tests all_tests [${tag}] -r junit::out=TEST-${tag}.xml -r console)
+endmacro()
+
+mk_test(key)
+mk_test(engine)
+mk_test(stream)
 
 if (TLSUV_HTTP)
-    add_test(http_tests all_tests [http])
-    add_test(ws_tests all_tests [websocket])
+    mk_test(http)
+    mk_test(websocket)
 endif (TLSUV_HTTP)
 
