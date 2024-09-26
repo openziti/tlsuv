@@ -391,9 +391,6 @@ static void process_inbound(tlsuv_stream_t *clt) {
 
         if (total > 0) {
             clt->read_cb((uv_stream_t *) clt, (ssize_t) total, &buf);
-            if (rc == TLS_AGAIN) {
-                break;
-            }
             continue;
         }
 
@@ -409,6 +406,10 @@ static void process_inbound(tlsuv_stream_t *clt) {
         }
 
         clt->read_cb((uv_stream_t *) clt, (ssize_t) total, &buf);
+
+        if (rc == TLS_AGAIN) {
+            break;
+        }
     }
     UM_LOG(TRACE, "finished reading after %d iterations", 16 - attempts);
 }
