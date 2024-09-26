@@ -9,38 +9,49 @@ on:
 
 jobs:
   build:
-
-    runs-on: ${{ matrix.os }}-latest
+    name: ${{ matrix.target }}-${{ matrix.tls }}
+    runs-on: ${{ matrix.image }}-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu
+          - image: ubuntu
             tls: openssl
-          - os: ubuntu
+            target: x64-linux
+          - image: ubuntu
             tls: mbedtls
-          - os: macOS
+            target: x64-linux
+          - image: macOS
             tls: openssl
-          - os: macOS
+            target: arm64-osx
+          - image: macOS
             tls: mbedtls
-          - os: windows
+            target: arm64-osx
+          - image: windows
             tls: openssl
-            triplet: x64-windows-static-md
-          - os: windows
+            target: x64-windows-static
+          - image: windows
+            tls: openssl
+            target: x64-mingw-static
+          - image: windows
             tls: mbedtls
-            triplet: x64-windows-static-md
+            target: x64-windows-static
 
     steps:
     - name: Install tools
-      if: matrix.os == 'ubuntu'
+      if: matrix.image == 'ubuntu'
       run: |
         sudo apt update
         sudo apt install -y valgrind softhsm
 
     - name: Install tools
-      if: matrix.os == 'macOS'
+      if: matrix.image == 'macOS'
       run: |
         brew install pkg-config softhsm
+
+    - name: Add msbuild to PATH
+      if: matrix.image == 'windows'
+      uses: microsoft/setup-msbuild@v2
 
     - uses: actions/checkout@v4
       with:
@@ -52,16 +63,28 @@ jobs:
       id: cache
       uses: actions/cache@v4
       with:
+        save-always: 'true'
         path: vcpkg/packages
-        key: dependencies-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('./vcpkg.json') }}
+        key: dependencies-${{ matrix.target }}-${{ hashFiles('./vcpkg.json') }}
 
     - uses: lukka/run-vcpkg@v11
       env:
-        VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
+        VCPKG_DEFAULT_TRIPLET: ${{ matrix.target }}
       with:
         doNotCache: true
         runVcpkgInstall: true
         runVcpkgFormatString: '[`install`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--x-feature=all-deps`]'
+
+    - uses: lukka/run-cmake@v10
+      name: Configure build
+      with:
+        configurePreset: ${{ matrix.target }}
+        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}`, `-DVCPKG_MANIFEST_FEATURES='test;samples;${{ matrix.tls }}'` ]"
+
+    - name: Build
+      id: build
+      run: |
+        cmake --build build
 
     - name: Setup Golang with cache
       uses: magnetikonline/action-golang-cache@v4
@@ -74,37 +97,40 @@ jobs:
         go build -o ${{ github.workspace }}/build/ .
 
     - name: start test server
-      if: matrix.os != 'windows'
+      if: matrix.image != 'windows'
       run: |
         ${{ github.workspace }}/build/test-server -ca-key ./tests/certs/ca.key -ca ./tests/certs/ca.pem &
 
     - name: start test server
-      if: matrix.os == 'windows'
+      if: matrix.image == 'windows'
       run: |
         Start-Process -FilePath ${{ github.workspace }}/build/test-server -ArgumentList "-ca-key","./tests/certs/ca.key","-ca","./tests/certs/ca.pem"
 
-    - uses: lukka/run-cmake@v10
-      name: Build and Test
-      with:
-        configurePreset: ci-${{ matrix.os }}
-        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}`, `-DVCPKG_MANIFEST_FEATURES='test;samples;${{ matrix.tls }}'` ]"
-        buildPreset: ci-${{ matrix.os }}
-        testPreset: ci-${{ matrix.os }}
-        testPresetAdditionalArgs: "[ `--output-on-failure`, `--no-compress-output` ]"
+    - name: Test
+      env:
+        TLSUV_TEST_LOG: 7
+      if: steps.build.outcome == 'success'
+      run: |
+        cd build
+        ctest --output-on-failure --no-compress-output --output-junit TEST-results.xml -T test
 
     - name: Memory Check
-      uses: lukka/run-cmake@v10
-      if: always() && matrix.os == 'ubuntu'
+      if: steps.build.outcome == 'success' && matrix.image == 'ubuntu'
+      env:
+        TLSUV_TEST_LOG: 7
+      run: |
+        cd build
+        ctest --output-on-failure --no-compress-output --output-junit TEST-memcheck.xml -T memcheck
+
+    - name: upload test summary
+      if: steps.build.outcome == 'success'
+      uses: mikepenz/action-junit-report@v4
       with:
-        configurePreset: ci-${{ matrix.os }}
-        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}`,`-DVCPKG_MANIFEST_FEATURES='${{ matrix.tls }};test;samples'` ]"
-        buildPreset: ci-${{ matrix.os }}
-        testPreset: ci-${{ matrix.os }}
-        testPresetAdditionalArgs: "[ `--test-dir`, `${{ github.workspace }}/build`,  `--output-on-failure`, `--no-compress-output`, `-T`, `MemCheck` ]"
+        report_paths: ${{ github.workspace }}/build/TEST-*.xml
 
     - name: upload test report
-      if: always()
+      if: steps.build.outcome == 'success'
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.os }}-${{ matrix.tls }}-TestReport
+        name: ${{ matrix.target }}-${{ matrix.tls }}-TestReport
         path: ${{ github.workspace }}/build/Testing/

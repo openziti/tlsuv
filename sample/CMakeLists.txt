@@ -1,4 +1,4 @@
-if (WIN32)
+if (MSVC)
     find_package(unofficial-getopt-win32 REQUIRED)
 endif()
 
