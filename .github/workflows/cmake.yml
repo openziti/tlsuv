@@ -126,6 +126,7 @@ jobs:
       if: steps.build.outcome == 'success'
       uses: mikepenz/action-junit-report@v4
       with:
+        detailed_summary: 'true'
         report_paths: ${{ github.workspace }}/build/**/TEST-*.xml
 
     - name: upload test report
