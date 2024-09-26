@@ -113,10 +113,10 @@
       }
     },
     {
-      "name": "x64-windows-static",
+      "name": "x64-windows-static-md",
       "inherits": ["ci-build", "ci-win64", "dev-mode", "vcpkg"],
       "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-windows-static"
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
       }
     },
     {

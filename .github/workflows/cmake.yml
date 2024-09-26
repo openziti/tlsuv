@@ -29,13 +29,13 @@ jobs:
             target: arm64-osx
           - image: windows
             tls: openssl
-            target: x64-windows-static
+            target: x64-windows-static-md
           - image: windows
             tls: openssl
             target: x64-mingw-static
           - image: windows
             tls: mbedtls
-            target: x64-windows-static
+            target: x64-windows-static-md
 
     steps:
     - name: Install tools
