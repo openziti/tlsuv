@@ -337,7 +337,7 @@ TEST_CASE("keychain", "[key]") {
                 char *pem = nullptr;
                 size_t pem_len = 0;
                 CHECK(pub->to_pem(pub, &pem, &pem_len) == 0);
-                CHECK(pem != NULL);
+                CHECK(pem != nullptr);
                 if (pem) {
                     CHECK_THAT(pem, Catch::Matchers::StartsWith("-----BEGIN PUBLIC KEY-----"));
                     std::cout << std::string(pem, pem_len) << std::endl;
@@ -398,7 +398,7 @@ TEST_CASE("keychain-manual", "[.]") {
                 char *pem = nullptr;
                 size_t pem_len = 0;
                 CHECK(pub->to_pem(pub, &pem, &pem_len) == 0);
-                CHECK(pem != NULL);
+                CHECK(pem != nullptr);
                 if (pem) {
                     CHECK_THAT(pem, Catch::Matchers::StartsWith("-----BEGIN PUBLIC KEY-----"));
                     std::cout << std::string(pem, pem_len) << std::endl;

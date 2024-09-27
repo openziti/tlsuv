@@ -22,11 +22,9 @@
       }
     },
     {
-      "name": "vcpkg-win64-static",
+      "name": "vs-2022",
       "hidden": true,
-      "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
-      }
+      "generator": "Visual Studio 17 2022"
     },
     {
       "name": "ninja",
@@ -78,10 +76,20 @@
     },
     {
       "name": "ci-win64",
-      "inherits": ["flags-windows", "ci-std", "ninja"],
+      "inherits": ["flags-windows", "ci-std", "vs-2022"],
       "architecture": {
         "value": "x64",
         "strategy": "external"
+      },
+      "hidden": true
+    },
+    {
+      "name": "ci-win-mingw",
+      "inherits": ["ci-std", "ninja"],
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_EXE_LINKER_FLAGS": "-Wl,-Bstatic -lpthread"
       },
       "hidden": true
     },
@@ -91,54 +99,32 @@
       "hidden": true
     },
     {
-      "name": "ci-macOS",
-      "inherits": ["ci-build", "ci-unix", "dev-mode", "vcpkg"]
-    },
-    {
-      "name": "ci-ubuntu",
-      "inherits": ["ci-build", "ci-unix", "vcpkg", "dev-mode"]
-    },
-    {
-      "name": "ci-windows",
-      "inherits": ["ci-build", "ci-win64", "dev-mode", "vcpkg", "vcpkg-win64-static"]
-    }
-  ],
-  "buildPresets": [
-    {
-      "name": "ci-ubuntu",
-      "configurePreset": "ci-ubuntu"
-    },
-    {
-      "name": "ci-macOS",
-      "configurePreset": "ci-macOS"
-    },
-    {
-      "name": "ci-windows",
-      "configurePreset": "ci-windows"
-    }
-  ],
-  "testPresets": [
-    {
-      "name": "test-env",
-      "hidden": true,
-      "environment": {
-        "TLSUV_TEST_LOG": "7"
+      "name": "arm64-osx",
+      "inherits": ["ci-build", "ci-unix", "dev-mode", "vcpkg"],
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "arm64-osx"
       }
     },
     {
-      "name": "ci-ubuntu",
-      "configurePreset": "ci-ubuntu",
-      "inherits": [ "test-env" ]
+      "name": "x64-linux",
+      "inherits": ["ci-build", "ci-unix", "vcpkg", "dev-mode"],
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux"
+      }
     },
     {
-      "name": "ci-macOS",
-      "configurePreset": "ci-macOS",
-      "inherits": [ "test-env" ]
+      "name": "x64-windows-static-md",
+      "inherits": ["ci-build", "ci-win64", "dev-mode", "vcpkg"],
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
+      }
     },
     {
-      "name": "ci-windows",
-      "configurePreset": "ci-windows",
-      "inherits": [ "test-env" ]
+      "name": "x64-mingw-static",
+      "inherits": [ "ci-build", "ci-win-mingw", "dev-mode", "vcpkg" ],
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-static"
+      }
     }
   ]
 }

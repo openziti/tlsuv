@@ -1,4 +1,4 @@
-if (WIN32)
+if (MSVC)
     find_package(unofficial-getopt-win32 REQUIRED)
 endif()
 
@@ -19,7 +19,7 @@ target_link_libraries(sample-cf PUBLIC tlsuv common)
 
 if (TLSUV_HTTP)
     add_executable(um-curl um-curl.c)
-    if (WIN32)
+    if (MSVC)
         target_link_libraries(um-curl PRIVATE unofficial::getopt-win32::getopt)
     endif()
     target_link_libraries(um-curl PUBLIC tlsuv common)

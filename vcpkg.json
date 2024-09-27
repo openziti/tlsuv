@@ -50,7 +50,7 @@
       "dependencies": [
         {
           "name": "getopt-win32",
-          "platform": "windows"
+          "platform": "windows & !mingw"
         }
       ]
     },

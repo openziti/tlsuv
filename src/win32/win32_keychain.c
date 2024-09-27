@@ -82,7 +82,6 @@ static int gen_key(keychain_key_t *key, enum keychain_key_type type, const char 
             NCRYPT_ECDSA_P521_ALGORITHM,
             NCRYPT_ECDSA_P384_ALGORITHM,
             NCRYPT_ECDSA_P256_ALGORITHM,
-            NCRYPT_ECDSA_ALGORITHM,
     };
 
     if (type != keychain_key_ec) {
