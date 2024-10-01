@@ -315,13 +315,9 @@ static void fail_pending_reqs(tlsuv_stream_t *clt, int err) {
 
 static void process_outbound(tlsuv_stream_t *clt) {
     tlsuv_write_t *req;
-    ssize_t ret;
+    ssize_t ret = 0;
 
-    for (;;) {
-        if (TAILQ_EMPTY(&clt->queue)) {
-            return;
-        }
-
+    while (!TAILQ_EMPTY(&clt->queue)) {
         req = TAILQ_FIRST(&clt->queue);
         ret = write_req(clt, &req->buf);
         if (ret > 0) {
@@ -336,6 +332,7 @@ static void process_outbound(tlsuv_stream_t *clt) {
                     req->wr->cb(req->wr, 0);
                 }
                 tlsuv__free(req);
+                req = NULL;
             }
             continue;
         }
@@ -344,15 +341,22 @@ static void process_outbound(tlsuv_stream_t *clt) {
             return;
         }
 
-        UM_LOG(WARN, "failed to write: %d/%s", (int)ret, uv_strerror(ret));
-        TAILQ_REMOVE(&clt->queue, req, _next);
-        clt->queue_len -= 1;
-        if (req->wr->cb) {
-            req->wr->cb(req->wr, (int)ret);
-        }
         break;
     }
 
+    // write failed so fail all queued requests
+    if (ret < 0) {
+        UM_LOG(WARN, "failed to write: %d/%s", (int)ret, uv_strerror(ret));
+        while (!TAILQ_EMPTY(&clt->queue)) {
+            req = TAILQ_FIRST(&clt->queue);
+            TAILQ_REMOVE(&clt->queue, req, _next);
+            clt->queue_len -= 1;
+            if (req->wr->cb) {
+                req->wr->cb(req->wr, (int) ret);
+            }
+            tlsuv__free(req);
+        }
+    }
 }
 
 static void process_inbound(tlsuv_stream_t *clt) {
