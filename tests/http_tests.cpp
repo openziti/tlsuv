@@ -910,7 +910,8 @@ TEST_CASE("URL encode", "[http]") {
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
 
-    tlsuv_http_init(test.loop, &clt, "https://localhost:8443/anything");
+    std::string url1("https://localhost:8443/anything");
+    tlsuv_http_init(test.loop, &clt, url1.c_str());
     tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "", resp_capture_cb, &resp);
     tlsuv_http_pair q = {
@@ -932,7 +933,7 @@ TEST_CASE("URL encode", "[http]") {
 
     CHECK_THAT(query, Equals("this is a <test>!"));
 
-    CHECK_THAT(url, Catch::Matchers::Equals("http://localhost/anything?query=this%20is%20a%20%3Ctest%3E!"));
+    CHECK_THAT(url, Catch::Matchers::Equals(url1 + "?query=this%20is%20a%20%3Ctest%3E!"));
 
     std::cout << resp.req_body << std::endl;
 
