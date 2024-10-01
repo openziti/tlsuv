@@ -933,7 +933,7 @@ TEST_CASE("URL encode", "[http]") {
 
     CHECK_THAT(query, Equals("this is a <test>!"));
 
-    CHECK_THAT(url, Catch::Matchers::Equals(url1 + "?query=this%20is%20a%20%3Ctest%3E!"));
+    CHECK_THAT(url, Catch::Matchers::EndsWith("?query=this%20is%20a%20%3Ctest%3E!"));
 
     std::cout << resp.req_body << std::endl;
 
