@@ -1,10 +1,10 @@
-// Copyright (c) NetFoundry Inc.
+// Copyright (c) 2024. NetFoundry Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
 //
-//     https://www.apache.org/licenses/LICENSE-2.0
+// You may obtain a copy of the License at
+// https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,7 +18,8 @@
 #include <uv.h>
 
 #include <ncrypt.h>
-#include "um_debug.h"
+#include "../um_debug.h"
+#include "../alloc.h"
 
 #if USE_OPENSSL
 #include <openssl/ecdsa.h>
@@ -71,7 +72,7 @@ static void init() {
 
 static wchar_t* name_to_wchar(const char *name) {
     int wlen = MultiByteToWideChar(CP_UTF8, 0, name, (int) strlen(name), NULL, 0);
-    wchar_t *wname = calloc(wlen, sizeof(wchar_t) + 1);
+    wchar_t *wname = tlsuv__calloc(wlen, sizeof(wchar_t) + 1);
     MultiByteToWideChar(CP_UTF8, 0, name, (int)strlen(name), wname, wlen);
     return wname;
 }
@@ -117,7 +118,7 @@ static int gen_key(keychain_key_t *key, enum keychain_key_type type, const char 
     res = 0;
 
     done:
-    free(wname);
+    tlsuv__free(wname);
     return res;
 }
 
@@ -128,7 +129,7 @@ static int load_key(keychain_key_t *k, const char *name) {
     NCRYPT_KEY_HANDLE keyh = 0;
     SECURITY_STATUS rc = NCryptOpenKey(provider, &keyh, wname, 0, 0);
 
-    free(wname);
+    tlsuv__free(wname);
     
     if (rc == ERROR_SUCCESS) {
         *k = (keychain_key_t) keyh;

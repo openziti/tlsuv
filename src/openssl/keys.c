@@ -1,10 +1,10 @@
-// Copyright (c) NetFoundry Inc.
+// Copyright (c) 2024. NetFoundry Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
 //
-//     https://www.apache.org/licenses/LICENSE-2.0
+// You may obtain a copy of the License at
+// https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -144,8 +144,12 @@ void pub_key_init(struct pub_key_s *pubkey) {
     *pubkey = PUB_KEY_API;
 }
 
-void priv_key_init(struct priv_key_s *privkey) {
-    *privkey = PRIV_KEY_API;
+static tlsuv_private_key_t new_private_key(EVP_PKEY *pkey) {
+    struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
+    *private_key = PRIV_KEY_API;
+    private_key->pkey = pkey;
+    private_key->ref_count = 1;
+    return (tlsuv_private_key_t) private_key;
 }
 
 void cert_init(struct cert_s *c) {
@@ -228,8 +232,11 @@ static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *d
 
 static void privkey_free(tlsuv_private_key_t k) {
     struct priv_key_s *priv = (struct priv_key_s *) k;
-    EVP_PKEY_free(priv->pkey);
-    tlsuv__free(priv);
+    priv->ref_count--;
+    if (priv->ref_count < 1) {
+        EVP_PKEY_free(priv->pkey);
+        tlsuv__free(priv);
+    }
 }
 
 static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *data, size_t datalen, char *sig, size_t *siglen) {
@@ -338,10 +345,7 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
         UM_LOG(WARN, "failed to load key: %ld/%s", err, ERR_lib_error_string(err));
         rc = -1;
     } else {
-        struct priv_key_s *privkey = tlsuv__calloc(1, sizeof(struct priv_key_s));
-        priv_key_init(privkey);
-        privkey->pkey = pk;
-        *key = (tlsuv_private_key_t) privkey;
+        *key = new_private_key(pk);
     }
     BIO_free(kb);
     return rc;
@@ -484,10 +488,7 @@ int gen_pkcs11_key(tlsuv_private_key_t *key, const char *pkcs11driver, const cha
             goto error;
     }
 
-    struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
-    *private_key = PRIV_KEY_API;
-    private_key->pkey = pkey;
-    *key = (tlsuv_private_key_t)private_key;
+    *key = new_private_key(pkey);
 
     return 0;
 
@@ -616,10 +617,7 @@ int gen_keychain_key(tlsuv_private_key_t *key, const char *name) {
 
     load_kc_key(&pkey, k);
 
-    struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
-    *private_key = PRIV_KEY_API;
-    private_key->pkey = pkey;
-    *key = (tlsuv_private_key_t)private_key;
+    *key = new_private_key(pkey);
 
     return 0;
 
@@ -647,10 +645,7 @@ int load_keychain_key(tlsuv_private_key_t *key, const char *name) {
         goto error;
     }
 
-    struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
-    *private_key = PRIV_KEY_API;
-    private_key->pkey = pkey;
-    *key = (tlsuv_private_key_t)private_key;
+    *key = new_private_key(pkey);
 
     return 0;
 
@@ -692,10 +687,7 @@ int load_pkcs11_key(tlsuv_private_key_t *key, const char *lib, const char *slot,
             goto error;
     }
 
-    struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
-    *private_key = PRIV_KEY_API;
-    private_key->pkey = pkey;
-    *key = (tlsuv_private_key_t)private_key;
+    *key = new_private_key(pkey);
 
     return 0;
 
@@ -722,10 +714,7 @@ int gen_key(tlsuv_private_key_t *key) {
     }
 
     if (rc == 0) {
-        struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
-        *private_key = PRIV_KEY_API;
-        private_key->pkey = pk;
-        *key = (tlsuv_private_key_t)private_key;
+        *key = new_private_key(pk);
     }
 
     EVP_PKEY_CTX_free(pctx);
