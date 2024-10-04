@@ -1,11 +1,11 @@
 
-// Copyright (c) NetFoundry Inc.
+// Copyright (c) 2024. NetFoundry Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
 //
-//     https://www.apache.org/licenses/LICENSE-2.0
+// You may obtain a copy of the License at
+// https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -31,12 +31,12 @@ struct pub_key_s {
 struct priv_key_s {
     TLSUV_PRIVKEY_API
     EVP_PKEY *pkey;
+    int ref_count;
 };
 
 const char *tls_error(unsigned long code);
 
 void pub_key_init(struct pub_key_s *pubkey);
-void priv_key_init(struct priv_key_s *privkey);
 
 void cert_init(struct cert_s *c);
 

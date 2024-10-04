@@ -1,10 +1,10 @@
-// Copyright (c) NetFoundry Inc.
+// Copyright (c) 2024. NetFoundry Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
 //
-//     https://www.apache.org/licenses/LICENSE-2.0
+// You may obtain a copy of the License at
+// https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -75,7 +75,6 @@ struct openssl_engine {
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len);
 static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
                             tlsuv_certificate_t cert);
-static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key);
 
 tlsuv_engine_t new_openssl_engine(void *ctx, const char *host);
 static void set_io(tlsuv_engine_t , io_ctx , io_read , io_write);
@@ -734,53 +733,25 @@ static X509* tls_set_cert_internal (SSL_CTX* ssl, X509_STORE *store) {
     return crt;
 }
 
-static int tls_set_own_key(tls_context *ctx, tlsuv_private_key_t key) {
-    struct openssl_ctx *c = (struct openssl_ctx*)ctx;
-    SSL_CTX *ssl = c->ctx;
-
-    // sanity check
-    struct priv_key_s *pk = (struct priv_key_s *) key;
-    if (key == NULL || pk->pkey == NULL) {
-        return -1;
-    }
-
-    if (c->own_key) {
-        c->own_key->free((tlsuv_private_key_t) c->own_key);
-    }
-    c->own_key = (struct priv_key_s *) key;
-    SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, c->own_key->pkey), "set own key");
-
-    tlsuv_certificate_t cert;
-    if (key->get_certificate(key, &cert) == 0) {
-        X509_STORE *store = ((struct cert_s*)cert)->cert;
-        c->own_cert = tls_set_cert_internal(c->ctx, store);
-        X509_STORE_free(store);
-    }
-
-    if (c->own_cert) {
-        SSL_OP_CHECK(SSL_CTX_check_private_key(ssl), "verify key/cert combo");
-    }
-    return 0;
-}
-
 static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
                             tlsuv_certificate_t cert) {
     struct openssl_ctx *c = (struct openssl_ctx*)ctx;
     SSL_CTX *ssl = c->ctx;
 
-    if (key == NULL) {
-        SSL_CTX_use_PrivateKey(ssl, NULL);
-        if (c->own_key) {
-            c->own_key->free((struct tlsuv_private_key_s *)c->own_key);
-        }
-        c->own_key = NULL;
+    SSL_CTX_use_PrivateKey(ssl, NULL);
+    SSL_CTX_use_certificate(ssl, NULL);
+    SSL_CTX_clear_chain_certs(ssl);
+    if (c->own_key) {
+        c->own_key->free((struct tlsuv_private_key_s *)c->own_key);
+    }
+    if (c->own_cert) {
+        X509_free(c->own_cert);
+    }
+    c->own_key = NULL;
+    c->own_cert = NULL;
 
-        SSL_CTX_use_certificate(ssl, NULL);
-        SSL_CTX_clear_chain_certs(ssl);
-        if (c->own_cert) {
-            X509_free(c->own_cert);
-            c->own_cert = NULL;
-        }
+    
+    if (key == NULL) {
         return 0;
     }
 
@@ -806,12 +777,15 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
     // OpenSSL requires setting certificate before private key
     // https://www.openssl.org/docs/man3.0/man3/SSL_CTX_use_PrivateKey.html
     struct priv_key_s *pk = (struct priv_key_s*)key;
-    c->own_cert = tls_set_cert_internal(ssl, store);
+    X509 *certs = tls_set_cert_internal(ssl, store);
     X509_STORE_free(store);
 
-    SSL_OP_CHECK(X509_check_private_key(c->own_cert, pk->pkey), "verify key/cert combo");
+    SSL_OP_CHECK(X509_check_private_key(certs, pk->pkey), "verify key/cert combo");
 
+    c->own_cert = certs;
     c->own_key = pk;
+    pk->ref_count++;
+    
     SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, c->own_key->pkey), "set private key");
     return 0;
 }
