@@ -719,16 +719,14 @@ if ((op) != 1) { \
 static X509* tls_set_cert_internal (SSL_CTX* ssl, X509_STORE *store) {
     STACK_OF(X509_OBJECT) *certs = X509_STORE_get0_objects(store);
     X509 *crt = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, 0));
+    X509_up_ref(crt);
     SSL_CTX_use_certificate(ssl, crt);
 
     // rest of certs go to chain
-    if (sk_X509_OBJECT_num(certs) > 1) {
-        X509_STORE *chain = X509_STORE_new();
-        // skip first one
-        for (int i = 1; i < sk_X509_OBJECT_num(certs); i++) {
-            X509_STORE_add_cert(chain, X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, i)));
-        }
-        SSL_CTX_set0_chain_cert_store(ssl, chain);
+    for (int i = 1; i < sk_X509_OBJECT_num(certs); i++) {
+        X509 *x509 = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, i));
+        X509_up_ref(x509);
+        SSL_CTX_add_extra_chain_cert(ssl, x509);
     }
     return crt;
 }
