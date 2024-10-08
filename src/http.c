@@ -30,18 +30,6 @@ extern tls_context *get_default_tls(void);
 
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf);
 
-static int http_status_cb(llhttp_t *parser, const char *status, size_t len);
-
-static int http_message_cb(llhttp_t *parser);
-
-static int http_body_cb(llhttp_t *parser, const char *body, size_t len);
-
-static int http_header_field_cb(llhttp_t *parser, const char *f, size_t len);
-
-static int http_header_value_cb(llhttp_t *parser, const char *v, size_t len);
-
-static int http_headers_complete_cb(llhttp_t *p);
-
 static void fail_active_request(tlsuv_http_t *c, int code, const char *msg);
 
 static void close_connection(tlsuv_http_t *c);
@@ -83,13 +71,30 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
         uv_async_send(&c->proc);
     } else if (nread > 0) {
         if (c->active != NULL) {
-            if (http_req_process(c->active, buf->base, nread) < 0) {
+            tlsuv_http_req_t *ar = c->active;
+            if (http_req_process(ar, buf->base, nread) < 0) {
                 UM_LOG(WARN, "failed to parse HTTP response");
                 fail_active_request(c, UV_EINVAL, "failed to parse HTTP response");
                 close_connection(c);
             }
 
-            uv_async_send(&c->proc);
+            if (ar->state == completed) {
+                bool keepalive = c->keepalive;
+                const char *keep_alive_hdr = tlsuv_http_resp_header(&ar->resp, "Connection");
+                if (keep_alive_hdr) {
+                    keepalive = strcasecmp(keep_alive_hdr, "close") != 0;
+                }
+
+                c->active = NULL;
+                http_req_free(ar);
+                tlsuv__free(ar);
+
+                if (keepalive) {
+                    uv_async_send(&c->proc);
+                } else {
+                    close_connection(c);
+                }
+            }
          } else {
             UM_LOG(ERR, "received %zd bytes without active request", nread);
         }
