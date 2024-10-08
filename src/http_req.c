@@ -361,6 +361,7 @@ static int http_status_cb(llhttp_t *parser, const char *status, size_t len) {
     tlsuv_http_req_t *r = parser->data;
     r->resp.code = (int) parser->status_code;
     snprintf(r->resp.http_version, sizeof(r->resp.http_version), "%1d.%1d", parser->http_major, parser->http_minor);
+    r->client->keepalive = !(parser->http_major == 1 && parser->http_minor == 0);
     r->resp.status = tlsuv__calloc(1, len+1);
     strncpy(r->resp.status, status, len);
     return 0;
@@ -370,6 +371,18 @@ static int http_message_cb(llhttp_t *parser) {
     UM_LOG(VERB, "message complete");
     tlsuv_http_req_t *r = parser->data;
     r->state = completed;
+    tlsuv_http_t *client = r->client;
+
+    const char *keep_alive_hdr = tlsuv_http_resp_header(&r->resp, "Connection");
+
+    if (keep_alive_hdr) {
+        r->client->keepalive = strcasecmp(keep_alive_hdr, "close") != 0;
+    }
+
+    if (client->active == r) {
+        client->active = NULL;
+    }
+    
     if (r->resp.body_cb) {
         if (r->inflater == NULL || um_inflate_state(r->inflater) == 1) {
             r->resp.body_cb(r, NULL, UV_EOF);
@@ -378,7 +391,8 @@ static int http_message_cb(llhttp_t *parser) {
             r->resp.body_cb(r, NULL, UV_EINVAL);
         }
     }
-
+    http_req_free(r);
+    tlsuv__free(r);
     return 0;
 }
 

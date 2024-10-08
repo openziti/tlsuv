@@ -81,51 +81,18 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 
         close_connection(c);
         uv_async_send(&c->proc);
-        if (buf && buf->base) {
-            tlsuv__free(buf->base);
-        }
-        return;
-    }
-
-    if (c->active != NULL) {
-
-        if (nread > 0) {
+    } else if (nread > 0) {
+        if (c->active != NULL) {
             if (http_req_process(c->active, buf->base, nread) < 0) {
                 UM_LOG(WARN, "failed to parse HTTP response");
                 fail_active_request(c, UV_EINVAL, "failed to parse HTTP response");
                 close_connection(c);
-                tlsuv__free(buf->base);
-                return;
             }
+
+            uv_async_send(&c->proc);
+         } else {
+            UM_LOG(ERR, "received %zd bytes without active request", nread);
         }
-
-        if (c->active->state == completed) {
-            tlsuv_http_req_t *hr = c->active;
-            c->active = NULL;
-
-            bool keep_alive = true;
-            const char *keep_alive_hdr = tlsuv_http_resp_header(&hr->resp, "Connection");
-            if (strcmp(hr->resp.http_version, "1.1") == 0) {
-                if (keep_alive_hdr && strcasecmp("close", keep_alive_hdr) == 0)
-                    keep_alive = false;
-            } else if (strcmp(hr->resp.http_version, "1.0") == 0) {
-                keep_alive = keep_alive_hdr && strcasecmp("keep-alive", keep_alive_hdr) == 0;
-            } else {
-                UM_LOG(WARN, "unexpected HTTP version(%s)", hr->resp.http_version);
-                keep_alive = false;
-            }
-
-            http_req_free(hr);
-            tlsuv__free(hr);
-
-            if (!keep_alive) {
-                close_connection(c);
-            } else {
-                uv_async_send(&c->proc);
-            }
-        }
-    } else if (nread > 0) {
-        UM_LOG(ERR, "received %zd bytes without active request", nread);
     }
 
     if (buf && buf->base) {
@@ -148,15 +115,24 @@ static void clear_req_body(tlsuv_http_req_t *req, int code) {
 }
 
 static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
-    if (c->active != NULL && c->active->resp_cb != NULL) {
+    if (c->active == NULL) return;
+
+    // this is called from active request callback
+    if (c->active->state == completed) return;
+
+    if (c->active->resp_cb != NULL) {
         c->active->resp.code = code;
         c->active->resp.status = tlsuv__strdup(msg);
         c->active->resp_cb(&c->active->resp, c->active->data);
-        clear_req_body(c->active, code);
-        http_req_free(c->active);
-        tlsuv__free(c->active);
-        c->active = NULL;
+        c->active->resp_cb = NULL;
+    } else if (c->active->resp.body_cb != NULL) {
+        c->active->resp.body_cb(c->active, NULL, code);
     }
+
+    clear_req_body(c->active, code);
+    http_req_free(c->active);
+    tlsuv__free(c->active);
+    c->active = NULL;
 }
 
 static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
@@ -395,6 +371,11 @@ static void process_requests(uv_async_t *ar) {
     if (c->active == NULL && !STAILQ_EMPTY(&c->requests)) {
         c->active = STAILQ_FIRST(&c->requests);
         STAILQ_REMOVE_HEAD(&c->requests, _next);
+
+        // if not keepalive close connection before next request
+        if (!c->keepalive) {
+            close_connection(c);
+        }
     }
 
     if (c->active == NULL) {
@@ -656,8 +637,9 @@ int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, con
         req->resp.status = tlsuv__strdup(msg ? msg : uv_strerror(error));
         clear_req_body(req, req->resp.code);
 
-        if (req->state < headers_received) { // resp_cb has not been called yet
-            req->resp_cb(&r->resp, r->data);
+        if (req->state < headers_received && req->resp_cb) { // resp_cb has not been called yet
+            req->resp_cb(&req->resp, req->data);
+            req->resp_cb = NULL;
         } else if (req->resp.body_cb) {
             req->resp.body_cb(req, NULL, req->resp.code);
         }

@@ -140,6 +140,7 @@ struct tlsuv_http_s {
     um_header_list headers;
 
     int connected;
+    bool keepalive;
     tlsuv_src_t *src;
     bool own_src;
 
