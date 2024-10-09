@@ -36,6 +36,12 @@ static void close_connection(tlsuv_http_t *c);
 
 static void free_http(tlsuv_http_t *clt);
 
+static inline void safe_continue(tlsuv_http_t *c) {
+    if (c && !uv_is_closing((const uv_handle_t *) &c->proc)) {
+        uv_async_send(&c->proc);
+    }
+}
+
 enum status {
     Disconnected,
     Connecting,
@@ -68,7 +74,6 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
         }
 
         close_connection(c);
-        uv_async_send(&c->proc);
     } else if (nread > 0) {
         if (c->active != NULL) {
             tlsuv_http_req_t *ar = c->active;
@@ -90,7 +95,7 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
                 tlsuv__free(ar);
 
                 if (keepalive) {
-                    uv_async_send(&c->proc);
+                    safe_continue(c);
                 } else {
                     close_connection(c);
                 }
@@ -165,7 +170,7 @@ static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
 
     // app added new requests during error handling
     if (!STAILQ_EMPTY(&c->requests)) {
-        uv_async_send(&c->proc);
+        safe_continue(c);
     }
 }
 
@@ -176,7 +181,7 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
         case TLS_HS_COMPLETE:
             clt->connected = Connected;
             UM_LOG(TRACE, "handshake completed with alpn[%s]", clt->engine->get_alpn(clt->engine));
-            uv_async_send(&clt->proc);
+            safe_continue(clt);
             break;
 
         case TLS_HS_ERROR: {
@@ -232,7 +237,7 @@ static void make_links(tlsuv_http_t *clt, uv_link_t *conn_src) {
 
     if (!clt->ssl) {
         clt->connected = Connected;
-        uv_async_send(&clt->proc);
+        safe_continue(clt);
     }
 }
 
@@ -244,7 +249,7 @@ static void link_close_cb(uv_link_t *l) {
             clt->engine = NULL;
         }
         clt->src->release(clt->src);
-        uv_async_send(&clt->proc);
+        safe_continue(clt);
     }
 }
 
@@ -271,7 +276,7 @@ static void src_connect_cb(tlsuv_src_t *src, int status, void *ctx) {
         UM_LOG(DEBG, "failed to connect: %d(%s)", status, uv_strerror(status));
         clt->connected = Disconnected;
         fail_all_requests(clt, status, uv_strerror(status));
-        uv_async_send(&clt->proc);
+        safe_continue(clt);
     }
 }
 
@@ -412,7 +417,7 @@ static void process_requests(uv_async_t *ar) {
             if (header_len == UV_ENOMEM) {
                 tlsuv__free(req.base);
                 fail_active_request(c, (int)header_len, "request header too big");
-                uv_async_send(&c->proc);
+                safe_continue(c);
                 return;
             } else {
                 req.len = header_len;
@@ -606,7 +611,7 @@ tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const ch
     STAILQ_INSERT_TAIL(&clt->requests, r, _next);
     uv_timer_stop(clt->conn_timer);
     uv_ref((uv_handle_t *) &clt->proc);
-    uv_async_send(&clt->proc);
+    safe_continue(clt);
 
     return r;
 }
@@ -707,7 +712,7 @@ void tlsuv_http_req_end(tlsuv_http_req_t *req) {
             prev->next = chunk;
         }
 
-        uv_async_send(&req->client->proc);
+        safe_continue(req->client);
     }
 }
 
@@ -739,7 +744,7 @@ int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen,
         prev->next = chunk;
     }
 
-    uv_async_send(&req->client->proc);
+    safe_continue(req->client);
     return 0;
 }
 
