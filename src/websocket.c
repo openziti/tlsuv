@@ -443,7 +443,9 @@ static void on_ws_close(tlsuv_websocket_t *ws) {
     if (ws->tls && ws->tls_link.engine) {
         ws->tls_link.engine->free(ws->tls_link.engine);
         ws->tls_link.engine = NULL;
+        tlsuv_tls_link_free(&ws->tls_link);
     }
+
     if (ws->src) {
         ws->src->cancel(ws->src);
         tcp_src_free((tcp_src_t *) ws->src);
