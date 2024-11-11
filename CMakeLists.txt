@@ -81,9 +81,12 @@ if(USE_MBEDTLS)
             )
 endif()
 
+include(FindPkgConfig)
+find_package(PkgConfig)
+
 find_package(libuv CONFIG QUIET)
 if (libuv_FOUND)
-    # newer libuv versions have proper namespacing
+    # newer libuv versions (via VCPKG) have proper namespacing
     if (TARGET libuv::uv_a)
         set(TLSUV_LIBUV_LIB libuv::uv_a)
     elseif (TARGET uv_a)
@@ -94,10 +97,9 @@ if (libuv_FOUND)
         set(TLSUV_LIBUV_LIB uv)
     endif()
 else()
-    find_path(TLSUV_LIBUV_INCLUDE NAMES uv.h)
-    find_library(TLSUV_LIBUV_LIB uv_a NAMES uv)
+    pkg_check_modules(libuv REQUIRED IMPORTED_TARGET libuv)
+    set(TLSUV_LIBUV_LIB PkgConfig::libuv)
 endif()
-
 
 add_library(tlsuv STATIC
         ${tlsuv_sources}
