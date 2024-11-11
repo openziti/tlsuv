@@ -122,17 +122,23 @@ target_link_libraries(tlsuv
 
 
 if (TLSUV_HTTP)
-    find_package(llhttp CONFIG REQUIRED)
 
     add_subdirectory(deps)
+    target_link_libraries(tlsuv PUBLIC uv_link)
 
     find_package(ZLIB REQUIRED)
+    target_link_libraries(tlsuv PRIVATE ZLIB::ZLIB)
 
-    target_link_libraries(tlsuv
-            PUBLIC llhttp::llhttp_static
-            PUBLIC uv_link
-            PRIVATE ZLIB::ZLIB
-    )
+    find_package(llhttp CONFIG REQUIRED)
+    message(NOTICE "llhttp = ${llhttp_VERSION}")
+    if (TARGET llhttp::llhttp_static)
+        target_link_libraries(tlsuv PUBLIC llhttp::llhttp_static)
+    elseif (TARGET llhttp::llhttp_shared)
+        target_link_libraries(tlsuv PUBLIC llhttp::llhttp_shared)
+    else ()
+        target_link_libraries(tlsuv PUBLIC llhttp::llhttp)
+    endif ()
+
 endif (TLSUV_HTTP)
 
 if (APPLE)
