@@ -14,11 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#define CATCH_CONFIG_RUNNER
-
-#include "catch.hpp"
 #include "um_debug.h"
 #include <tlsuv/tlsuv.h>
+#include <catch2/catch_session.hpp>
 
 
 static uv_timeval64_t start;

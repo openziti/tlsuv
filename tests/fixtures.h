@@ -2,7 +2,7 @@
 #ifndef UV_MBED_FIXTURES_H
 #define UV_MBED_FIXTURES_H
 
-#include "catch.hpp"
+#include <catch2/catch_all.hpp>
 #include "tlsuv/tls_engine.h"
 #include <uv.h>
 
