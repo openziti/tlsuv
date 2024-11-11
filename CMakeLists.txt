@@ -132,7 +132,7 @@ if (TLSUV_HTTP)
     target_link_libraries(tlsuv PRIVATE ZLIB::ZLIB)
 
     find_package(llhttp CONFIG REQUIRED)
-    message(NOTICE "llhttp = ${llhttp_VERSION}")
+    message(NOTICE "llhttp = ${llhttp_CONFIG}")
     if (TARGET llhttp::llhttp_static)
         target_link_libraries(tlsuv PUBLIC llhttp::llhttp_static)
     elseif (TARGET llhttp::llhttp_shared)
