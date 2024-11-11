@@ -17,7 +17,7 @@
 #include <uv.h>
 
 #include "fixtures.h"
-#include "catch.hpp"
+#include <catch2/catch_all.hpp>
 
 #define to_str_(x) #x
 #define to_str(x) to_str_(x)

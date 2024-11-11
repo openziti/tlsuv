@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "catch.hpp"
+#include <catch2/catch_all.hpp>
 #include "fixtures.h"
 
 #include <compression.h>
