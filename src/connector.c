@@ -40,6 +40,10 @@
 
 #endif
 
+#ifndef MAX
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
 #define CONNECT_TIMEOUT 1
 static struct timeval connect_wait = {
     .tv_sec = CONNECT_TIMEOUT,
