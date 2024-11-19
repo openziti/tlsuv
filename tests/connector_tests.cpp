@@ -45,6 +45,7 @@ TEST_CASE_METHOD(UvLoopTest, "default connect fail", "[connector]") {
 
     run(UNTIL(result.called));
 
+    INFO("error => " << uv_strerror(result.err));
     REQUIRE(result.err == UV_ECONNREFUSED);
 
 #if _WIN32
@@ -56,6 +57,7 @@ TEST_CASE_METHOD(UvLoopTest, "default connect fail", "[connector]") {
 }
 
 
+
 TEST_CASE_METHOD(UvLoopTest, "default connector", "[connector]") {
     auto connector = tlsuv_global_connector();
 
@@ -65,7 +67,7 @@ TEST_CASE_METHOD(UvLoopTest, "default connector", "[connector]") {
         uv_os_sock_t sock;
     } result = {false, 0,0};
 
-    connector->connect(loop, connector, "127.0.0.1", "7443",
+    connector->connect(loop, connector, "localhost", "7443",
                        [](uv_os_sock_t s, int err, void *ctx){
                            auto r = (result_s *)(ctx);
                            r->called = true;
@@ -77,13 +79,18 @@ TEST_CASE_METHOD(UvLoopTest, "default connector", "[connector]") {
     run(UNTIL(result.called));
 
     REQUIRE(result.err == 0);
-    sockaddr_in peer = {0};
+    sockaddr_storage peer = {0};
     socklen_t peerlen = sizeof(peer);
     REQUIRE(getpeername(result.sock, (sockaddr*)&peer, &peerlen) == 0);
-    REQUIRE(peer.sin_port == htons(7443));
+
+    if (peer.ss_family == AF_INET) {
+        REQUIRE(((sockaddr_in*)&peer)->sin_port == htons(7443));
+    } else if (peer.ss_family == AF_INET6) {
+        REQUIRE(((sockaddr_in6*)&peer)->sin6_port == htons(7443));
+    }
 
     char dest[256];
-    uv_ip4_name((sockaddr_in*)&peer, dest, sizeof(dest));
+    uv_ip_name((sockaddr*)&peer, dest, sizeof(dest));
     fprintf(stderr, "dest = %s\n", dest);
 
 #if _WIN32
