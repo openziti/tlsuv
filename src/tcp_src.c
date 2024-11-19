@@ -182,8 +182,6 @@ static void tcp_src_cancel(tlsuv_src_t *sl) {
 
     if (tl->conn_req) {
         tl->connector->cancel(tl->conn_req);
-        tl->conn_req = NULL;
-        tl->connect_cb((tlsuv_src_t *) tl, UV_ECANCELED, tl->connect_ctx);
     }
 
     if (tl->conn && !uv_is_closing((const uv_handle_t *) tl->conn)) {

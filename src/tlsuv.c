@@ -155,7 +155,8 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
         UM_LOG(VERB, "cancel before connector cb");
         const void *cr = clt->connect_req;
         clt->connector->cancel(cr);
-        clt->connect_req = NULL;
+        // defer closing until connector callback is called
+        return 0;
     }
 
     if (clt->tls_engine) {
