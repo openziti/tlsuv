@@ -29,18 +29,35 @@
 #define write(s,b,z) send(s, b, z, 0)
 #define read(s,b,z) recv(s,b,z,0)
 #define SHUT_RDWR SD_BOTH
+#define in_progress(e) (e == WSAEWOULDBLOCK)
 #else
+#define INVALID_SOCKET (-1)
 #define get_error() errno
 #define closesocket(s) close(s)
+#define in_progress(e) (e == EINPROGRESS || e == EWOULDBLOCK)
+
 #include <unistd.h>
 #include <string.h>
 
 #endif
 
+#ifndef MAX
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+#define CONNECT_TIMEOUT 1
+static struct timeval connect_wait = {
+    .tv_sec = CONNECT_TIMEOUT,
+};
+
+#define max_connect_socks 16
 
 struct conn_req_s {
-    uv_getaddrinfo_t resolve;
-    uv_poll_t poll;
+    union {
+        uv_getaddrinfo_t resolve;
+        uv_work_t connect;
+    };
+    struct addrinfo *addr;
 
     void *ctx;
     tlsuv_connect_cb cb;
@@ -48,6 +65,8 @@ struct conn_req_s {
     uv_os_sock_t sock;
     int error;
     int cancel;
+    uv_os_sock_t fd[max_connect_socks];
+    int fds;
 };
 
 static tlsuv_connector_req default_connect(uv_loop_t *l, const tlsuv_connector_t *self,
@@ -95,50 +114,124 @@ const tlsuv_connector_t* tlsuv_global_connector() {
     return global_connector;
 }
 
-static void on_close(uv_handle_t *h) {
-    struct conn_req_s *req = h->data;
-    tlsuv__free(req);
-}
-
-static void on_poll_close(uv_handle_t *h) {
-    struct conn_req_s *cr = container_of(h, struct conn_req_s, poll);
+static void free_conn_req(struct conn_req_s *cr) {
+    cr->addr ? uv_freeaddrinfo(cr->addr) : 0;
     tlsuv__free(cr);
 }
 
-static void on_poll_connect(uv_poll_t *p, int status, int events) {
-    struct conn_req_s *r = container_of(p, struct conn_req_s, poll);
-    uv_poll_stop(p);
+static const char *get_name(const struct sockaddr *addr) {
+    static char name[128];
+    if (addr && uv_ip_name(addr, name, sizeof(name)) == 0) { return name; }
 
-    int e;
-    socklen_t len = sizeof(e);
-    getsockopt(r->sock, SOL_SOCKET, SO_ERROR, &e, &len);
-
-#if _WIN32
-    switch (e) {
-            case WSAECONNREFUSED: r->error = UV_ECONNREFUSED; break;
-            case WSAECONNRESET: r->error = UV_ECONNRESET; break;
-            case WSAECONNABORTED: r->error = UV_ECONNABORTED; break;
-            default:
-                r->error = -e;
-        }
-#else
-    r->error = -e;
-#endif
-
-    if (r->cancel) {
-        r->error = UV_ECANCELED;
-    }
-
-    if (r->error) {
-        closesocket(r->sock);
-        r->sock = (uv_os_sock_t)-1;
-    }
-    r->cb(r->sock, r->error, r->ctx);
-
-    uv_close((uv_handle_t *) p, on_poll_close);
+    return "<unknown>";
 }
 
-static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addr) {
+static const char *get_error_msg(int err) {
+#if _WIN32
+    static char msg[256];
+    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, err, 0, msg, sizeof(msg), NULL);
+    return msg;
+#else
+    return strerror(err);
+#endif
+}
+
+static int err_to_uv(int err) {
+#if _WIN32
+    switch(err) {
+        case WSAECONNREFUSED: return UV_ECONNREFUSED;
+        case WSAECONNABORTED: return UV_ECONNABORTED;
+        case WSAECONNRESET: return UV_ECONNRESET;
+        default: return -err;
+    }
+#else
+    return -err;
+#endif
+}
+
+static void connect_work(uv_work_t *work) {
+    struct conn_req_s *cr = container_of(work, struct conn_req_s, connect);
+    int rc = 0;
+    int err = 0;
+    fd_set fds;
+
+    while (cr->sock == INVALID_SOCKET) {
+        int max_fd = 0;
+        FD_ZERO(&fds);
+
+        for (int i = 0; i < cr->fds; i++) {
+            if (cr->fd[i] == INVALID_SOCKET) continue;
+
+            FD_SET(cr->fd[i], &fds);
+            max_fd = (int)MAX(max_fd, cr->fd[i] + 1);
+        }
+        if (max_fd == 0) {
+            break;
+        }
+#if _WIN32
+        rc = select(max_fd, NULL, &fds, &fds, &(struct timeval){.tv_usec = 250 * 1000});
+#else
+        rc = select(max_fd, NULL, &fds, NULL, &(struct timeval){.tv_usec = 250 * 1000});
+#endif
+
+        if (cr->cancel) break;
+
+        if (rc == -1) {
+            err = get_error();
+            break;
+        }
+
+        if (rc == 0) {
+            UM_LOG(TRACE, "waiting more");
+            continue;
+        }
+
+        for (int i = 0; i < cr->fds; i++) {
+            if (cr->fd[i] != INVALID_SOCKET && FD_ISSET(cr->fd[i], &fds)) {
+                socklen_t len = sizeof(err);
+                getsockopt(cr->fd[i], SOL_SOCKET, SO_ERROR, &err, &len);
+                if (err != 0) {
+                    UM_LOG(TRACE, "fd[%ld] failed to connect: %d/%s",
+                        (long)cr->fd[i], err, get_error_msg(err));
+                    closesocket(cr->fd[i]);
+                    cr->fd[i] = INVALID_SOCKET;
+                    continue;
+                }
+
+                cr->sock = cr->fd[i];
+                UM_LOG(TRACE, "fd[%ld] is connected", (long)cr->sock);
+                break;
+            }
+        }
+    }
+
+    cr->error = err_to_uv(err);
+    for (int i = 0; i < cr->fds; i++) {
+        if (cr->fd[i] != cr->sock && cr->fd[i] != INVALID_SOCKET) {
+            UM_LOG(TRACE, "closing fd[%ld]", (long)cr->fd[i]);
+            closesocket(cr->fd[i]);
+        }
+    }
+}
+
+static void connect_done(uv_work_t *work, int status) {
+    struct conn_req_s *cr = container_of(work, struct conn_req_s, connect);
+
+    if (status == UV_ECANCELED) {
+        cr->error = status;
+    }
+    if (cr->cancel) {
+        cr->error = UV_ECANCELED;
+    }
+    if (cr->error && cr->sock != INVALID_SOCKET) {
+        closesocket(cr->sock);
+        cr->sock = INVALID_SOCKET;
+    }
+    if (cr->cb) cr->cb(cr->sock, cr->error, cr->ctx);
+    free_conn_req(cr);
+}
+
+static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlist) {
     struct conn_req_s *cr = container_of(r, struct conn_req_s, resolve);
 
     if (status == UV_EAI_CANCELED) {
@@ -150,40 +243,48 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addr) {
     }
 
     if (status != 0) {
-        cr->cb(cr->sock, status, cr->ctx);
-        tlsuv__free(r);
-    } else {
-        cr->sock = tlsuv_socket(addr, 0);
-        int rc = connect(cr->sock, addr->ai_addr, addr->ai_addrlen);
-        int e = get_error();
-
-        if (rc == 0 ||
-#if _WIN32
-            e == WSAEWOULDBLOCK
-#else
-            e == EINPROGRESS
-#endif
-                ) {
-            uv_poll_init_socket(r->loop, &cr->poll, cr->sock);
-            uv_poll_start(&cr->poll, UV_WRITABLE|UV_DISCONNECT, on_poll_connect);
-        } else {
-            int uv_err = -e; // convert to libuv error code
-            UM_LOG(DEBG, "failed to connect: %d/%s", uv_err, uv_strerror(uv_err));
-            cr->cb(cr->sock, uv_err, cr->ctx);
-            tlsuv__free(r);
-        }
+        uv_freeaddrinfo(addrlist);
+        if (cr->cb) cr->cb(cr->sock, status, cr->ctx);
+        free_conn_req(cr);
+        return;
     }
 
-    uv_freeaddrinfo(addr);
+    struct addrinfo *addr = addrlist;
+    int count = 0;
+    int err = 0;
+    while (addr && count < max_connect_socks) {
+        uv_os_sock_t s = tlsuv_socket(addr, 0);
+        UM_LOG(TRACE, "connecting fd[%ld] to %s", (long)s, get_name(addr->ai_addr));
+        int rc = connect(s, addr->ai_addr, addr->ai_addrlen);
+        err = get_error();
+        if (rc == 0 || in_progress(err)) {
+            cr->fd[count++] = s;
+        } else {
+            UM_LOG(TRACE, "fd[%ld] failed to connect: %d/%s", (long)s, err, strerror(err));
+            closesocket(s);
+        }
+        addr = addr->ai_next;
+    }
+
+    uv_freeaddrinfo(addrlist);
+
+    if (count < 1) {
+        cr->cb(cr->sock, -err, cr->ctx);
+        return;
+    }
+
+    cr->fds = count;
+    uv_queue_work(r->loop, &cr->connect, connect_work, connect_done);
 }
 
 tlsuv_connector_req default_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
                                     const char *host, const char *port,
                                     tlsuv_connect_cb cb, void *ctx) {
+    assert(cb != NULL);
     struct conn_req_s *r = tlsuv__calloc(1, sizeof(*r));
     r->ctx = ctx;
     r->cb = cb;
-    r->sock = (uv_os_sock_t)-1;
+    r->sock = INVALID_SOCKET;
 
     struct addrinfo hints = {
             .ai_socktype = SOCK_STREAM,
@@ -198,23 +299,10 @@ void default_cancel(tlsuv_connector_req req) {
     UM_LOG(VERB, "cancelling");
     struct conn_req_s *r = (struct conn_req_s *) req;
     r->cancel = true;
+    r->cb = NULL;
 
-    if (uv_cancel((uv_req_t *) &r->resolve) == 0 || r->sock == -1) {
-        // successfully canceled resolve request before it started or completed
-        // nothing more to do
-        return;
-    }
-
-    // resolve request completed, socket created and is connecting now
-    UM_LOG(VERB, "shutting down socket: %d", r->sock);
-    shutdown(r->sock, SHUT_RDWR);
-#if _WIN32
-    // on windows shutting down/closing socket does not trigger poll event
-        uv_poll_stop(&r->poll);
-        closesocket(r->sock);
-        r->cb((uv_os_sock_t)-1, UV_ECANCELED, r->ctx);
-        uv_close((uv_handle_t *) &r->poll, on_poll_close);
-#endif
+    // try to cancel resolve/connect request before it started
+    uv_cancel((uv_req_t *) &r->resolve);
 }
 
 struct proxy_connect_req {
@@ -284,7 +372,7 @@ static void proxy_work_cb(uv_work_t *wr, int status) {
         r->err = status;
     }
 
-    r->cb(r->sock, r->err, r->data);
+    if (r->cb) r->cb(r->sock, r->err, r->data);
     tlsuv__free(r->host);
     tlsuv__free(r->port);
     tlsuv__free(r);
@@ -294,7 +382,7 @@ static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
     struct proxy_connect_req *r = req;
     r->conn_req = NULL;
     if (status != 0) {
-        r->cb(-1, status, r->data);
+        if (r->cb) r->cb(-1, status, r->data);
         tlsuv__free(r->port);
         tlsuv__free(r->host);
         tlsuv__free(r);
@@ -306,6 +394,12 @@ static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
 
 tlsuv_connector_req proxy_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
                                   const char *host, const char *port, tlsuv_connect_cb cb, void *ctx) {
+
+    assert(loop);
+    assert(self);
+    assert(cb != NULL);
+    assert(host != NULL && port != NULL);
+
     const struct tlsuv_proxy_connector_s *proxy = (const struct tlsuv_proxy_connector_s *) self;
     struct proxy_connect_req *r = tlsuv__calloc(1, sizeof(*r));
     r->proxy = proxy;
@@ -325,7 +419,9 @@ int proxy_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *usern
         tlsuv__free(c->auth_value);
         c->auth_value = NULL;
         return 0;
-    } else if (auth == tlsuv_PROXY_BASIC) {
+    }
+
+    if (auth == tlsuv_PROXY_BASIC) {
         if (!username || !password)
             return UV_EINVAL;
         c->auth_header = "Proxy-Authorization";
@@ -339,9 +435,9 @@ int proxy_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *usern
         char *b64 = c->auth_value + offset;
         size_t b64max = 512 - offset;
         return tlsuv_base64_encode((uint8_t *)authstr, auth_len, &b64, &b64max);
-    } else {
-        return UV_EINVAL;
     }
+
+    return UV_EINVAL;
 }
 
 void proxy_cancel(tlsuv_connector_req req) {
@@ -350,6 +446,7 @@ void proxy_cancel(tlsuv_connector_req req) {
         tlsuv_connector_req cr = r->conn_req;
         r->conn_req = NULL;
         default_cancel(cr);
+        r->cb = NULL;
     } else if (r->work.type == UV_WORK) {
         uv_cancel((uv_req_t *) &r->work);
     }

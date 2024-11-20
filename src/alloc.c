@@ -88,7 +88,7 @@ void *tlsuv__realloc(void *addr, size_t size) {
 }
 
 void tlsuv__free(void *addr) {
-    return ALLOC.free_f(addr);
+    ALLOC.free_f(addr);
 }
 
 extern char* tlsuv__strndup(const char* s, size_t len) {
