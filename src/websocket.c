@@ -291,7 +291,7 @@ int ws_read_start(uv_link_t *l) {
     buf.base = tlsuv__malloc(8196);
     buf.len = http_req_write(ws->req, buf.base, 8196);
 
-    UM_LOG(VERB, "starting WebSocket handshake(sending %zd bytes)[%.*s]", buf.len, (int)buf.len, buf.base);
+    UM_LOG(VERB, "starting WebSocket handshake(sending %zd bytes)[%.*s]", (size_t)buf.len, (int)buf.len, buf.base);
 
     ws_write_t *ws_wreq = tlsuv__calloc(1, sizeof(ws_write_t));
     ws_wreq->bufs = tlsuv__malloc(sizeof(uv_buf_t));

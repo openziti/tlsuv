@@ -31,6 +31,7 @@
 #define SHUT_RDWR SD_BOTH
 #define in_progress(e) (e == WSAEWOULDBLOCK)
 #else
+#define INVALID_SOCKET (-1)
 #define get_error() errno
 #define closesocket(s) close(s)
 #define in_progress(e) (e == EINPROGRESS || e == EWOULDBLOCK)
@@ -131,17 +132,17 @@ static void connect_work(uv_work_t *work) {
     int err = 0;
     fd_set fds;
 
-    while (cr->sock == -1) {
-        uv_os_sock_t max_fd = -1;
+    while (cr->sock == INVALID_SOCKET) {
+        int max_fd = 0;
         FD_ZERO(&fds);
 
         for (int i = 0; i < cr->fds; i++) {
-            if (cr->fd[i] == -1) continue;
+            if (cr->fd[i] == INVALID_SOCKET) continue;
 
             FD_SET(cr->fd[i], &fds);
-            max_fd = MAX(max_fd, cr->fd[i] + 1);
+            max_fd = (int)MAX(max_fd, cr->fd[i] + 1);
         }
-        if (max_fd == -1) {
+        if (max_fd == 0) {
             break;
         }
 
@@ -159,14 +160,14 @@ static void connect_work(uv_work_t *work) {
         }
 
         for (int i = 0; i < cr->fds; i++) {
-            if (cr->fd[i] != -1 && FD_ISSET(cr->fd[i], &fds)) {
+            if (cr->fd[i] != INVALID_SOCKET && FD_ISSET(cr->fd[i], &fds)) {
                 socklen_t len = sizeof(err);
                 getsockopt(cr->fd[i], SOL_SOCKET, SO_ERROR, &err, &len);
                 if (err != 0) {
                     UM_LOG(TRACE, "fd[%ld] failed to connect: %d/%s",
                         (long)cr->fd[i], err, strerror(err));
                     closesocket(cr->fd[i]);
-                    cr->fd[i] = -1;
+                    cr->fd[i] = INVALID_SOCKET;
                     continue;
                 }
 
@@ -179,7 +180,7 @@ static void connect_work(uv_work_t *work) {
 
     cr->error = -err;
     for (int i = 0; i < cr->fds; i++) {
-        if (cr->fd[i] != cr->sock && cr->fd[i] != -1) {
+        if (cr->fd[i] != cr->sock && cr->fd[i] != INVALID_SOCKET) {
             UM_LOG(TRACE, "closing fd[%ld]", (long)cr->fd[i]);
             closesocket(cr->fd[i]);
         }
@@ -195,9 +196,9 @@ static void connect_done(uv_work_t *work, int status) {
     if (cr->cancel) {
         cr->error = UV_ECANCELED;
     }
-    if (cr->error && cr->sock != -1) {
+    if (cr->error && cr->sock != INVALID_SOCKET) {
         closesocket(cr->sock);
-        cr->sock = -1;
+        cr->sock = INVALID_SOCKET;
     }
     if (cr->cb) cr->cb(cr->sock, cr->error, cr->ctx);
     free_conn_req(cr);
@@ -256,7 +257,7 @@ tlsuv_connector_req default_connect(uv_loop_t *loop, const tlsuv_connector_t *se
     struct conn_req_s *r = tlsuv__calloc(1, sizeof(*r));
     r->ctx = ctx;
     r->cb = cb;
-    r->sock = (uv_os_sock_t)-1;
+    r->sock = INVALID_SOCKET;
 
     struct addrinfo hints = {
             .ai_socktype = SOCK_STREAM,
