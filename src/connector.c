@@ -168,8 +168,12 @@ static void connect_work(uv_work_t *work) {
         if (max_fd == 0) {
             break;
         }
-
+#if _WIN32
         rc = select(max_fd, NULL, &fds, &fds, &(struct timeval){.tv_usec = 250 * 1000});
+#else
+        rc = select(max_fd, NULL, &fds, NULL, &(struct timeval){.tv_usec = 250 * 1000});
+#endif
+
         if (cr->cancel) break;
 
         if (rc == -1) {
