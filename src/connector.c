@@ -126,6 +126,29 @@ static const char *get_name(const struct sockaddr *addr) {
     return "<unknown>";
 }
 
+static const char *get_error_msg(int err) {
+#if _WIN32
+    static char msg[256];
+    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, err, 0, msg, sizeof(msg), NULL);
+    return msg;
+#else
+    return strerror(err);
+#endif
+}
+
+static int err_to_uv(int err) {
+#if _WIN32
+    switch(err) {
+        case WSAECONNREFUSED: return UV_ECONNREFUSED;
+        case WSAECONNABORTED: return UV_ECONNABORTED;
+        case WSAECONNRESET: return UV_ECONNRESET;
+        default: return -err;
+    }
+#else
+    return -err;
+#endif
+}
+
 static void connect_work(uv_work_t *work) {
     struct conn_req_s *cr = container_of(work, struct conn_req_s, connect);
     int rc = 0;
@@ -146,7 +169,7 @@ static void connect_work(uv_work_t *work) {
             break;
         }
 
-        rc = select(max_fd, NULL, &fds, NULL, &(struct timeval){.tv_usec = 250 * 1000});
+        rc = select(max_fd, NULL, &fds, &fds, &(struct timeval){.tv_usec = 250 * 1000});
         if (cr->cancel) break;
 
         if (rc == -1) {
@@ -165,7 +188,7 @@ static void connect_work(uv_work_t *work) {
                 getsockopt(cr->fd[i], SOL_SOCKET, SO_ERROR, &err, &len);
                 if (err != 0) {
                     UM_LOG(TRACE, "fd[%ld] failed to connect: %d/%s",
-                        (long)cr->fd[i], err, strerror(err));
+                        (long)cr->fd[i], err, get_error_msg(err));
                     closesocket(cr->fd[i]);
                     cr->fd[i] = INVALID_SOCKET;
                     continue;
@@ -178,7 +201,7 @@ static void connect_work(uv_work_t *work) {
         }
     }
 
-    cr->error = -err;
+    cr->error = err_to_uv(err);
     for (int i = 0; i < cr->fds; i++) {
         if (cr->fd[i] != cr->sock && cr->fd[i] != INVALID_SOCKET) {
             UM_LOG(TRACE, "closing fd[%ld]", (long)cr->fd[i]);
