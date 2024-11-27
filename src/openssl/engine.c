@@ -719,7 +719,6 @@ if ((op) != 1) { \
 static X509* tls_set_cert_internal (SSL_CTX* ssl, X509_STORE *store) {
     STACK_OF(X509_OBJECT) *certs = X509_STORE_get0_objects(store);
     X509 *crt = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, 0));
-    X509_up_ref(crt);
     SSL_CTX_use_certificate(ssl, crt);
 
     // rest of certs go to chain

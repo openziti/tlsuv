@@ -499,10 +499,6 @@ static int mbedtls_verify_signature(const struct tlsuv_certificate_s *c, enum ha
 
 static void mbedtls_free_ctx(tls_context *ctx) {
     struct mbedtls_context *c = (struct mbedtls_context *)ctx;
-    if (c->own_key) {
-        c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
-        c->own_key = NULL;
-    }
 
     tlsuv__free(c->ca);
     tlsuv__free(c);
