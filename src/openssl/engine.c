@@ -72,6 +72,8 @@ struct openssl_engine {
     unsigned long error;
 };
 
+static int is_self_signed(X509 *cert);
+static const char* name_str(const X509_NAME *n);
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len);
 static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
                             tlsuv_certificate_t cert);
@@ -115,6 +117,8 @@ static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...
 static void msg_cb (int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg);
 static void info_cb(const SSL *s, int where, int ret);
 
+static int tls_set_partial_vfy(tls_context *ctx, int allow);
+
 static BIO_METHOD *BIO_s_engine(void);
 
 
@@ -128,6 +132,7 @@ static tls_context openssl_context_api = {
         .new_engine = new_openssl_engine,
         .free_ctx = tls_free_ctx,
         .set_own_cert = tls_set_own_cert,
+        .allow_partial_chain = tls_set_partial_vfy,
         .set_cert_verify = tls_set_cert_verify,
 //        .verify_signature =  tls_verify_signature,
         .parse_pkcs7_certs = parse_pkcs7_certs,
@@ -205,6 +210,9 @@ static X509_STORE * load_certs(const char *buf, size_t buf_len) {
         // try as PEM
         BIO *crt_bio = BIO_new_mem_buf(buf, (int)buf_len);
         while((c = PEM_read_bio_X509(crt_bio, NULL, NULL, NULL)) != NULL) {
+            int root = is_self_signed(c);
+            UM_LOG(VERB, "%s root[%s]",
+                   name_str(X509_get_subject_name(c)), root? "true" : "false");
             X509_STORE_add_cert(certs, c);
             X509_free(c);
         }
@@ -276,6 +284,14 @@ static int is_self_signed(X509 *cert) {
 #endif
 }
 
+static const char* name_str(const X509_NAME *n) {
+    static char buf[1024];
+    BIO *b = BIO_new(BIO_s_mem());
+    X509_NAME_print(b, n, 0);
+    BIO_read(b, buf, sizeof(buf));
+    BIO_free(b);
+    return buf;
+}
 static X509_STORE** process_chains(X509_STORE *store, int *count) {
     STACK_OF(X509_OBJECT ) *objects = X509_STORE_get0_objects(store);
 
@@ -650,7 +666,16 @@ static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
     return rc;
 }
 
-
+int tls_set_partial_vfy(tls_context *ctx, int allow) {
+    struct openssl_ctx *c = (struct openssl_ctx*)ctx;
+    X509_VERIFY_PARAM *vfy = SSL_CTX_get0_param(c->ctx);
+    if (allow) {
+        X509_VERIFY_PARAM_set_flags(vfy, X509_V_FLAG_PARTIAL_CHAIN);
+    } else {
+        X509_VERIFY_PARAM_clear_flags(vfy, X509_V_FLAG_PARTIAL_CHAIN);
+    }
+    return 0;
+}
 
 static void tls_set_cert_verify(tls_context *ctx,
                                 int (*verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),

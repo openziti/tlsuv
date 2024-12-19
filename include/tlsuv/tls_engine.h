@@ -201,6 +201,17 @@ struct tls_context_s {
     int (*set_own_cert)(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certificate_t cert);
 
     /**
+     * Allows partial chain matching.
+     *
+     * Causes intermediate certificates in the trust store to be treated as trust-anchors,
+     * in the same way as the self-signed root CA certificates.
+     * @param ctx
+     * @param on
+     * @return 0 for success, err code if not supported
+     */
+    int (*allow_partial_chain)(tls_context *ctx, int allow);
+
+    /**
      * Sets custom server cert validation function.
      *
      * certificate handle passed into verification callback can be used to verify signature by calling verify_signature()
