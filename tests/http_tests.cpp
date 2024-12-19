@@ -1187,3 +1187,74 @@ TEST_CASE("url parse auth", "[http]") {
     CHECK(url.hostname_len == strlen("host"));
     CHECK(strncmp("host", url.hostname, url.hostname_len) == 0);
 }
+
+TEST_CASE("partial bundle", "[http]") {
+
+#if defined(TEST_mbedtls)
+    SKIP("mbedTLS always allows partial chains");
+    return;
+#endif
+
+    auto url = "https://one.one.one.one";
+    // cloudflare intermediate cert
+    auto ca = R"(
+-----BEGIN CERTIFICATE-----
+MIICnzCCAiWgAwIBAgIQf/MZd5csIkp2FV0TttaF4zAKBggqhkjOPQQDAzBHMQsw
+CQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEU
+MBIGA1UEAxMLR1RTIFJvb3QgUjQwHhcNMjMxMjEzMDkwMDAwWhcNMjkwMjIwMTQw
+MDAwWjA7MQswCQYDVQQGEwJVUzEeMBwGA1UEChMVR29vZ2xlIFRydXN0IFNlcnZp
+Y2VzMQwwCgYDVQQDEwNXRTEwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARvzTr+
+Z1dHTCEDhUDCR127WEcPQMFcF4XGGTfn1XzthkubgdnXGhOlCgP4mMTG6J7/EFmP
+LCaY9eYmJbsPAvpWo4H+MIH7MA4GA1UdDwEB/wQEAwIBhjAdBgNVHSUEFjAUBggr
+BgEFBQcDAQYIKwYBBQUHAwIwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQU
+kHeSNWfE/6jMqeZ72YB5e8yT+TgwHwYDVR0jBBgwFoAUgEzW63T/STaj1dj8tT7F
+avCUHYwwNAYIKwYBBQUHAQEEKDAmMCQGCCsGAQUFBzAChhhodHRwOi8vaS5wa2ku
+Z29vZy9yNC5jcnQwKwYDVR0fBCQwIjAgoB6gHIYaaHR0cDovL2MucGtpLmdvb2cv
+ci9yNC5jcmwwEwYDVR0gBAwwCjAIBgZngQwBAgEwCgYIKoZIzj0EAwMDaAAwZQIx
+AOcCq1HW90OVznX+0RGU1cxAQXomvtgM8zItPZCuFQ8jSBJSjz5keROv9aYsAm5V
+sQIwJonMaAFi54mrfhfoFNZEfuNMSQ6/bIBiNLiyoX46FohQvKeIoJ99cx7sUkFN
+7uJW
+-----END CERTIFICATE-----)";
+
+    auto loop = uv_loop_new();
+    tlsuv_http_t clt{};
+    tlsuv_http_init(loop, &clt, url);
+    auto tls = default_tls_context(ca, strlen(ca));
+    tlsuv_http_set_ssl(&clt, tls);
+
+    struct result_t {
+        int code;
+        std::string msg;
+    } result;
+    tlsuv_http_req(&clt, "GET", "/version",
+                   [](tlsuv_http_resp_t *resp, void *res){
+                       auto r = (result_t*)res;
+                       r->code = resp->code;
+                       r->msg = resp->status;
+                   },
+                   &result);
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    INFO(result.msg);
+    CHECK(result.code == UV_ECONNABORTED);
+
+    if (tls->allow_partial_chain) {
+        tls->allow_partial_chain(tls, true);
+    }
+
+    tlsuv_http_req(&clt, "GET", "/version",
+                   [](tlsuv_http_resp_t *resp, void *res){
+                       auto r = (result_t*)res;
+                       r->code = resp->code;
+                       r->msg = resp->status;
+                   },
+                   &result);
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    // should get HTTP response here
+    INFO(result.msg);
+    CHECK(result.code >= 200);
+
+    tlsuv_http_close(&clt, nullptr);
+    uv_run(loop, UV_RUN_DEFAULT);
+}
