@@ -376,16 +376,18 @@ static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t ca
         X509_STORE *ca = load_certs(cabuf, cabuf_len);
         c->ca_chains = process_chains(ca, &c->ca_chains_count);
         SSL_CTX_set0_verify_cert_store(ctx, ca);
+         SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_peer_cb);
     } else {
         // try loading default CA stores
 #if _WIN32
         X509_STORE *ca = load_system_certs();
         SSL_CTX_set0_verify_cert_store(ctx, ca);
+#elif defined(ANDROID) || defined(__ANDROID__)
+        SSL_CTX_load_verify_locations(ctx, NULL, "/system/etc/security/cacerts");
 #else
         SSL_CTX_set_default_verify_paths(ctx);
 #endif
     }
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_peer_cb);
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
 
@@ -854,7 +856,7 @@ tls_continue_hs(tlsuv_engine_t self) {
     if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
         return TLS_HS_CONTINUE;
     } else { // something else is wrong
-        eng->error = ERR_get_error();
+        eng->error = err;
         UM_LOG(ERR, "openssl: handshake was terminated: %s", tls_error(eng->error));
         return TLS_HS_ERROR;
     }
