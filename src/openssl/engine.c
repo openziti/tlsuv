@@ -33,6 +33,15 @@
 #include "keys.h"
 #include "../keychain.h"
 
+#if _WIN32
+#include <windows.h>
+#include <wincrypt.h>
+#pragma comment (lib, "crypt32.lib")
+#ifndef PATH_MAX
+#define PATH_MAX MAX_PATH
+#endif
+#endif
+
 
 // inspired by https://golang.org/src/crypto/x509/root_linux.go
 // Possible certificate files; stop after finding one.
@@ -1106,8 +1115,6 @@ goto on_error;            \
 }
 
 #if _WIN32
-#include <wincrypt.h>
-#pragma comment (lib, "crypt32.lib")
 
 static X509_STORE *load_system_certs() {
     X509_STORE *store = X509_STORE_new();
