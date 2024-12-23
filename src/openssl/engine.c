@@ -16,6 +16,7 @@
 #error "USE_OPENSSL must be set to compile this file"
 #endif
 
+#include <assert.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,10 +26,10 @@
 #include "../um_debug.h"
 #include <tlsuv/tlsuv.h>
 
+#include <openssl/err.h>
 #include <openssl/x509.h>
 #include <openssl/ssl.h>
-#include <openssl/err.h>
-#include <assert.h>
+#include <openssl/types.h>
 
 #include "keys.h"
 #include "../keychain.h"
