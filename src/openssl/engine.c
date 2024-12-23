@@ -109,7 +109,6 @@ static void tls_set_cert_verify(tls_context *ctx,
 
 static int parse_pkcs7_certs(tlsuv_certificate_t *chain, const char *pkcs7, size_t pkcs7len);
 
-static int write_cert_pem(tlsuv_certificate_t cert, int full_chain, char **pem, size_t *pemlen);
 static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buflen);
 
 static int generate_csr(tlsuv_private_key_t key, char **pem, size_t *pemlen, ...);
@@ -121,6 +120,7 @@ static int tls_set_partial_vfy(tls_context *ctx, int allow);
 
 static BIO_METHOD *BIO_s_engine(void);
 
+static X509_LOOKUP_METHOD * old_hash_lookup(void);
 
 #if _WIN32
 static X509_STORE *load_system_certs();
@@ -203,6 +203,10 @@ static X509_STORE * load_certs(const char *buf, size_t buf_len) {
             if (!X509_STORE_load_locations(certs, buf, NULL)) {
                 UM_LOG(ERR, "failed to load certs from [%s]", buf);
             }
+        } if (fstat.st_mode & S_IFDIR) {
+            X509_STORE_load_path(certs, buf);
+            X509_LOOKUP *lu = X509_STORE_add_lookup(certs, old_hash_lookup());
+            X509_LOOKUP_set_method_data(lu, (void*)buf);
         } else {
             UM_LOG(ERR, "cert bundle[%s] is not a regular file", buf);
         }
@@ -358,6 +362,54 @@ static X509_STORE** process_chains(X509_STORE *store, int *count) {
     return stores;
 }
 
+static int by_subj_old_hash(X509_LOOKUP *lu, X509_LOOKUP_TYPE t, const X509_NAME *name, X509_OBJECT *obj){
+    if (t != X509_LU_X509) return 0;
+
+    const char *dir = X509_LOOKUP_get_method_data(lu);
+    if (dir == NULL) return 0;
+
+    char path[PATH_MAX];
+    unsigned long h[] = {
+            X509_NAME_hash_old(name),
+            X509_NAME_hash(name),
+    };
+    int count = 0;
+    for (int i = 0; i < sizeof(h)/sizeof(h[0]); i++) {
+        for (int idx = 0; ; idx ++) {
+            snprintf(path, sizeof(path), "%s/%08lx.%d", dir, h[i], idx);
+            struct stat s;
+            if (stat(path, &s) != 0) break;
+            if ((s.st_mode & S_IFREG) == 0) {
+                continue;
+            }
+
+            if (X509_load_cert_file(lu, path, X509_FILETYPE_PEM) == 0) break;
+            count++;
+        }
+    }
+    if (count == 0) return 0;
+
+    X509_STORE *store = X509_LOOKUP_get_store(lu);
+    STACK_OF(X509_OBJECT) *objs = X509_STORE_get1_objects(store);
+    X509_OBJECT *res = X509_OBJECT_retrieve_by_subject(objs, X509_LU_X509, name);
+    sk_X509_OBJECT_free(objs);
+    if (res) {
+        X509_OBJECT_set1_X509(obj, X509_OBJECT_get0_X509(res));
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+static X509_LOOKUP_METHOD * old_hash_lookup(void) {
+    static X509_LOOKUP_METHOD *method = NULL;
+    if (method == NULL) {
+        method = X509_LOOKUP_meth_new("old-hash-lookup");
+        X509_LOOKUP_meth_set_get_by_subject(method, by_subj_old_hash);
+    }
+    return method;
+}
+
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len) {
     SSL_library_init();
 
@@ -376,17 +428,20 @@ static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t ca
         X509_STORE *ca = load_certs(cabuf, cabuf_len);
         c->ca_chains = process_chains(ca, &c->ca_chains_count);
         SSL_CTX_set0_verify_cert_store(ctx, ca);
-         SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_peer_cb);
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_peer_cb);
     } else {
         // try loading default CA stores
 #if _WIN32
         X509_STORE *ca = load_system_certs();
         SSL_CTX_set0_verify_cert_store(ctx, ca);
 #elif defined(ANDROID) || defined(__ANDROID__)
-        SSL_CTX_load_verify_locations(ctx, NULL, "/system/etc/security/cacerts");
+        X509_STORE *ca = SSL_CTX_get_cert_store(ctx);
+        X509_LOOKUP *lu = X509_STORE_add_lookup(ca, old_hash_lookup());
+        X509_LOOKUP_set_method_data(lu, (void*)"/etc/security/cacerts");
 #else
         SSL_CTX_set_default_verify_paths(ctx);
 #endif
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     }
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);

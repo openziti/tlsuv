@@ -1223,7 +1223,7 @@ sQIwJonMaAFi54mrfhfoFNZEfuNMSQ6/bIBiNLiyoX46FohQvKeIoJ99cx7sUkFN
     tlsuv_http_set_ssl(&clt, tls);
 
     struct result_t {
-        int code;
+        int code{0};
         std::string msg;
     } result;
     tlsuv_http_req(&clt, "GET", "/version",
@@ -1257,4 +1257,41 @@ sQIwJonMaAFi54mrfhfoFNZEfuNMSQ6/bIBiNLiyoX46FohQvKeIoJ99cx7sUkFN
 
     tlsuv_http_close(&clt, nullptr);
     uv_run(loop, UV_RUN_DEFAULT);
+}
+
+// test for exercising CA store that's
+// hashing certs with X509_NAME_hash_old()/MD5
+// e.g. on Android
+TEST_CASE("old-ca-store", "[http]") {
+    auto ca_dir = getenv("TLSUV_TEST_OLD_CA_DIR");
+    if (ca_dir == nullptr) {
+        SKIP("TLSUV_TEST_OLD_CA_DIR is not set");
+        return;
+    }
+    auto loop = uv_loop_new();
+    tlsuv_http_t clt{};
+    tlsuv_http_init(loop, &clt, "https://google.com");
+    auto tls = default_tls_context(ca_dir, 0);
+    tlsuv_http_set_ssl(&clt, tls);
+
+    struct result_t {
+        int code{0};
+        std::string msg;
+    } result;
+    tlsuv_http_req(&clt, "GET", "/",
+                   [](tlsuv_http_resp_t *resp, void *res){
+                       auto r = (result_t*)res;
+                       r->code = resp->code;
+                       r->msg = resp->status;
+                   },
+                   &result);
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    // should get HTTP response here
+    INFO(result.msg);
+    CHECK(result.code >= 200);
+
+    tlsuv_http_close(&clt, nullptr);
+    uv_run(loop, UV_RUN_DEFAULT);
+    uv_loop_delete(loop);
 }
