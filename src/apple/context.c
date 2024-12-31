@@ -6,10 +6,14 @@
 #include "tlsuv/tls_engine.h"
 #include "um_debug.h"
 #include "util.h"
+#include "tlsuv/tlsuv.h"
+
+#include <b64/cdecode.h>
 
 #include <Security/Security.h>
 #include <Security/SecKeychain.h>
 #include <Security/SecureTransport.h>
+#include <Security/SecImportExport.h>
 
 static tls_context ctx_api;
 static struct tlsuv_private_key_s sec_key_api;
@@ -17,6 +21,21 @@ static struct tlsuv_public_key_s pub_key_api;
 
 static int load_file(const char *path, char **content, size_t *l);
 static SecKeyAlgorithm get_hash_algo(enum hash_algo algo, CFStringRef key_type);
+
+static void cert_free(struct tlsuv_certificate_s *);
+static int cert_to_pem(const struct tlsuv_certificate_s *, int chain, char **pem, size_t *pem_len);
+static int cert_expiration(const struct tlsuv_certificate_s *, struct tm *exp);
+static int cert_verify(const struct tlsuv_certificate_s *, enum hash_algo hashAlgo,
+                       const char *string, size_t i1,
+                       const char *string1, size_t i2);
+
+static struct tlsuv_certificate_s sec_cert_api = {
+        .free = cert_free,
+        .to_pem = cert_to_pem,
+        .get_expiration = cert_expiration,
+        .verify = cert_verify,
+};
+
 
 const char* applesec_error(OSStatus code) {
     static char errorbuf[1024];
@@ -125,6 +144,8 @@ static int gen_key(tlsuv_private_key_t *key_ref) {
     int rc = err ? -1 : 0;
     return rc;
 }
+#define PEM_PRIV_KEY_START "-----BEGIN PRIVATE KEY-----\n"
+#define PEM_PRIV_KEY_END "-----END PRIVATE KEY-----"
 
 static int load_key(tlsuv_private_key_t *key_ref, const char *keystr, size_t len) {
     char *key_buf = NULL;
@@ -133,12 +154,33 @@ static int load_key(tlsuv_private_key_t *key_ref, const char *keystr, size_t len
         key_buf = (char*)keystr;
         keylen = len;
     }
+    
+    CFDataRef keyData = NULL;
+    if (strncmp(key_buf, PEM_PRIV_KEY_START, strlen(PEM_PRIV_KEY_START)) == 0) {
+        const char *p = key_buf + strlen(PEM_PRIV_KEY_START);
+        const char *e = strstr(p, PEM_PRIV_KEY_END);
+        size_t b64_len = e - p;
+        size_t dec_len = base64_decode_maxlength(b64_len);
+        char *decoded = tlsuv__malloc(dec_len);
+        base64_decodestate b64 = {};
+        dec_len = base64_decode_block(p, b64_len, decoded, &b64);
+        keyData = CFDataCreate(kCFAllocatorDefault, (uint8_t *)p, (CFIndex)b64_len);
+        tlsuv__free(decoded);
+    }
 
+    CFMutableDictionaryRef keyDict = CFDictionaryCreateMutable(kCFAllocatorDefault, 5, NULL, NULL);
+    CFDictionaryAddValue(keyDict, kSecAttrKeyClass, kSecAttrKeyClassPrivate);
+    CFDictionaryAddValue(keyDict, kSecAttrKeyType, kSecAttrKeyTypeEC);
+
+    CFErrorRef err = NULL;
+    SecKeyRef pKey = SecKeyCreateWithData(keyData, keyDict, &err);
+    CFStringRef errdesc = CFErrorCopyDescription(err);
+    CFStringRef reason = CFErrorCopyFailureReason(err);
+    UM_LOG(WARN, "fallback load failed: %s", applesec_error(CFErrorGetCode(err)));
     CFArrayRef items = NULL;
 
-    SecExternalItemType type = kSecItemTypePrivateKey;
+    SecExternalItemType type = kSecItemTypeUnknown;
     CFDataRef data = CFDataCreate(kCFAllocatorDefault, key_buf, keylen);
-
     SecItemImportExportFlags flags = kSecKeyNoAccessControl;
     const void *usage[] = {
         kSecAttrCanDecrypt,
@@ -152,7 +194,11 @@ static int load_key(tlsuv_private_key_t *key_ref, const char *keystr, size_t len
             .keyAttributes = CFArrayCreate(kCFAllocatorDefault, atts, 1, NULL),
             .keyUsage = CFArrayCreate(kCFAllocatorDefault, usage, 2, NULL),
     };
-    OSStatus rc = SecItemImport(data, NULL, NULL, &type, flags, &params, NULL, &items);
+    uint32_t fmt = kSecFormatPEMSequence;
+    OSStatus rc = SecItemImport(data, NULL, &fmt, &type, kSecItemPemArmour, NULL, NULL, &items);
+    if (rc) {
+        UM_LOG(WARN, "fallback load failed: %s", applesec_error(rc));
+    }
     if (rc == 0 && type == kSecItemTypePrivateKey) {
         SecKeyRef k = CFArrayGetValueAtIndex(items, 0);
         CFDictionaryRef attrs = SecKeyCopyAttributes(k);
@@ -196,7 +242,7 @@ static int load_key(tlsuv_private_key_t *key_ref, const char *keystr, size_t len
     return rc == 0 ? 0 : -1;
 }
 
-static int load_cert(tls_cert *cert, const char *certstr, size_t len) {
+static int load_cert(tlsuv_certificate_t *cert, const char *certstr, size_t len) {
     char *cert_buf = NULL;
     size_t cert_len;
     if (load_file(certstr, &cert_buf, &cert_len) != 0) {
@@ -213,18 +259,58 @@ static int load_cert(tls_cert *cert, const char *certstr, size_t len) {
     if (cert_buf != certstr) {
         free(cert_buf);
     }
-    *cert = items;
+    if (rc == 0) {
+        struct sectransport_cert *c = tlsuv__calloc(1, sizeof(*c));
+        c->api = sec_cert_api;
+        c->chain = items;
+        *cert = &c->api;
+    }
+    CFRelease(data);
     return rc == 0 ? 0 : -1;
 }
 
-static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t pk, tls_cert cert) {
+static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t pk, tlsuv_certificate_t cert) {
+    if (ctx == NULL) return -1;
     struct sectransport_ctx *c = (struct sectransport_ctx *) ctx;
-    struct sectransport_pub_key *key = container_of(pk, struct sectransport_pub_key, api);
 
-    c->key = key->key;
-    c->cert = cert;
+    if(c->key) CFRelease(c->key);
+    if(c->cert) CFRelease(c->cert);
 
+    if (pk) {
+        struct sectransport_pub_key *key = container_of(pk, struct sectransport_pub_key, api);
+        c->key = CFRetain(key->key);
+    }
+
+    if (cert) {
+        struct sectransport_cert *cer = container_of(cert, struct sectransport_cert, api);
+        c->cert = CFRetain(cer->chain);
+    }
     return 0;
+}
+
+static int parse_pkcs7_certs(tlsuv_certificate_t *c, const char *pkcs7, size_t len) {
+
+    char *decoded = tlsuv__malloc(base64_decode_maxlength(len));
+    base64_decodestate b64_state = {};
+    size_t decoded_len = base64_decode_block(pkcs7, len, decoded, &b64_state);
+
+    CFErrorRef error;
+    CFDataRef data = CFDataCreate(kCFAllocatorDefault, decoded, (CFIndex)decoded_len);
+    CFArrayRef items = NULL;
+    uint32_t format = kSecFormatPKCS7;
+    uint32_t type = kSecItemTypeCertificate;
+    OSStatus rc = SecItemImport(data, NULL, &format, &type, 0, NULL, NULL, &items);
+
+    if (rc == ERR_SUCCESS) {
+        struct sectransport_cert *cert = tlsuv__calloc(1, sizeof(*cert));
+        cert->api = sec_cert_api;
+        cert->chain = items;
+        *c = &cert->api;
+    }
+    CFRelease(data);
+    tlsuv__free(decoded);
+
+    return rc == ERR_SUCCESS ? 0 : -1;
 }
 
 static tls_context ctx_api = {
@@ -236,7 +322,7 @@ static tls_context ctx_api = {
         .set_own_cert = tls_set_own_cert,
 //        .set_cert_verify = tls_set_cert_verify,
 //        .verify_signature =  tls_verify_signature,
-//        .parse_pkcs7_certs = parse_pkcs7_certs,
+        .parse_pkcs7_certs = parse_pkcs7_certs,
 //        .write_cert_to_pem = write_cert_pem,
         .generate_key = gen_key,
         .load_key = load_key,
@@ -301,9 +387,8 @@ static int privkey_sign(struct tlsuv_private_key_s *pk, enum hash_algo algo,
     CFRelease(d);
     return err ? -1 : 0;
 }
-static int privkey_get_cert(struct tlsuv_private_key_s *, tls_cert *pVoid){}
-static int privkey_store_cert(struct tlsuv_private_key_s *, tls_cert pVoid1){}
-
+static int privkey_get_cert(struct tlsuv_private_key_s *, tlsuv_certificate_t *){}
+static int privkey_store_cert(struct tlsuv_private_key_s *, tlsuv_certificate_t){}
 static struct tlsuv_private_key_s sec_key_api = {
         .free = privkey_free,
         .to_pem = privkey_to_pem,
@@ -312,6 +397,7 @@ static struct tlsuv_private_key_s sec_key_api = {
         .get_certificate = privkey_get_cert,
         .store_certificate = privkey_store_cert,
 };
+
 
 static void pubkey_free(struct tlsuv_public_key_s *pk) {
     struct sectransport_pub_key *key = container_of(pk, struct sectransport_pub_key, api);
@@ -396,7 +482,7 @@ static SecKeyAlgorithm get_hash_algo(enum hash_algo algo, CFStringRef key_type) 
     if (key_type == kSecAttrKeyTypeECSECPrimeRandom) {
         switch (algo) {
             case hash_SHA256:
-                algorithm = kSecKeyAlgorithmECDSASignatureMessageRFC4754SHA256;
+                algorithm = kSecKeyAlgorithmECDSASignatureMessageX962SHA256;
                 break;
             case hash_SHA384:
                 algorithm = kSecKeyAlgorithmECDSASignatureDigestRFC4754SHA384;
@@ -420,4 +506,36 @@ static SecKeyAlgorithm get_hash_algo(enum hash_algo algo, CFStringRef key_type) 
 
     }
     return algorithm;
+}
+
+void cert_free(struct tlsuv_certificate_s *c) {
+    if (c == NULL) return;
+
+    struct sectransport_cert *cert = container_of(c, struct sectransport_cert, api);
+    CFRelease(cert->chain);
+    tlsuv__free(cert);
+}
+int cert_to_pem(const struct tlsuv_certificate_s *c, int chain, char **pem, size_t *pem_len) {
+    struct sectransport_cert *cert = container_of(c, struct sectransport_cert, api);
+    CFTypeRef exportItem = chain ? cert->chain : CFArrayGetValueAtIndex(cert->chain, 0);
+    CFDataRef exportData = NULL;
+    OSStatus rc = SecItemExport(exportItem, kSecFormatPEMSequence, 0, NULL, &exportData);
+    if (rc == ERR_SUCCESS) {
+        CFIndex len = CFDataGetLength(exportData);
+        *pem = tlsuv__calloc(1, len + 1);
+        CFDataGetBytes(exportData, CFRangeMake(0, len), (uint8_t*) *pem);
+        CFRelease(exportData);
+        return 0;
+    }
+    return -1;
+}
+int cert_expiration(const struct tlsuv_certificate_s *c, struct tm *exp) {
+    struct sectransport_cert *cert = container_of(c, struct sectransport_cert, api);
+
+}
+int cert_verify(const struct tlsuv_certificate_s *c, enum hash_algo hashAlgo,
+                       const char *string, size_t i1,
+                       const char *string1, size_t i2) {
+    struct sectransport_cert *cert = container_of(c, struct sectransport_cert, api);
+
 }

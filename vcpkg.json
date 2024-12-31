@@ -40,7 +40,10 @@
     },
     "applesec": {
       "description": "Apple SSL support",
-      "supports": "osx | ios"
+      "supports": "osx | ios",
+      "dependencies": [
+        "b64"
+      ]
     },
     "test": {
       "description": "Dependencies for testing",

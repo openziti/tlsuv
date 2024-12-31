@@ -30,6 +30,12 @@ struct sectransport_pub_key {
     CFStringRef key_type;
 };
 
+struct sectransport_cert {
+    struct tlsuv_certificate_s api;
+
+    CFArrayRef chain;
+};
+
 extern const char* applesec_error(OSStatus code);
 extern tlsuv_engine_t new_engine(tls_context *ctx, const char *hostname);
 

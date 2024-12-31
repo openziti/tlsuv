@@ -114,10 +114,13 @@ fcwJ0v2IisYTCMavk0DJSj9Hd+coMSyTa7ghp8ja/0PSoQAxAA==
 
 TEST_CASE("implementation test", "[engine]") {
     tls_context *tls = default_tls_context(nullptr, 0);
+    auto ver = tls->version();
 #if defined(TEST_mbedtls)
-    REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("mbed TLS", Catch::CaseSensitive::No));
+    REQUIRE_THAT(ver, Catch::Matchers::StartsWith("mbed TLS", Catch::CaseSensitive::No));
 #elif defined(TEST_openssl)
-    REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("OpenSSL"));
+    REQUIRE_THAT(ver, Catch::Matchers::StartsWith("OpenSSL"));
+#elif defined(TEST_applesec)
+    REQUIRE_THAT(ver, Catch::Matchers::StartsWith("com.apple.security"));
 #else
     FAIL("invalid engine");
 #endif
