@@ -54,19 +54,7 @@ static void comp_free(void *ctx, void *p) {
     tlsuv__free(p);
 }
 
-#if __linux__ || defined(__FreeBSD__)
-#define SO_lib(p) (#p ".so.1")
-#elif defined(__APPLE__)
-#define SO_lib(p) (#p ".dylib")
-#else
-
-#endif
-
 static void init(void) {
-
-#if _WIN32
-    // on WIN32 zlib is not usually available
-    // so we link it statically and set functions pointers directly
     zlib_ver = zlibVersion;
     zlib_flags = zlibCompileFlags;
     inflateInit_f = inflateInit_;
@@ -74,47 +62,24 @@ static void init(void) {
     inflateEnd_f = inflateEnd;
     inflate_f = inflate;
     zError_f = zError;
-#else
-#define CHECK_DL(op) do{ \
-if ((op) != 0)           \
-goto on_error;           \
-} while(0)
-
-    CHECK_DL(uv_dlopen(SO_lib(libz), &zlib));
-    CHECK_DL(uv_dlsym(&zlib, "zlibVersion", (void **) &zlib_ver));
-    CHECK_DL(uv_dlsym(&zlib, "zlibCompileFlags", (void **) &zlib_flags));
-    CHECK_DL(uv_dlsym(&zlib, "inflateEnd", (void **) &inflateEnd_f));
-    CHECK_DL(uv_dlsym(&zlib, "inflateInit_", (void **) &inflateInit_f));
-    CHECK_DL(uv_dlsym(&zlib, "inflateInit2_", (void **) &inflateInit2_f));
-    CHECK_DL(uv_dlsym(&zlib, "inflate", (void **) &inflate_f));
-    CHECK_DL(uv_dlsym(&zlib, "zError", (void **) &zError_f));
-#endif
 
     ZLibVersion = zlib_ver();
     if (ZLibVersion[0] != ZLIB_VERSION[0]) {
+        UM_LOG(WARN, "zlib version[%s] is not supported", ZLibVersion);
         return;
     }
+
     if (zlib_flags() & NO_GZIP) {
         encodings = "deflate";
     } else {
         encodings = "gzip, deflate";
     }
-    goto done;
-
-    on_error:
-    UM_LOG(ERR, "failed to initialize HTTP decompression: %s", uv_dlerror(&zlib));
-
-    done:
-    return;
 }
 
 const char *um_available_encoding(void) {
     uv_once(&init_guard, init);
     return encodings;
 }
-
-#define inflateInit_ inflateInit_f
-#define inflateInit2_ inflateInit2_f
 
 http_inflater_t *um_get_inflater(const char *encoding, data_cb cb, void *ctx) {
     um_available_encoding();
