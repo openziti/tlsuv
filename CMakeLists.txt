@@ -128,7 +128,7 @@ if (TLSUV_HTTP)
     add_subdirectory(deps)
     target_link_libraries(tlsuv PUBLIC uv_link)
 
-    find_package(ZLIB REQUIRED)
+    find_package(ZLIB 1 REQUIRED)
     target_link_libraries(tlsuv PRIVATE ZLIB::ZLIB)
 
     find_package(llhttp CONFIG REQUIRED)
