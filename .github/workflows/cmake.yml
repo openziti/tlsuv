@@ -46,9 +46,9 @@ jobs:
     steps:
     - name: Install tools
       if: matrix.image == 'ubuntu'
-      run: |
-        sudo apt update
-        sudo apt install -y valgrind softhsm2
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: valgrind softhsm2
 
     - name: Install tools
       if: matrix.image == 'macOS'
@@ -72,24 +72,19 @@ jobs:
 
     - name: Cache ${{ matrix.target }} deps
       id: cache
-      uses: actions/cache/restore@v4
+      uses: actions/cache@v4
       with:
+        save-always: true
         path: ${{ env.CI_CACHE }}
         key: dep-${{ matrix.target }}-${{ matrix.tls }}-${{ hashFiles('./vcpkg.json') }}
+        restore-keys: |
+          dep-${{ matrix.target }}-${{ matrix.tls }}-
+          dep-${{ matrix.target }}-
 
     - uses: lukka/run-vcpkg@v11
       with:
         doNotCache: false
         runVcpkgInstall: false
-        # runVcpkgFormatString: '[`install`, `--debug`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--x-feature=all-deps`]'
-
-    - name: run vcpkg install
-      shell: bash
-      run: |
-        echo $CI_CACHE
-        mkdir -p '${{ env.CI_CACHE }}'
-        vcpkg install --x-feature=all-deps
-        ls -l '${{ github.workspace }}/.ci.cache'
 
     - uses: lukka/run-cmake@v10
       name: Configure build
@@ -138,13 +133,6 @@ jobs:
       run: |
         cd build
         ctest --output-on-failure --no-compress-output -T memcheck
-
-    - name: Cache ${{ matrix.target }} deps
-      uses: actions/cache/save@v4
-      if: always()
-      with:
-        key: ${{ steps.cache.outputs.cache-primary-key }}
-        path: ${{ env.CI_CACHE }}
 
     - name: upload test summary
       if: always()
