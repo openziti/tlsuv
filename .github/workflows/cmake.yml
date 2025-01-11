@@ -11,6 +11,12 @@ jobs:
   build:
     name: ${{ matrix.target }}-${{ matrix.tls }}
     runs-on: ${{ matrix.image }}-latest
+    env:
+      CI_CACHE: '${{ github.workspace }}/.ci.cache'
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.ci.cache,readwrite'
+      VCPKG_DEFAULT_TRIPLET: ${{ matrix.target }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -59,21 +65,31 @@ jobs:
 
     - uses: lukka/get-cmake@latest
 
+    - name: create cache dir
+      shell: bash
+      run: |
+        mkdir -p ${CI_CACHE}
+
     - name: Cache ${{ matrix.target }} deps
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
-        save-always: 'true'
-        path: vcpkg/packages
-        key: dependencies-${{ matrix.target }}-${{ hashFiles('./vcpkg.json') }}
+        path: ${{ env.CI_CACHE }}
+        key: dep-${{ matrix.target }}-${{ matrix.tls }}-${{ hashFiles('./vcpkg.json') }}
 
     - uses: lukka/run-vcpkg@v11
-      env:
-        VCPKG_DEFAULT_TRIPLET: ${{ matrix.target }}
       with:
-        doNotCache: true
-        runVcpkgInstall: true
-        runVcpkgFormatString: '[`install`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--x-feature=all-deps`]'
+        doNotCache: false
+        runVcpkgInstall: false
+        # runVcpkgFormatString: '[`install`, `--debug`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--x-feature=all-deps`]'
+
+    - name: run vcpkg install
+      shell: bash
+      run: |
+        echo $CI_CACHE
+        mkdir -p '${{ env.CI_CACHE }}'
+        vcpkg install --x-feature=all-deps
+        ls -l '${{ github.workspace }}/.ci.cache'
 
     - uses: lukka/run-cmake@v10
       name: Configure build
@@ -122,6 +138,13 @@ jobs:
       run: |
         cd build
         ctest --output-on-failure --no-compress-output -T memcheck
+
+    - name: Cache ${{ matrix.target }} deps
+      uses: actions/cache/save@v4
+      if: always()
+      with:
+        key: ${{ steps.cache.outputs.cache-primary-key }}
+        path: ${{ env.CI_CACHE }}
 
     - name: upload test summary
       if: always()
