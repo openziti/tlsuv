@@ -42,7 +42,7 @@ jobs:
       if: matrix.image == 'ubuntu'
       run: |
         sudo apt update
-        sudo apt install -y valgrind softhsm
+        sudo apt install -y valgrind softhsm2
 
     - name: Install tools
       if: matrix.image == 'macOS'

@@ -40,7 +40,7 @@ static llhttp_settings_t HTTP_PROC = {
 
 void http_req_init(tlsuv_http_req_t *r, const char *method, const char *path) {
     r->method = tlsuv__strdup(method);
-    r->path = tlsuv__strdup(path);
+    r->path = path ? tlsuv__strdup(path) : NULL;
     r->req_body = NULL;
     r->req_chunked = false;
     r->req_body_size = -1;
@@ -233,8 +233,14 @@ if (a_size < 0 || a_size >= maxlen - l) return UV_ENOMEM; \
 l += a_size;\
 } while(0)
 
-    CHECK_APPEND(len, snprintf(buf, maxlen - len, "%s %s%s",
-                               req->method, pfx, req->path));
+    const char *path = req->path ? req->path : "";
+    while(path[0] == SLASH[0]) {
+        path++;
+    }
+
+    const char *slash = path[0] == '?' ? "" : SLASH;
+    CHECK_APPEND(len, snprintf(buf, maxlen - len, "%s %s%s%s",
+                               req->method, pfx, slash, path));
     if (req->query) {
         CHECK_APPEND(len, snprintf(buf + len, maxlen - len, "?%s", req->query));
     }
