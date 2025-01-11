@@ -1344,6 +1344,10 @@ TEST_CASE("http-prefix", "[http]") {
     http_req_write(req, req_buf, sizeof(req_buf));
     CHECK_THAT(req_buf, StartsWith("GET /foo "));
 
+    req = tlsuv_http_req(&clt, "GET", "/foo", nullptr, nullptr);
+    http_req_write(req, req_buf, sizeof(req_buf));
+    CHECK_THAT(req_buf, StartsWith("GET /foo "));
+
     req = tlsuv_http_req(&clt, "GET", "/", nullptr, nullptr);
     http_req_write(req, req_buf, sizeof(req_buf));
     CHECK_THAT(req_buf, StartsWith("GET / "));
