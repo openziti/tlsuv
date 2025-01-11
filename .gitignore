@@ -66,6 +66,9 @@ compile_commands.json
 CTestTestfile.cmake
 build
 
+## CI cache
+.ci.cache/
+
 ### JetBrains
 .idea/
 cmake-build-*/
