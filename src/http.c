@@ -467,8 +467,18 @@ static void http_set_prefix(tlsuv_http_t *clt, const char *pfx, size_t pfx_len) 
     }
 
     if (pfx) {
-        clt->prefix = tlsuv__calloc(1, pfx_len + 1);
-        strncpy(clt->prefix, pfx, pfx_len);
+        clt->prefix = tlsuv__calloc(1, pfx_len + 2);
+        while(pfx_len > 0 && pfx[0] == '/') {
+            pfx_len--;
+            pfx++;
+        }
+
+        while (pfx_len > 0 && pfx[pfx_len - 1] == SLASH[0]) {
+            pfx_len -= 1;
+        }
+        snprintf(clt->prefix, pfx_len + 3, "/%.*s",
+                 (int)pfx_len, pfx
+                 );
     }
 }
 
@@ -566,7 +576,7 @@ int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, t
 }
 
 void tlsuv_http_set_path_prefix(tlsuv_http_t *clt, const char *prefix) {
-    http_set_prefix(clt, prefix, strlen(prefix));
+    http_set_prefix(clt, prefix, prefix ? strlen(prefix) : 0);
 }
 
 int tlsuv_http_init(uv_loop_t *l, tlsuv_http_t *clt, const char *url) {

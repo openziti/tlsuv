@@ -17,6 +17,8 @@
 
 #include <tlsuv/http.h>
 
+#define SLASH "/"
+
 void http_req_init(tlsuv_http_req_t *req, const char *method, const char *path);
 int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, const char *msg);
 

@@ -24,6 +24,10 @@
 #include <tlsuv/tls_engine.h>
 #include <tlsuv/tlsuv.h>
 
+extern "C" {
+#include "http_req.h"
+}
+
 #include <parson.h>
 
 extern tlsuv_log_func test_log;
@@ -1290,6 +1294,67 @@ TEST_CASE("old-ca-store", "[http]") {
     // should get HTTP response here
     INFO(result.msg);
     CHECK(result.code >= 200);
+
+    tlsuv_http_close(&clt, nullptr);
+    uv_run(loop, UV_RUN_DEFAULT);
+    uv_loop_delete(loop);
+}
+
+TEST_CASE("http-prefix", "[http]") {
+    auto loop = uv_loop_new();
+    tlsuv_http_t clt{};
+    tlsuv_http_init(loop, &clt, "https://google.com");
+    CHECK(clt.prefix == nullptr);
+
+    tlsuv_http_set_path_prefix(&clt, "//////");
+    CHECK_THAT(clt.prefix, Equals("/"));
+
+    tlsuv_http_set_path_prefix(&clt, "search");
+    CHECK_THAT(clt.prefix, Equals("/search"));
+
+    tlsuv_http_set_path_prefix(&clt, "///search");
+    CHECK_THAT(clt.prefix, Equals("/search"));
+
+    tlsuv_http_set_path_prefix(&clt, "///search///");
+    CHECK_THAT(clt.prefix, Equals("/search"));
+
+    char req_buf[1024];
+    auto req = tlsuv_http_req(&clt, "GET", "/foo", nullptr, nullptr);
+    http_req_write(req, req_buf, sizeof(req_buf));
+    CHECK_THAT(req_buf, StartsWith("GET /search/foo "));
+
+    req = tlsuv_http_req(&clt, "GET", "/////foo", nullptr, nullptr);
+    http_req_write(req, req_buf, sizeof(req_buf));
+    CHECK_THAT(req_buf, StartsWith("GET /search/foo "));
+
+    req = tlsuv_http_req(&clt, "GET", "foo", nullptr, nullptr);
+    http_req_write(req, req_buf, sizeof(req_buf));
+    CHECK_THAT(req_buf, StartsWith("GET /search/foo "));
+
+    req = tlsuv_http_req(&clt, "GET", nullptr, nullptr, nullptr);
+    http_req_write(req, req_buf, sizeof(req_buf));
+    CHECK_THAT(req_buf, StartsWith("GET /search/ "));
+
+    req = tlsuv_http_req(&clt, "GET", "?foo", nullptr, nullptr);
+    http_req_write(req, req_buf, sizeof(req_buf));
+    CHECK_THAT(req_buf, StartsWith("GET /search?foo "));
+
+    tlsuv_http_set_path_prefix(&clt, nullptr);
+    req = tlsuv_http_req(&clt, "GET", "foo", nullptr, nullptr);
+    http_req_write(req, req_buf, sizeof(req_buf));
+    CHECK_THAT(req_buf, StartsWith("GET /foo "));
+
+    req = tlsuv_http_req(&clt, "GET", "/", nullptr, nullptr);
+    http_req_write(req, req_buf, sizeof(req_buf));
+    CHECK_THAT(req_buf, StartsWith("GET / "));
+
+    req = tlsuv_http_req(&clt, "GET", "", nullptr, nullptr);
+    http_req_write(req, req_buf, sizeof(req_buf));
+    CHECK_THAT(req_buf, StartsWith("GET / "));
+
+    req = tlsuv_http_req(&clt, "GET", nullptr, nullptr, nullptr);
+    http_req_write(req, req_buf, sizeof(req_buf));
+    CHECK_THAT(req_buf, StartsWith("GET / "));
 
     tlsuv_http_close(&clt, nullptr);
     uv_run(loop, UV_RUN_DEFAULT);
