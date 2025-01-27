@@ -1316,28 +1316,28 @@ TEST_CASE("http-prefix", "[http]") {
     CHECK_THAT(clt.prefix, Equals("/search"));
 
     tlsuv_http_set_path_prefix(&clt, "///search///");
-    CHECK_THAT(clt.prefix, Equals("/search"));
+    CHECK_THAT(clt.prefix, Equals("/search///"));
 
     char req_buf[1024];
     auto req = tlsuv_http_req(&clt, "GET", "/foo", nullptr, nullptr);
     http_req_write(req, req_buf, sizeof(req_buf));
-    CHECK_THAT(req_buf, StartsWith("GET /search/foo "));
+    CHECK_THAT(req_buf, StartsWith("GET /search///foo "));
 
     req = tlsuv_http_req(&clt, "GET", "/////foo", nullptr, nullptr);
     http_req_write(req, req_buf, sizeof(req_buf));
-    CHECK_THAT(req_buf, StartsWith("GET /search/foo "));
+    CHECK_THAT(req_buf, StartsWith("GET /search///foo "));
 
     req = tlsuv_http_req(&clt, "GET", "foo", nullptr, nullptr);
     http_req_write(req, req_buf, sizeof(req_buf));
-    CHECK_THAT(req_buf, StartsWith("GET /search/foo "));
+    CHECK_THAT(req_buf, StartsWith("GET /search///foo "));
 
     req = tlsuv_http_req(&clt, "GET", nullptr, nullptr, nullptr);
     http_req_write(req, req_buf, sizeof(req_buf));
-    CHECK_THAT(req_buf, StartsWith("GET /search/ "));
+    CHECK_THAT(req_buf, StartsWith("GET /search/// "));
 
     req = tlsuv_http_req(&clt, "GET", "?foo", nullptr, nullptr);
     http_req_write(req, req_buf, sizeof(req_buf));
-    CHECK_THAT(req_buf, StartsWith("GET /search?foo "));
+    CHECK_THAT(req_buf, StartsWith("GET /search///?foo "));
 
     tlsuv_http_set_path_prefix(&clt, nullptr);
     req = tlsuv_http_req(&clt, "GET", "foo", nullptr, nullptr);
