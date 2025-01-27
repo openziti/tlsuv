@@ -238,7 +238,7 @@ l += a_size;\
         path++;
     }
 
-    const char *slash = path[0] == '?' ? "" : SLASH;
+    const char *slash = (path[0] == '?' || path[0] == '\0') ? "" : SLASH;
     CHECK_APPEND(len, snprintf(buf, maxlen - len, "%s %s%s%s",
                                req->method, pfx, slash, path));
     if (req->query) {
