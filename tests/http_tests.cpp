@@ -1385,3 +1385,28 @@ TEST_CASE("http-prefix", "[http]") {
     uv_run(loop, UV_RUN_DEFAULT);
     uv_loop_delete(loop);
 }
+
+TEST_CASE("path = null", "[http]") {
+    std::string scheme = GENERATE("http", "https");
+
+    WHEN("test " + scheme) {
+        UvLoopTest test;
+
+        tlsuv_http_t clt;
+        resp_capture resp(resp_body_cb);
+
+
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
+        tlsuv_http_set_path_prefix(&clt, "json");
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", nullptr, resp_capture_cb, &resp);
+
+        test.run();
+
+        CHECK(resp.code == 200);
+        CHECK(resp.status == "OK");
+
+        tlsuv_http_close(&clt, nullptr);
+        test.run();
+    }
+}
