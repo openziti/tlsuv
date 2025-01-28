@@ -1316,28 +1316,28 @@ TEST_CASE("http-prefix", "[http]") {
     CHECK_THAT(clt.prefix, Equals("/search"));
 
     tlsuv_http_set_path_prefix(&clt, "///search///");
-    CHECK_THAT(clt.prefix, Equals("/search"));
+    CHECK_THAT(clt.prefix, Equals("/search///"));
 
     char req_buf[1024];
     auto req = tlsuv_http_req(&clt, "GET", "/foo", nullptr, nullptr);
     http_req_write(req, req_buf, sizeof(req_buf));
-    CHECK_THAT(req_buf, StartsWith("GET /search/foo "));
+    CHECK_THAT(req_buf, StartsWith("GET /search///foo "));
 
     req = tlsuv_http_req(&clt, "GET", "/////foo", nullptr, nullptr);
     http_req_write(req, req_buf, sizeof(req_buf));
-    CHECK_THAT(req_buf, StartsWith("GET /search/foo "));
+    CHECK_THAT(req_buf, StartsWith("GET /search///foo "));
 
     req = tlsuv_http_req(&clt, "GET", "foo", nullptr, nullptr);
     http_req_write(req, req_buf, sizeof(req_buf));
-    CHECK_THAT(req_buf, StartsWith("GET /search/foo "));
+    CHECK_THAT(req_buf, StartsWith("GET /search///foo "));
 
     req = tlsuv_http_req(&clt, "GET", nullptr, nullptr, nullptr);
     http_req_write(req, req_buf, sizeof(req_buf));
-    CHECK_THAT(req_buf, StartsWith("GET /search/ "));
+    CHECK_THAT(req_buf, StartsWith("GET /search/// "));
 
     req = tlsuv_http_req(&clt, "GET", "?foo", nullptr, nullptr);
     http_req_write(req, req_buf, sizeof(req_buf));
-    CHECK_THAT(req_buf, StartsWith("GET /search?foo "));
+    CHECK_THAT(req_buf, StartsWith("GET /search///?foo "));
 
     tlsuv_http_set_path_prefix(&clt, nullptr);
     req = tlsuv_http_req(&clt, "GET", "foo", nullptr, nullptr);
@@ -1384,4 +1384,29 @@ TEST_CASE("http-prefix", "[http]") {
     tlsuv_http_close(&clt, nullptr);
     uv_run(loop, UV_RUN_DEFAULT);
     uv_loop_delete(loop);
+}
+
+TEST_CASE("path = null", "[http]") {
+    std::string scheme = GENERATE("http", "https");
+
+    WHEN("test " + scheme) {
+        UvLoopTest test;
+
+        tlsuv_http_t clt;
+        resp_capture resp(resp_body_cb);
+
+
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
+        tlsuv_http_set_path_prefix(&clt, "json");
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", nullptr, resp_capture_cb, &resp);
+
+        test.run();
+
+        CHECK(resp.code == 200);
+        CHECK(resp.status == "OK");
+
+        tlsuv_http_close(&clt, nullptr);
+        test.run();
+    }
 }

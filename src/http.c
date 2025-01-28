@@ -468,18 +468,15 @@ static void http_set_prefix(tlsuv_http_t *clt, const char *pfx, size_t pfx_len) 
     if (pfx == NULL)
         return;
 
+    // drop extra leading slashes
     while(pfx_len > 0 && pfx[0] == '/') {
         pfx_len--;
         pfx++;
     }
 
-    while (pfx_len > 0 && pfx[pfx_len - 1] == SLASH[0]) {
-        pfx_len -= 1;
-    }
-
     if (pfx && pfx_len > 0) {
         clt->prefix = tlsuv__calloc(1, pfx_len + 2);
-        snprintf(clt->prefix, pfx_len + 3, "/%.*s",
+        snprintf(clt->prefix, pfx_len + 2, "/%.*s",
                  (int)pfx_len, pfx
                  );
     }

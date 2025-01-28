@@ -220,7 +220,7 @@ int tlsuv_http_req_form(tlsuv_http_req_t *req, size_t count, const tlsuv_http_pa
 
 
 ssize_t http_req_write(tlsuv_http_req_t *req, char *buf, size_t maxlen) {
-    const char *pfx = "";
+    const char *pfx = "/";
     if (req->client && req->client->prefix) {
         pfx = req->client->prefix;
     }
@@ -238,7 +238,10 @@ l += a_size;\
         path++;
     }
 
-    const char *slash = path[0] == '?' ? "" : SLASH;
+    const char *slash = SLASH;
+    if (pfx[strlen(pfx) - 1] == SLASH[0] || path[0] == '?' || path[0] == '\0') {
+        slash = "";
+    }
     CHECK_APPEND(len, snprintf(buf, maxlen - len, "%s %s%s%s",
                                req->method, pfx, slash, path));
     if (req->query) {
