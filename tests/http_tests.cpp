@@ -1410,3 +1410,37 @@ TEST_CASE("path = null", "[http]") {
         test.run();
     }
 }
+
+TEST_CASE("failed active request", "[http]") {
+    std::string scheme = GENERATE("http", "https");
+
+    WHEN("test " + scheme) {
+        UvLoopTest test;
+
+        tlsuv_http_t clt;
+        struct resp_s {
+            int status;
+            int called;
+            tlsuv_http_t *clt;
+        } resp{
+            .clt = &clt,
+        };
+
+        tlsuv_http_init(test.loop, &clt, (scheme + "://g00gle.comm").c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
+        tlsuv_http_req_t *req = tlsuv_http_req(
+                &clt, "GET", nullptr,
+                [](tlsuv_http_resp_t *resp, void *data){
+                    auto r = (resp_s*)data;
+                    r->status = resp->code;
+                    r->called++;
+                    tlsuv_http_close(r->clt, nullptr);
+                },
+                &resp);
+
+        test.run();
+        INFO(uv_strerror(resp.status));
+        CHECK(resp.status == UV_EAI_NONAME);
+        CHECK(resp.called == 1);
+    }
+}

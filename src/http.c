@@ -125,24 +125,23 @@ static void clear_req_body(tlsuv_http_req_t *req, int code) {
 }
 
 static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
-    if (c->active == NULL) return;
+    tlsuv_http_req_t *req = c->active;
 
-    // this is called from active request callback
-    if (c->active->state == completed) return;
+    if (req == NULL || req->state == completed) return;
+    c->active = NULL;
 
-    if (c->active->resp_cb != NULL) {
-        c->active->resp.code = code;
-        c->active->resp.status = tlsuv__strdup(msg);
-        c->active->resp_cb(&c->active->resp, c->active->data);
-        c->active->resp_cb = NULL;
-    } else if (c->active->resp.body_cb != NULL) {
-        c->active->resp.body_cb(c->active, NULL, code);
+    if (req->resp_cb != NULL) {
+        req->resp.code = code;
+        req->resp.status = tlsuv__strdup(msg);
+        req->resp_cb(&req->resp, req->data);
+        req->resp_cb = NULL;
+    } else if (req->resp.body_cb != NULL) {
+        req->resp.body_cb(c->active, NULL, code);
     }
 
-    clear_req_body(c->active, code);
-    http_req_free(c->active);
-    tlsuv__free(c->active);
-    c->active = NULL;
+    clear_req_body(req, code);
+    http_req_free(req);
+    tlsuv__free(req);
 }
 
 static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
