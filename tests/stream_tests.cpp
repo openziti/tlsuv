@@ -662,7 +662,11 @@ TEST_CASE("connect to address", "[stream]") {
 
 
     uv_getaddrinfo_t res_req{};
-    REQUIRE(uv_getaddrinfo(test.loop, &res_req, nullptr, TEST_SERVER, "7443", nullptr) == 0);
+    addrinfo hints = {
+            .ai_family = AF_INET,
+            .ai_socktype = SOCK_STREAM,
+    };
+    REQUIRE(uv_getaddrinfo(test.loop, &res_req, nullptr, TEST_SERVER, "7443", &hints) == 0);
 
 
     auto rc = tlsuv_stream_connect_addr(&cr, &s, res_req.addrinfo, [](uv_connect_t *r, int status) {
@@ -676,7 +680,7 @@ TEST_CASE("connect to address", "[stream]") {
 
     test.run(UNTIL(test_ctx.connect_called == 1));
     if (test_ctx.connect_result != 0) {
-        INFO("connect result: " << uv_strerror(test_ctx.connect_result));
+        UNSCOPED_INFO("connect result: " << uv_strerror(test_ctx.connect_result));
     }
     CHECK(test_ctx.connect_result == 0);
 
