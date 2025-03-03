@@ -18,6 +18,8 @@ template<typename T> T* t_alloc() {
 #define WHILE(c) [&](){ return (c); }
 
 
+#define TEST_SERVER "127.0.0.1"
+
 struct UvLoopTest {
     uv_loop_t *loop;
     uv_timer_t timer;

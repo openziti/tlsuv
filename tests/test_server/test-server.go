@@ -25,7 +25,7 @@ import (
 func runHTTP(port int, handler http.Handler) chan error {
 	done := make(chan error)
 	go func() {
-		done <- http.ListenAndServe(":"+strconv.Itoa(port), handler)
+		done <- http.ListenAndServe("127.0.0.1:"+strconv.Itoa(port), handler)
 	}()
 	return done
 }
@@ -34,7 +34,7 @@ func runHTTPS(port int, handler http.Handler) chan error {
 	done := make(chan error)
 	server := http.Server{
 		Handler: handler,
-		Addr:    fmt.Sprintf(":%d", port),
+		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{serverCert},
 			ClientAuth:   tls.RequestClientCert,
@@ -63,7 +63,7 @@ func runClientAuth(port int) chan error {
 	done := make(chan error)
 	server := http.Server{
 		Handler: new(authHandler),
-		Addr:    fmt.Sprintf(":%d", port),
+		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{serverCert},
 			ClientAuth:   tls.RequestClientCert,
@@ -81,7 +81,7 @@ func runEchoServer(port int) chan error {
 	cfg.Certificates = append(cfg.Certificates, serverCert)
 
 	go func() {
-		server, err := tls.Listen("tcp", fmt.Sprintf(":%d", port), cfg)
+		server, err := tls.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port), cfg)
 		if err != nil {
 			done <- err
 			return
@@ -98,7 +98,7 @@ func runEchoServer(port int) chan error {
 				defer func(clt net.Conn) {
 					_ = clt.Close()
 				}(clt)
-				
+
 				buf := make([]byte, 1024)
 				for {
 					n, err := clt.Read(buf)
@@ -166,7 +166,7 @@ func runProxy(port int) chan error {
 	proxy.KeepHeader = true
 	proxy.KeepDestinationHeaders = true
 	go func() {
-		done <- http.ListenAndServe(fmt.Sprintf(":%d", port), proxy)
+		done <- http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", port), proxy)
 	}()
 	return done
 }

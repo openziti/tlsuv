@@ -479,9 +479,7 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
         return -get_error();
     }
 
-    tlsuv_stream_open(req, clt, s, cb);
-
-    int ret = connect(clt->sock, addr->ai_addr, addr->ai_addrlen);
+    int ret = connect(s, addr->ai_addr, addr->ai_addrlen);
     if (ret == -1) {
         int error = get_error();
         switch (error) {
@@ -498,7 +496,8 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
                 return 0;
         }
     }
-    return 0;
+
+    return tlsuv_stream_open(req, clt, s, cb);
 }
 
 static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
