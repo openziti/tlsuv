@@ -80,7 +80,7 @@ TEST_CASE("stream connect fail", "[stream]") {
 
 TEST_CASE("proxy connect fail", "[stream]") {
     UvLoopTest test;
-    auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "localhost", "23128");
+    auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, TEST_SERVER, "23128");
 
     auto s = new tlsuv_stream_t;
     tls_context *tls = default_tls_context(nullptr, 0);
@@ -126,7 +126,7 @@ TEST_CASE("proxy connect fail", "[stream]") {
 
 TEST_CASE("proxy request fail", "[stream]") {
     UvLoopTest test;
-    auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "localhost", "13128");
+    auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, TEST_SERVER, "13128");
 
     auto s = new tlsuv_stream_t;
     tls_context *tls = default_tls_context(nullptr, 0);
@@ -143,7 +143,7 @@ TEST_CASE("proxy request fail", "[stream]") {
 
     uv_connect_t cr;
     cr.data = &test_ctx;
-    int rc = tlsuv_stream_connect(&cr, s, "localhost", 23128, [](uv_connect_t *r, int status) {
+    int rc = tlsuv_stream_connect(&cr, s, TEST_SERVER, 23128, [](uv_connect_t *r, int status) {
         auto ctx = (struct test_ctx *) r->data;
         ctx->connect_result = status;
         ctx->connect_called++;
@@ -467,7 +467,7 @@ TEST_CASE("read start/stop", "[stream]") {
     step_t steps[] = {
         {
             .fn = connect_step,
-            .connect_args = { .s = &s, .hostname = "localhost", .port = 7443, .result = &r },
+            .connect_args = { .s = &s, .hostname = TEST_SERVER, .port = 7443, .result = &r },
         },
         { .fn = write_step, .write_args = { .s = &s, .data = "1",}},
         { .fn = write_step, .write_args = { .s = &s, .data = "2",}},
@@ -512,7 +512,7 @@ TEST_CASE("large/partial writes", "[stream]") {
 
     tlsuv_stream_init(loopTest.loop, &s, testServerTLS());
 
-    tlsuv_stream_connect(&cr, &s, "localhost", 7443, [](uv_connect_t *r, int status){
+    tlsuv_stream_connect(&cr, &s, TEST_SERVER, 7443, [](uv_connect_t *r, int status){
         auto res = (connect_res*) r->data;
         res->called = true;
         res->err = status;
@@ -566,7 +566,7 @@ TEST_CASE("large/partial writes", "[stream]") {
 
 TEST_CASE_METHOD(UvLoopTest, "stream/global proxy", "[stream]") {
     auto const proxy_port = "13128";
-    auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "localhost", proxy_port);
+    auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, TEST_SERVER, proxy_port);
     tlsuv_set_global_connector(proxy);
 
     setTimeout(300);
@@ -585,7 +585,7 @@ TEST_CASE_METHOD(UvLoopTest, "stream/global proxy", "[stream]") {
 
     uv_connect_t cr;
     cr.data = &s;
-    tlsuv_stream_connect(&cr, &s, "localhost", 7443, [](uv_connect_t *r, int status){
+    tlsuv_stream_connect(&cr, &s, TEST_SERVER, 7443, [](uv_connect_t *r, int status){
         auto clt = (tlsuv_stream_t*)r->data;
         auto result = (res*)clt->data;
         result->conn_cb = true;
@@ -662,7 +662,7 @@ TEST_CASE("connect to address", "[stream]") {
 
 
     uv_getaddrinfo_t res_req{};
-    REQUIRE(uv_getaddrinfo(test.loop, &res_req, nullptr, "localhost", "7443", nullptr) == 0);
+    REQUIRE(uv_getaddrinfo(test.loop, &res_req, nullptr, TEST_SERVER, "7443", nullptr) == 0);
 
 
     auto rc = tlsuv_stream_connect_addr(&cr, &s, res_req.addrinfo, [](uv_connect_t *r, int status) {
