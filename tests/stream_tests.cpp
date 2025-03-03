@@ -74,8 +74,9 @@ TEST_CASE("stream connect fail", "[stream]") {
         CHECK(((rc == 0 && conn_cb_called == 1) || (rc != 0 && conn_cb_called == 0)));
     }
     tlsuv_stream_close(&s, (uv_close_cb)tlsuv_stream_free);
-
+    test.run();
     tls->free_ctx(tls);
+
 }
 
 TEST_CASE("proxy connect fail", "[stream]") {
