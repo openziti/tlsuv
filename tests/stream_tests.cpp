@@ -641,3 +641,52 @@ TEST_CASE_METHOD(UvLoopTest, "stream/global proxy", "[stream]") {
     tlsuv_set_global_connector(nullptr);
     proxy->free(proxy);
 }
+
+
+TEST_CASE("connect to address", "[stream]") {
+    UvLoopTest test;
+
+    tlsuv_stream_t s;
+    tlsuv_stream_init(test.loop, &s, testServerTLS());
+
+    struct test_ctx {
+        int connect_result;
+        int connect_called;
+        int close_called;
+    } test_ctx = {2171,0,0};
+
+    s.data = &test_ctx;
+
+    uv_connect_t cr;
+    cr.data = &test_ctx;
+
+
+    uv_getaddrinfo_t res_req{};
+    REQUIRE(uv_getaddrinfo(test.loop, &res_req, nullptr, "localhost", "7443", nullptr) == 0);
+
+
+    auto rc = tlsuv_stream_connect_addr(&cr, &s, res_req.addrinfo, [](uv_connect_t *r, int status) {
+        auto ctx = (struct test_ctx *) r->data;
+        ctx->connect_result = status;
+        ctx->connect_called++;
+    });
+
+    CHECK(rc == 0);
+
+
+    test.run(UNTIL(test_ctx.connect_called == 1));
+    if (test_ctx.connect_result != 0) {
+        INFO("connect result: " << uv_strerror(test_ctx.connect_result));
+    }
+    CHECK(test_ctx.connect_result == 0);
+
+    tlsuv_stream_close(&s, [](uv_handle_t *h) {
+        auto s = (tlsuv_stream_t *) h;
+        auto ctx = (struct test_ctx *) s->data;
+        ctx->close_called++;
+        tlsuv_stream_free(s);
+    });
+
+    test.run();
+    uv_freeaddrinfo(res_req.addrinfo);
+}
