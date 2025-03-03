@@ -211,7 +211,7 @@ static X509_STORE * load_certs(const char *buf, size_t buf_len) {
             if (!X509_STORE_load_locations(certs, buf, NULL)) {
                 UM_LOG(ERR, "failed to load certs from [%s]", buf);
             }
-        } if (fstat.st_mode & S_IFDIR) {
+        } else if (fstat.st_mode & S_IFDIR) {
             X509_STORE_load_path(certs, buf);
             X509_LOOKUP *lu = X509_STORE_add_lookup(certs, old_hash_lookup());
             X509_LOOKUP_set_method_data(lu, (void*)buf);
