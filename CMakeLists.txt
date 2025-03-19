@@ -107,7 +107,7 @@ add_library(tlsuv STATIC
 
 set_target_properties(tlsuv PROPERTIES
         POSITION_INDEPENDENT_CODE ON
-        C_STANDARD 99)
+        C_STANDARD 11)
 
 target_include_directories(tlsuv
         PUBLIC
