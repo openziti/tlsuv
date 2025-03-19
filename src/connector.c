@@ -14,7 +14,6 @@
 
 #include <tlsuv/connector.h>
 
-#include <stdatomic.h>
 #include <stdlib.h>
 #include <stdbool.h>
 
@@ -39,7 +38,7 @@
 #define INVALID_SOCKET (-1)
 #define get_error() errno
 #define closesocket(s) close(s)
-#define in_progress(e) (e == EINPROGRESS || e == EWOULDBLOCK)
+#define in_progress(e) ((e) == EINPROGRESS || (e) == EWOULDBLOCK)
 
 #include <unistd.h>
 #include <string.h>
@@ -50,11 +49,6 @@
 #ifndef MAX
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #endif
-
-#define CONNECT_TIMEOUT 1
-static struct timeval connect_wait = {
-    .tv_sec = CONNECT_TIMEOUT,
-};
 
 #define max_connect_socks 16
 
@@ -70,7 +64,7 @@ struct conn_req_s {
 
     uv_os_sock_t sock;
     int error;
-    atomic_bool cancel;
+    volatile bool cancel;
 };
 
 static tlsuv_connector_req default_connect(uv_loop_t *l, const tlsuv_connector_t *self,
@@ -154,7 +148,7 @@ static int err_to_uv(int err) {
 }
 
 static void connect_work(uv_work_t *work) {
-    struct conn_req_s *cr = container_of(work, struct conn_req_s, connect);
+    volatile struct conn_req_s *cr = container_of(work, struct conn_req_s, connect);
     int rc = 0;
     int err = 0;
     int count = 0;
@@ -162,7 +156,7 @@ static void connect_work(uv_work_t *work) {
     cr->sock = INVALID_SOCKET;
     uv_os_sock_t fds[max_connect_socks];
     for (int i = 0; i < max_connect_socks; i++) fds[i] = INVALID_SOCKET;
-    if (atomic_load(&cr->cancel)) {
+    if (cr->cancel) {
         err = ECANCELED;
         goto done;
     }
@@ -188,7 +182,7 @@ static void connect_work(uv_work_t *work) {
 
     struct pollfd poll_fds[max_connect_socks];
     while (cr->sock == INVALID_SOCKET && cr->error == 0) {
-        if (atomic_load(&cr->cancel)) {
+        if (cr->cancel) {
             err = ECANCELED;
             break;
         }
@@ -209,7 +203,7 @@ static void connect_work(uv_work_t *work) {
         }
         rc = poll(poll_fds, poll_count, 50);
 
-        if (atomic_load(&cr->cancel)) {
+        if (cr->cancel) {
             err = ECANCELED;
             break;
         }
@@ -287,7 +281,7 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
 
     if (status == UV_EAI_CANCELED) {
         status = UV_ECANCELED;
-    } else if (atomic_load(&cr->cancel)) {
+    } else if (cr->cancel) {
         status = UV_ECANCELED;
     } else if (addrlist == NULL) {
         status = UV_EAI_NONAME;
@@ -340,15 +334,15 @@ struct proxy_connect_req {
     tlsuv_connect_cb cb;
     uv_os_sock_t sock;
     tlsuv_connector_req conn_req;
-    atomic_bool cancel;
+    volatile bool cancel;
     int err;
 };
 
 static void proxy_work(uv_work_t *wr) {
-    struct proxy_connect_req *r = container_of(wr, struct proxy_connect_req, work);
+    volatile struct proxy_connect_req *r = container_of(wr, struct proxy_connect_req, work);
 
     const struct tlsuv_proxy_connector_s *proxy = r->proxy;
-    if (atomic_load(&r->cancel)) {
+    if (r->cancel) {
         r->err = UV_ECANCELED;
         return;
     }
@@ -381,7 +375,7 @@ static void proxy_work(uv_work_t *wr) {
     };
 
     while(poll(&pfd, 1, 50) == 0) {
-        if (atomic_load(&r->cancel)) {
+        if (r->cancel) {
             r->err = UV_ECANCELED;
             return;
         }
@@ -494,7 +488,7 @@ void proxy_cancel(tlsuv_connector_req req) {
         default_cancel(cr);
         return;
     }
-    atomic_store(&r->cancel, true);
+    r->cancel = true;
     if (r->work.type == UV_WORK) {
         uv_cancel((uv_req_t *) &r->work);
     }
