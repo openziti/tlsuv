@@ -13,6 +13,8 @@
 // limitations under the License.
 
 #include <tlsuv/connector.h>
+
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <stdbool.h>
 
@@ -30,6 +32,9 @@
 #define read(s,b,z) recv(s,b,z,0)
 #define SHUT_RDWR SD_BOTH
 #define in_progress(e) (e == WSAEWOULDBLOCK)
+
+#define poll(fds,n,to) WSAPoll(fds, n, to)
+
 #else
 #define INVALID_SOCKET (-1)
 #define get_error() errno
@@ -38,6 +43,7 @@
 
 #include <unistd.h>
 #include <string.h>
+#include <sys/poll.h>
 
 #endif
 
@@ -64,9 +70,7 @@ struct conn_req_s {
 
     uv_os_sock_t sock;
     int error;
-    int cancel;
-    uv_os_sock_t fd[max_connect_socks];
-    int fds;
+    atomic_bool cancel;
 };
 
 static tlsuv_connector_req default_connect(uv_loop_t *l, const tlsuv_connector_t *self,
@@ -153,28 +157,66 @@ static void connect_work(uv_work_t *work) {
     struct conn_req_s *cr = container_of(work, struct conn_req_s, connect);
     int rc = 0;
     int err = 0;
-    fd_set fds;
+    int count = 0;
 
-    while (cr->sock == INVALID_SOCKET) {
-        int max_fd = 0;
-        FD_ZERO(&fds);
+    cr->sock = INVALID_SOCKET;
+    uv_os_sock_t fds[max_connect_socks];
+    for (int i = 0; i < max_connect_socks; i++) fds[i] = INVALID_SOCKET;
+    if (atomic_load(&cr->cancel)) {
+        err = ECANCELED;
+        goto done;
+    }
 
-        for (int i = 0; i < cr->fds; i++) {
-            if (cr->fd[i] == INVALID_SOCKET) continue;
-
-            FD_SET(cr->fd[i], &fds);
-            max_fd = (int)MAX(max_fd, cr->fd[i] + 1);
+    struct addrinfo *addr = cr->addr;
+    while (addr && count < max_connect_socks) {
+        uv_os_sock_t s = tlsuv_socket(addr, 0);
+        UM_LOG(TRACE, "connecting fd[%ld] to %s", (long)s, get_name(addr->ai_addr));
+        rc = connect(s, addr->ai_addr, addr->ai_addrlen);
+        err = get_error();
+        if (rc == 0 || in_progress(err)) {
+            fds[count++] = s;
+        } else {
+            UM_LOG(TRACE, "fd[%ld] failed to connect: %d/%s", (long)s, err, strerror(err));
+            closesocket(s);
         }
-        if (max_fd == 0) {
+        addr = addr->ai_next;
+    }
+
+    if (count < 1) {
+        goto done;
+    }
+
+    struct pollfd poll_fds[max_connect_socks];
+    while (cr->sock == INVALID_SOCKET && cr->error == 0) {
+        if (atomic_load(&cr->cancel)) {
+            err = ECANCELED;
+            break;
+        }
+
+        int poll_count = 0;
+        memset(poll_fds, 0, sizeof(poll_fds));
+        for (int i = 0; i < count; i++) {
+            if (fds[i] == INVALID_SOCKET) continue;
+
+            poll_fds[poll_count].fd = fds[i];
+            poll_fds[poll_count].events = POLLOUT;
+            poll_count++;
+        }
+
+        if (poll_count == 0) {
+            err = ECONNREFUSED;
             break;
         }
 #if _WIN32
         rc = select(max_fd, NULL, &fds, &fds, &(struct timeval){.tv_usec = 250 * 1000});
 #else
-        rc = select(max_fd, NULL, &fds, NULL, &(struct timeval){.tv_usec = 250 * 1000});
+        rc = poll(poll_fds, poll_count, 250);
 #endif
 
-        if (cr->cancel) break;
+        if (atomic_load(&cr->cancel)) {
+            err = ECANCELED;
+            break;
+        }
 
         if (rc == -1) {
             err = get_error();
@@ -186,30 +228,43 @@ static void connect_work(uv_work_t *work) {
             continue;
         }
 
-        for (int i = 0; i < cr->fds; i++) {
-            if (cr->fd[i] != INVALID_SOCKET && FD_ISSET(cr->fd[i], &fds)) {
+        err = 0;
+        for (int i = 0; i < poll_count; i++) {
+            if (poll_fds[i].revents & (POLLERR | POLLHUP)) {
                 socklen_t len = sizeof(err);
-                getsockopt(cr->fd[i], SOL_SOCKET, SO_ERROR, &err, &len);
+                getsockopt(poll_fds[i].fd, SOL_SOCKET, SO_ERROR, &err, &len);
                 if (err != 0) {
                     UM_LOG(TRACE, "fd[%ld] failed to connect: %d/%s",
-                        (long)cr->fd[i], err, get_error_msg(err));
-                    closesocket(cr->fd[i]);
-                    cr->fd[i] = INVALID_SOCKET;
-                    continue;
+                           (long) poll_fds[i].fd, err, get_error_msg(err));
+                    closesocket(poll_fds[i].fd);
+                    for (int idx = 0; idx < count; idx++) {
+                        if (fds[idx] == poll_fds[i].fd) {
+                            fds[idx] = INVALID_SOCKET;
+                        }
+                    }
                 }
+                continue;
+            }
 
-                cr->sock = cr->fd[i];
-                UM_LOG(TRACE, "fd[%ld] is connected", (long)cr->sock);
+            // socket connected
+            if (poll_fds[i].revents & POLLOUT) {
+                cr->sock = poll_fds[i].fd;
                 break;
             }
         }
     }
 
-    cr->error = err_to_uv(err);
-    for (int i = 0; i < cr->fds; i++) {
-        if (cr->fd[i] != cr->sock && cr->fd[i] != INVALID_SOCKET) {
-            UM_LOG(TRACE, "closing fd[%ld]", (long)cr->fd[i]);
-            closesocket(cr->fd[i]);
+    done:
+    if (cr->sock != INVALID_SOCKET) {
+        UM_LOG(TRACE, "fd[%ld] is connected", (long)cr->sock);
+    } else {
+        cr->error = err_to_uv(err);
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (fds[i] != cr->sock && fds[i] != INVALID_SOCKET) {
+            UM_LOG(TRACE, "closing fd[%ld]", (long)fds[i]);
+            closesocket(fds[i]);
         }
     }
 }
@@ -236,10 +291,10 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
 
     if (status == UV_EAI_CANCELED) {
         status = UV_ECANCELED;
-    }
-
-    if (cr->cancel) {
+    } else if (atomic_load(&cr->cancel)) {
         status = UV_ECANCELED;
+    } else if (addrlist == NULL) {
+        status = UV_EAI_NONAME;
     }
 
     if (status != 0) {
@@ -249,31 +304,7 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
         return;
     }
 
-    struct addrinfo *addr = addrlist;
-    int count = 0;
-    int err = 0;
-    while (addr && count < max_connect_socks) {
-        uv_os_sock_t s = tlsuv_socket(addr, 0);
-        UM_LOG(TRACE, "connecting fd[%ld] to %s", (long)s, get_name(addr->ai_addr));
-        int rc = connect(s, addr->ai_addr, addr->ai_addrlen);
-        err = get_error();
-        if (rc == 0 || in_progress(err)) {
-            cr->fd[count++] = s;
-        } else {
-            UM_LOG(TRACE, "fd[%ld] failed to connect: %d/%s", (long)s, err, strerror(err));
-            closesocket(s);
-        }
-        addr = addr->ai_next;
-    }
-
-    uv_freeaddrinfo(addrlist);
-
-    if (count < 1) {
-        cr->cb(cr->sock, -err, cr->ctx);
-        return;
-    }
-
-    cr->fds = count;
+    cr->addr = addrlist;
     uv_queue_work(r->loop, &cr->connect, connect_work, connect_done);
 }
 
@@ -299,7 +330,6 @@ void default_cancel(tlsuv_connector_req req) {
     UM_LOG(VERB, "cancelling");
     struct conn_req_s *r = (struct conn_req_s *) req;
     r->cancel = true;
-    r->cb = NULL;
 
     // try to cancel resolve/connect request before it started
     uv_cancel((uv_req_t *) &r->resolve);
@@ -314,16 +344,20 @@ struct proxy_connect_req {
     tlsuv_connect_cb cb;
     uv_os_sock_t sock;
     tlsuv_connector_req conn_req;
+    atomic_bool cancel;
     int err;
-    
 };
 
 static void proxy_work(uv_work_t *wr) {
     struct proxy_connect_req *r = container_of(wr, struct proxy_connect_req, work);
 
     const struct tlsuv_proxy_connector_s *proxy = r->proxy;
+    if (atomic_load(&r->cancel)) {
+        r->err = UV_ECANCELED;
+        return;
+    }
 
-    tlsuv_socket_set_blocking(r->sock, true);
+//    tlsuv_socket_set_blocking(r->sock, true);
 
     char req[1024];
     size_t reqlen = snprintf(req, sizeof(req),
@@ -343,6 +377,23 @@ static void proxy_work(uv_work_t *wr) {
         r->err = -(int)get_error();
         closesocket(r->sock);
         r->sock = -1;
+        return;
+    }
+
+
+    struct pollfd pfd = {
+            .fd = r->sock,
+            .events = POLLIN,
+    };
+
+    while(poll(&pfd, 1, 250) == 0) {
+        if (atomic_load(&r->cancel)) {
+            r->err = UV_ECANCELED;
+            return;
+        }
+    }
+    if (pfd.revents & (POLLHUP|POLLERR)) {
+        r->err = UV_ECONNREFUSED;
         return;
     }
 
@@ -446,8 +497,10 @@ void proxy_cancel(tlsuv_connector_req req) {
         tlsuv_connector_req cr = r->conn_req;
         r->conn_req = NULL;
         default_cancel(cr);
-        r->cb = NULL;
-    } else if (r->work.type == UV_WORK) {
+        return;
+    }
+    atomic_store(&r->cancel, true);
+    if (r->work.type == UV_WORK) {
         uv_cancel((uv_req_t *) &r->work);
     }
 }
