@@ -362,7 +362,7 @@ static void proxy_work(uv_work_t *wr) {
     );
     ssize_t res = write(r->sock, req, reqlen);
     if (res < 0) {
-        r->err = -(int)get_error();
+        r->err = err_to_uv((int)get_error());
         closesocket(r->sock);
         r->sock = -1;
         return;
@@ -388,7 +388,7 @@ static void proxy_work(uv_work_t *wr) {
 
     res = read(r->sock, req, sizeof(req)-1);
     if (res < 0) {
-        r->err = -(int)get_error();
+        r->err = err_to_uv((int)get_error());
         closesocket(r->sock);
         r->sock = -1;
         return;
