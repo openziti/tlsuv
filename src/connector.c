@@ -353,8 +353,6 @@ static void proxy_work(uv_work_t *wr) {
         return;
     }
 
-//    tlsuv_socket_set_blocking(r->sock, true);
-
     char req[1024];
     size_t reqlen = snprintf(req, sizeof(req),
                              "CONNECT %s:%s HTTP/1.1\r\n"
@@ -382,12 +380,13 @@ static void proxy_work(uv_work_t *wr) {
             .events = POLLIN,
     };
 
-    while(poll(&pfd, 1, 250) == 0) {
+    while(poll(&pfd, 1, 50) == 0) {
         if (atomic_load(&r->cancel)) {
             r->err = UV_ECANCELED;
             return;
         }
     }
+
     if (pfd.revents & (POLLHUP|POLLERR)) {
         r->err = UV_ECONNREFUSED;
         return;
