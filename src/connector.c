@@ -50,7 +50,7 @@
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #endif
 
-#define max_connect_socks 2
+#define max_connect_socks 16
 
 struct conn_req_s {
     union {
