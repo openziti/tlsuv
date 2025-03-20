@@ -16,6 +16,15 @@ include(cmake/variables.cmake)
 include(CMakeDependentOption)
 include(GNUInstallDirs)
 
+if(tlsuv_DEVELOPER_MODE)
+    message(NOTICE "adding developer options")
+    set(complist GNU Clang AppleClang)
+    if (CMAKE_C_COMPILER_ID IN_LIST complist)
+        option(TLSUV_ASAN "turn on sanitizer options")
+        option(TLSUV_TEST_COVERAGE "generate test coverage")
+    endif ()
+    unset(complist)
+endif ()
 option(TLSUV_HTTP "enable HTTP/websocket support" ON)
 
 set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls)")
@@ -26,6 +35,16 @@ endif()
 
 cmake_dependent_option(USE_OPENSSL "Use OpenSSL" ON "TLSUV_TLSLIB STREQUAL openssl; NOT USE_MBEDTLS" OFF)
 cmake_dependent_option(USE_MBEDTLS "Use mbedTLS" ON "TLSUV_TLSLIB STREQUAL mbedtls" OFF)
+
+if (TLSUV_TEST_COVERAGE)
+    add_compile_options(--coverage)
+    add_link_options(--coverage)
+endif ()
+
+if (TLSUV_ASAN)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+endif ()
 
 set(tlsuv_sources
         src/tlsuv.c
