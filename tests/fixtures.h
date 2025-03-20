@@ -22,12 +22,16 @@ template<typename T> T* t_alloc() {
 
 struct UvLoopTest {
     uv_loop_t *loop;
-    uv_timer_t timer;
+    uv_timer_t timer{};
+    uv_prepare_t check{};
 
     UvLoopTest(): UvLoopTest(15) {}
 
-    explicit UvLoopTest(unsigned int to): loop(uv_loop_new()) {
+    explicit UvLoopTest(unsigned int to):
+            loop(uv_loop_new()) {
         uv_timer_init(loop, &timer);
+        uv_prepare_init(loop, &check);
+
         timer.data = this;
         uv_unref((uv_handle_t*)&timer);
 
@@ -41,7 +45,7 @@ struct UvLoopTest {
             REQUIRE(uv_timer_start(&timer,
                                    [](uv_timer_t *t){
                                        uv_stop(t->loop);
-                                       FAIL("test exceeded allotted time");
+                                       FAIL_CHECK("test exceeded allotted time");
                                    }, secs * 1000, 0) == 0);
         }
     }
@@ -52,10 +56,24 @@ struct UvLoopTest {
     }
 
     // run while condition is met or until no active handles
-    template<typename Cond>
-    void run(Cond cond) const {
-        while(cond()) {
-            uv_run(loop, UV_RUN_ONCE);
+    void run(std::function<bool()> cond) {
+        struct checker_s {
+            std::function<bool()>& condition;
+        } checker{cond};
+        check.data = &checker;
+        uv_prepare_start(&check, [](uv_prepare_t *ch){
+            auto c = (checker_s*)(ch->data);
+            bool b = c->condition();
+            if (!b) {
+                ch->data = nullptr;
+                uv_prepare_stop(ch);
+                uv_stop(ch->loop);
+            }
+        });
+
+        uv_run(loop, UV_RUN_DEFAULT);
+        if (check.data) {
+            FAIL_CHECK("check condition never became false");
         }
     }
 
@@ -75,7 +93,8 @@ struct UvLoopTest {
 
     ~UvLoopTest() {
         INFO("test teardown");
-        uv_close((uv_handle_t*) &timer, nullptr);
+        uv_close((uv_handle_t*)&timer, nullptr);
+        uv_close((uv_handle_t*)&check, nullptr);
         int attempt = 3;
 
         int rc;

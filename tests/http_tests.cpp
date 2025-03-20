@@ -485,6 +485,7 @@ TEST_CASE("client_idle_test","[http]") {
 // hidden test
 // can't rely on server closing connection in time
 TEST_CASE("server_idle_close","[.]") {
+    SKIP("comment this out to run the test");
     UvLoopTest test;
 
     tlsuv_http_t clt;

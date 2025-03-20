@@ -156,6 +156,7 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
         const void *cr = clt->connect_req;
         clt->connector->cancel(cr);
         clt->connect_req = NULL;
+        return 0;
     }
 
     if (clt->tls_engine) {
@@ -505,12 +506,6 @@ static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
     tlsuv_stream_t *clt = (tlsuv_stream_t *)r->handle;
     clt->connect_req = NULL;
 
-    // app closed stream before it connected
-    if (clt->close_cb) {
-        UM_LOG(VERB, "closed before connect: %d/%s", status, uv_strerror(status));
-        on_internal_close((uv_handle_t *) &clt->watcher);
-        return;
-    }
 
     if (status == 0) {
         tlsuv_stream_open(clt->conn_req, clt, sock, clt->conn_req->cb);
@@ -519,6 +514,14 @@ static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
 
     clt->conn_req = NULL;
     r->cb(r, status);
+
+    // app closed stream before it connected
+    if (clt->close_cb) {
+        UM_LOG(VERB, "closed before connect: %d/%s", status, uv_strerror(status));
+        if (!uv_is_closing((uv_handle_t *)&clt->watcher))
+            on_internal_close((uv_handle_t *) &clt->watcher);
+        return;
+    }
 }
 
 int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *host, int port, uv_connect_cb cb) {

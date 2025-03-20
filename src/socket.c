@@ -15,8 +15,15 @@
 #include "util.h"
 #include <uv.h>
 
+#ifndef INVALID_SOCKET
+#define INVALID_SOCKET (-1)
+#endif
+
 uv_os_sock_t tlsuv_socket(const struct addrinfo *addr, bool blocking) {
     uv_os_sock_t sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+
+    if (sock == INVALID_SOCKET)
+        return sock;
 
     int on = 1;
     int flags;

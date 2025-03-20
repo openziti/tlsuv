@@ -56,8 +56,6 @@ TEST_CASE_METHOD(UvLoopTest, "default connect fail", "[connector]") {
 
 }
 
-
-
 TEST_CASE_METHOD(UvLoopTest, "default connector", "[connector]") {
     auto connector = tlsuv_global_connector();
 
@@ -167,4 +165,53 @@ TEST_CASE("base64 encode", "[connector]") {
     CHECK(strlen(out) == outlen);
     free(out);
 
+}
+
+// test cancellation
+// connection is targeting a black-holed port
+TEST_CASE_METHOD(UvLoopTest, "connect cancel", "[connector]") {
+    auto setup = GENERATE(
+            std::make_pair("default", tlsuv_global_connector()),
+            std::make_pair("proxy", tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", "13128")),
+            std::make_pair("unreachable proxy", tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "yahoo.com", "13128"))
+    );
+
+    struct result_s {
+        bool called;
+        int err;
+        uv_os_sock_t sock;
+    } result = {false, 0,0};
+
+    WHEN("connector = " << setup.first) {
+        auto connector = setup.second;
+
+        auto cr = connector->connect(loop, connector, "yahoo.com", "7443",
+                                     [](uv_os_sock_t s, int err, void *ctx) {
+                                         auto r = (result_s *) (ctx);
+                                         r->called = true;
+                                         r->sock = s;
+                                         r->err = err;
+                                     }, (void *) &result);
+        CHECK(cr != nullptr);
+
+        run(1);
+
+        THEN("callback should not be yet called") {
+            CHECK(!result.called);
+
+            AND_THEN("cancellation caused callback") {
+                connector->cancel(cr);
+                run(UNTIL(result.called));
+
+                INFO("error => " << uv_strerror(result.err));
+                CHECK(result.err == UV_ECANCELED);
+            }
+        }
+#if _WIN32
+        closesocket(result.sock);
+#else
+        close(result.sock);
+#endif
+        connector->free((void*)connector);
+    }
 }

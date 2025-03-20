@@ -561,6 +561,7 @@ TEST_CASE("large/partial writes", "[stream]") {
     auto successes = std::count(w_res.results.begin(), w_res.results.end(), 0);
     auto cancelled = std::count(w_res.results.begin(), w_res.results.end(), UV_ECANCELED);
 
+    INFO("success=" << successes << ", cancelled=" << cancelled);
     CHECK(cancelled > 0);
     CHECK(successes + cancelled == w_res.results.size());
 }
