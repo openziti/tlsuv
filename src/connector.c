@@ -137,9 +137,15 @@ static const char *get_error_msg(int err) {
 static int err_to_uv(int err) {
 #if _WIN32
     switch(err) {
-        case WSAECONNREFUSED: return UV_ECONNREFUSED;
-        case WSAECONNABORTED: return UV_ECONNABORTED;
-        case WSAECONNRESET: return UV_ECONNRESET;
+        case ECONNREFUSED:
+        case WSAECONNREFUSED:
+            return UV_ECONNREFUSED;
+        case ECONNABORTED:
+        case WSAECONNABORTED:
+            return UV_ECONNABORTED;
+        case ECONNRESET:
+        case WSAECONNRESET:
+            return UV_ECONNRESET;
         default: return -err;
     }
 #else
