@@ -50,7 +50,7 @@
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #endif
 
-#define max_connect_socks 16
+#define max_connect_socks 2
 
 struct conn_req_s {
     union {
@@ -170,6 +170,18 @@ static void connect_work(uv_work_t *work) {
     struct addrinfo *addr = cr->addr;
     while (addr && count < max_connect_socks) {
         uv_os_sock_t s = tlsuv_socket(addr, 0);
+        if (s == INVALID_SOCKET) {
+            err = get_error();
+            // fd limit is hit, do not try to open any more sockets
+            if (err == ENFILE || err == EMFILE) {
+                break;
+            }
+            UM_LOG(TRACE, "error[%s] opening socket for %s",
+                   strerror(err), get_name(addr->ai_addr));
+            addr = addr->ai_next;
+            continue;
+        }
+
         UM_LOG(TRACE, "connecting fd[%ld] to %s", (long)s, get_name(addr->ai_addr));
         rc = connect(s, addr->ai_addr, addr->ai_addrlen);
         err = get_error();
@@ -184,6 +196,11 @@ static void connect_work(uv_work_t *work) {
 
     if (count < 1) {
         goto done;
+    }
+
+    if (addr != NULL) {
+        UM_LOG(TRACE, "some addresses are not tried: max_connect_socks[%d] limit is reached",
+               max_connect_socks);
     }
 
     struct pollfd poll_fds[max_connect_socks];
