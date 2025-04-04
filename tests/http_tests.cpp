@@ -124,6 +124,29 @@ void send_part2(uv_timer_t *t) {
     uv_close((uv_handle_t *) (t), nullptr);
 }
 
+TEST_CASE("failed init", "[http]") {
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    struct test_ctx_t {
+        bool called{false};
+    } test_ctx;
+    clt.data = &test_ctx;
+
+    string url = "not a valid URL";
+    INFO(url);
+    CHECK(tlsuv_http_init(test.loop, &clt, url.c_str()) == UV_EINVAL);
+
+    test.run();
+
+    CHECK(tlsuv_http_close(&clt, [](tlsuv_http_t *c){
+        auto ctx = (test_ctx_t*)c->data;
+        ctx->called = true;
+    }) == UV_EINVAL);
+    test.run();
+    CHECK(!test_ctx.called);
+}
+
 TEST_CASE("conn failures", "[http]") {
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
     UvLoopTest test;
