@@ -13,6 +13,7 @@ jobs:
     runs-on: ${{ matrix.image }}-latest
     env:
       CI_CACHE: '${{ github.workspace }}/.ci.cache'
+      VCPKG_FORCE_SYSTEM_BINARIES: 1
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.ci.cache,readwrite'
       VCPKG_DEFAULT_TRIPLET: ${{ matrix.target }}
@@ -64,6 +65,8 @@ jobs:
         fetch-depth: '0'
 
     - uses: lukka/get-cmake@latest
+      with:
+        cmakeVersion: "~3.31.0"
 
     - name: create cache dir
       shell: bash
