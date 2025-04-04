@@ -356,7 +356,10 @@ static void send_body(tlsuv_http_req_t *req) {
 }
 
 static void close_connection(tlsuv_http_t *c) {
-    uv_timer_stop(c->conn_timer);
+    if (c->conn_timer) {
+        uv_timer_stop(c->conn_timer);
+    }
+
     switch (c->connected) {
         case Handshaking:
         case Connected:
@@ -443,8 +446,17 @@ static void on_clt_close(uv_handle_t *h) {
 }
 
 int tlsuv_http_close(tlsuv_http_t *clt, tlsuv_http_close_cb close_cb) {
-    uv_close((uv_handle_t *) &clt->proc, on_clt_close);
+    if (clt->conn_timer) {
+        uv_close((uv_handle_t *) clt->conn_timer, (uv_close_cb) tlsuv__free);
+        clt->conn_timer = NULL;
+    }
 
+    if (clt->proc.type == UV_ASYNC) {
+        clt->close_cb = close_cb;
+        uv_close((uv_handle_t *) &clt->proc, on_clt_close);
+    } else {
+        return UV_EINVAL;
+    }
     fail_all_requests(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
     close_connection(clt);
 
@@ -453,9 +465,6 @@ int tlsuv_http_close(tlsuv_http_t *clt, tlsuv_http_close_cb close_cb) {
         clt->engine = NULL;
     }
     clt->tls = NULL;
-
-    clt->close_cb = close_cb;
-    uv_close((uv_handle_t *) clt->conn_timer, (uv_close_cb) tlsuv__free);
     return 0;
 }
 
@@ -549,6 +558,8 @@ int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, t
     clt->host_change = false;
     clt->host = NULL;
     clt->prefix = NULL;
+    clt->conn_timer = NULL;
+    clt->proc = (uv_async_t){0};
 
     int rc = tlsuv_http_set_url(clt, url);
     if (rc != 0) {
@@ -580,12 +591,21 @@ void tlsuv_http_set_path_prefix(tlsuv_http_t *clt, const char *prefix) {
 
 int tlsuv_http_init(uv_loop_t *l, tlsuv_http_t *clt, const char *url) {
     tcp_src_t *src = tlsuv__calloc(1, sizeof(tcp_src_t));
+    if (src == NULL) {
+        return UV_ENOMEM;
+    }
+
     tcp_src_init(l, src);
     tcp_src_nodelay(src, 1);
     tcp_src_keepalive(src, 1, 3);
     int rc = tlsuv_http_init_with_src(l, clt, url, (tlsuv_src_t *) src);
-    clt->own_src = true;
-    clt->tls_link = (tls_link_t){0};
+    if (rc == 0) {
+        clt->own_src = true;
+        clt->tls_link = (tls_link_t) {0};
+    } else {
+        tcp_src_free(src);
+        tlsuv__free(src);
+    }
     return rc;
 }
 
