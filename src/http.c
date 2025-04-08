@@ -145,6 +145,7 @@ static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
 }
 
 static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
+    if (!c) return;
     // move the queue to avoid failing requests added
     // during error handing
     struct req_q queue = c->requests;
