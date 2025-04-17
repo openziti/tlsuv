@@ -30,6 +30,7 @@
 #include <openssl/x509.h>
 #include <openssl/ssl.h>
 #include <openssl/types.h>
+#include <openssl/crypto.h>
 
 #include "keys.h"
 #include "../keychain.h"
@@ -173,7 +174,15 @@ static struct tlsuv_engine_s openssl_engine_api = {
 };
 
 static const char* tls_lib_version() {
-    return OpenSSL_version(OPENSSL_VERSION);
+    static char version[128];
+    static OSSL_LIB_CTX *libctx = NULL;
+    if (libctx == NULL) {
+        libctx = OSSL_LIB_CTX_get0_global_default();
+        int fips = EVP_default_properties_is_fips_enabled(libctx);
+        snprintf(version, sizeof(version), "%s%s",
+                 OpenSSL_version(OPENSSL_VERSION), fips ? " [FIPS]" : "");
+    }
+    return version;
 }
 
 const char *tls_error(unsigned long code) {
@@ -188,6 +197,7 @@ static const char *tls_eng_error(tlsuv_engine_t self) {
 }
 
 tls_context *new_openssl_ctx(const char *ca, size_t ca_len) {
+
     struct openssl_ctx *c = tlsuv__calloc(1, sizeof(struct openssl_ctx));
     c->api = openssl_context_api;
     if (tlsuv_keychain() != NULL) {
