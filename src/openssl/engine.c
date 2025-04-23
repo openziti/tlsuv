@@ -53,7 +53,6 @@ const char *const caFiles[] = {
         "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", // CentOS/RHEL 7
         "/etc/ssl/cert.pem"                                  // macOS
 };
-#define NUM_CAFILES (sizeof(caFiles) / sizeof(char *))
 
 struct openssl_ctx {
     tls_context api;
@@ -86,6 +85,8 @@ static const char* name_str(const X509_NAME *n);
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len);
 static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
                             tlsuv_certificate_t cert);
+
+static int set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len);
 
 tlsuv_engine_t new_openssl_engine(void *ctx, const char *host);
 static void set_io(tlsuv_engine_t , io_ctx , io_read , io_write);
@@ -140,6 +141,7 @@ static tls_context openssl_context_api = {
         .strerror = (const char *(*)(long)) tls_error,
         .new_engine = new_openssl_engine,
         .free_ctx = tls_free_ctx,
+        .set_ca_bundle = set_ca_bundle,
         .set_own_cert = tls_set_own_cert,
         .allow_partial_chain = tls_set_partial_vfy,
         .set_cert_verify = tls_set_cert_verify,
@@ -428,20 +430,9 @@ static X509_LOOKUP_METHOD * old_hash_lookup(void) {
     return method;
 }
 
-static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len) {
-    SSL_library_init();
-
-    const SSL_METHOD *method = TLS_client_method();
-    SSL_CONF_CTX *conf = SSL_CONF_CTX_new();
-    SSL_CONF_CTX_set_flags(conf, SSL_CONF_FLAG_CLIENT);
-
-    SSL_CTX *ctx = SSL_CTX_new(method);
-    SSL_CTX_set_app_data(ctx, c);
-
-    SSL_CONF_CTX_set_ssl_ctx(conf, ctx);
-    SSL_CONF_CTX_finish(conf);
-    SSL_CONF_CTX_free(conf);
-
+static int set_ca_bundle(tls_context *tls, const char *cabuf, size_t cabuf_len) {
+    struct openssl_ctx *c = (struct openssl_ctx *) tls;
+    SSL_CTX *ctx = c->ctx;
     if (cabuf != NULL) {
         X509_STORE *ca = load_certs(cabuf, cabuf_len);
         c->ca_chains = process_chains(ca, &c->ca_chains_count);
@@ -461,6 +452,30 @@ static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t ca
 #endif
         SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     }
+    return 0;
+}
+
+static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len) {
+    SSL_library_init();
+
+    const SSL_METHOD *method = TLS_client_method();
+    SSL_CONF_CTX *conf = SSL_CONF_CTX_new();
+    SSL_CONF_CTX_set_flags(conf, SSL_CONF_FLAG_CLIENT);
+
+    SSL_CTX *ctx = SSL_CTX_new(method);
+    if (ctx == NULL) {
+        ERR_print_errors_fp(stderr);
+        UM_LOG(ERR, "FATAL: failed to create SSL_CTX: %s", tls_error(ERR_get_error()));
+        abort();
+    }
+    SSL_CTX_set_app_data(ctx, c);
+    c->ctx = ctx;
+
+    SSL_CONF_CTX_set_ssl_ctx(conf, ctx);
+    SSL_CONF_CTX_finish(conf);
+    SSL_CONF_CTX_free(conf);
+
+    set_ca_bundle((tls_context *) c, cabuf, cabuf_len);
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
 
@@ -469,8 +484,6 @@ static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t ca
         SSL_CTX_set_msg_callback(ctx, msg_cb);
         SSL_CTX_set_info_callback(ctx, info_cb);
     }
-
-    c->ctx = ctx;
 }
 
 typedef struct string_int_pair_st {
