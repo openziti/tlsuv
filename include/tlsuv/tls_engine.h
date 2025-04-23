@@ -186,6 +186,14 @@ struct tls_context_s {
     void (*free_ctx)(tls_context *ctx);
 
     /**
+     * set new CA bundle on TLS context
+     * @param ctx TLS context
+     * @param ca CA bundle (PEM or file)
+     * @param ca_len length of CA bundle
+     */
+    int (*set_ca_bundle)(tls_context *ctx, const char *ca, size_t ca_len);
+
+    /**
      * \brief set client certfificate credentials.
      *
      * (Optional): if you bring your own engine this is probably not needed.
