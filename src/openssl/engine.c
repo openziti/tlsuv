@@ -433,6 +433,15 @@ static X509_LOOKUP_METHOD * old_hash_lookup(void) {
 static int set_ca_bundle(tls_context *tls, const char *cabuf, size_t cabuf_len) {
     struct openssl_ctx *c = (struct openssl_ctx *) tls;
     SSL_CTX *ctx = c->ctx;
+
+    if (c->ca_chains) {
+        for (int i = 0; i < c->ca_chains_count; i++) {
+            X509_STORE_free(c->ca_chains[i]);
+        }
+        tlsuv__free(c->ca_chains);
+        c->ca_chains = NULL;
+    }
+
     if (cabuf != NULL) {
         X509_STORE *ca = load_certs(cabuf, cabuf_len);
         c->ca_chains = process_chains(ca, &c->ca_chains_count);
