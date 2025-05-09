@@ -1224,6 +1224,7 @@ TEST_CASE("partial bundle", "[http]") {
 #endif
 
     auto url = "https://one.one.one.one";
+    auto req = "/dns-query?name=google.com&type=AAAA";
     // cloudflare intermediate cert
     auto ca = R"(
 -----BEGIN CERTIFICATE-----
@@ -1247,14 +1248,16 @@ sQIwJonMaAFi54mrfhfoFNZEfuNMSQ6/bIBiNLiyoX46FohQvKeIoJ99cx7sUkFN
     auto loop = uv_loop_new();
     tlsuv_http_t clt{};
     tlsuv_http_init(loop, &clt, url);
+    tlsuv_http_header(&clt, "accept", "application/dns-json");
     auto tls = default_tls_context(ca, strlen(ca));
     tlsuv_http_set_ssl(&clt, tls);
+
 
     struct result_t {
         int code{0};
         std::string msg;
     } result;
-    tlsuv_http_req(&clt, "GET", "/version",
+    tlsuv_http_req(&clt, "GET", req,
                    [](tlsuv_http_resp_t *resp, void *res){
                        auto r = (result_t*)res;
                        r->code = resp->code;
@@ -1270,7 +1273,7 @@ sQIwJonMaAFi54mrfhfoFNZEfuNMSQ6/bIBiNLiyoX46FohQvKeIoJ99cx7sUkFN
         tls->allow_partial_chain(tls, true);
     }
 
-    tlsuv_http_req(&clt, "GET", "/version",
+    tlsuv_http_req(&clt, "GET", req,
                    [](tlsuv_http_resp_t *resp, void *res){
                        auto r = (result_t*)res;
                        r->code = resp->code;
@@ -1281,7 +1284,7 @@ sQIwJonMaAFi54mrfhfoFNZEfuNMSQ6/bIBiNLiyoX46FohQvKeIoJ99cx7sUkFN
 
     // should get HTTP response here
     INFO(result.msg);
-    CHECK(result.code >= 200);
+    CHECK(result.code == 200);
 
     tlsuv_http_close(&clt, nullptr);
     uv_run(loop, UV_RUN_DEFAULT);
