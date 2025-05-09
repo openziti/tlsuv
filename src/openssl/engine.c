@@ -62,9 +62,6 @@ struct openssl_ctx {
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx);
     void *verify_ctx;
     unsigned char *alpn_protocols;
-
-    X509_STORE **ca_chains;
-    int ca_chains_count;
 };
 
 struct openssl_engine {
@@ -262,37 +259,6 @@ static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buflen) 
     return 0;
 }
 
-static int verify_peer_cb(int pre_verify, X509_STORE_CTX *s) {
-
-    if (pre_verify == 1) {
-        return 1;
-    }
-
-    int verified = 0;
-    X509 *c = X509_STORE_CTX_get_current_cert(s);
-    STACK_OF(X509) *untrusted = X509_STORE_CTX_get0_untrusted(s);
-
-    SSL *ssl = X509_STORE_CTX_get_ex_data(s, SSL_get_ex_data_X509_STORE_CTX_idx());
-    SSL_CTX *ssl_ctx = SSL_get_SSL_CTX(ssl);
-    struct openssl_ctx *ctx = SSL_CTX_get_app_data(ssl_ctx);
-
-    for (int i = 0; i < ctx->ca_chains_count; i++) {
-        UM_LOG(INFO, "checking against bundle[%d]", i);
-        X509_STORE_CTX *verifier = X509_STORE_CTX_new();
-        X509_STORE_CTX_init(verifier, ctx->ca_chains[i], c, untrusted);
-        int is_good = X509_verify_cert(verifier);
-
-        X509_STORE_CTX_free(verifier);
-
-        if (is_good) {
-            ERR_clear_error();
-            verified = 1;
-            break;
-        }
-    }
-    return verified;
-}
-
 static int is_self_signed(X509 *cert) {
 #if OPENSSL_API_LEVEL >= 30000
     return X509_self_signed(cert, 1);
@@ -434,19 +400,9 @@ static int set_ca_bundle(tls_context *tls, const char *cabuf, size_t cabuf_len) 
     struct openssl_ctx *c = (struct openssl_ctx *) tls;
     SSL_CTX *ctx = c->ctx;
 
-    if (c->ca_chains) {
-        for (int i = 0; i < c->ca_chains_count; i++) {
-            X509_STORE_free(c->ca_chains[i]);
-        }
-        tlsuv__free(c->ca_chains);
-        c->ca_chains = NULL;
-    }
-
     if (cabuf != NULL) {
         X509_STORE *ca = load_certs(cabuf, cabuf_len);
-        c->ca_chains = process_chains(ca, &c->ca_chains_count);
         SSL_CTX_set0_verify_cert_store(ctx, ca);
-        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_peer_cb);
     } else {
         // try loading default CA stores
 #if _WIN32
@@ -795,12 +751,6 @@ static void tls_free_ctx(tls_context *ctx) {
         c->own_key = NULL;
     }
 
-    if (c->ca_chains) {
-        for (int i = 0; i < c->ca_chains_count; i++) {
-            X509_STORE_free(c->ca_chains[i]);
-        }
-        tlsuv__free(c->ca_chains);
-    }
     SSL_CTX_free(c->ctx);
     tlsuv__free(c);
 }
