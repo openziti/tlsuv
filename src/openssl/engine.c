@@ -415,8 +415,8 @@ static int set_ca_bundle(tls_context *tls, const char *cabuf, size_t cabuf_len) 
 #else
         SSL_CTX_set_default_verify_paths(ctx);
 #endif
-        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     }
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     return 0;
 }
 
