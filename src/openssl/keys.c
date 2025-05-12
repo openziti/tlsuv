@@ -29,6 +29,12 @@
 #include "../alloc.h"
 #include "../keychain.h"
 
+// OpenSSL 3.0.12+ defines this in openssl/evp.h
+#ifndef EVP_PKEY_PRIVATE_KEY
+# define EVP_PKEY_PRIVATE_KEY                                               \
+    ( EVP_PKEY_KEY_PARAMETERS | OSSL_KEYMGMT_SELECT_PRIVATE_KEY )
+#endif
+
 static int cert_to_pem(const struct tlsuv_certificate_s * c, int full, char **pem, size_t *pemlen);
 static void cert_free(tlsuv_certificate_t c);
 static int cert_verify(const struct tlsuv_certificate_s * c, enum hash_algo md, const char *data, size_t datalen, const char *sig, size_t siglen);
