@@ -148,7 +148,6 @@ static tlsuv_private_key_t new_private_key(EVP_PKEY *pkey) {
     struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
     *private_key = PRIV_KEY_API;
     private_key->pkey = pkey;
-    private_key->ref_count = 1;
     return (tlsuv_private_key_t) private_key;
 }
 
@@ -232,11 +231,8 @@ static int pubkey_verify(tlsuv_public_key_t pk, enum hash_algo md, const char *d
 
 static void privkey_free(tlsuv_private_key_t k) {
     struct priv_key_s *priv = (struct priv_key_s *) k;
-    priv->ref_count--;
-    if (priv->ref_count < 1) {
-        EVP_PKEY_free(priv->pkey);
-        tlsuv__free(priv);
-    }
+    EVP_PKEY_free(priv->pkey);
+    tlsuv__free(priv);
 }
 
 static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *data, size_t datalen, char *sig, size_t *siglen) {

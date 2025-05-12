@@ -42,23 +42,9 @@
 #endif
 #endif
 
-
-// inspired by https://golang.org/src/crypto/x509/root_linux.go
-// Possible certificate files; stop after finding one.
-const char *const caFiles[] = {
-        "/etc/ssl/certs/ca-certificates.crt",                // Debian/Ubuntu/Gentoo etc.
-        "/etc/pki/tls/certs/ca-bundle.crt",                  // Fedora/RHEL 6
-        "/etc/ssl/ca-bundle.pem",                            // OpenSUSE
-        "/etc/pki/tls/cacert.pem",                           // OpenELEC
-        "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", // CentOS/RHEL 7
-        "/etc/ssl/cert.pem"                                  // macOS
-};
-
 struct openssl_ctx {
     tls_context api;
     SSL_CTX *ctx;
-    struct priv_key_s *own_key;
-    X509 *own_cert;
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx);
     void *verify_ctx;
     unsigned char *alpn_protocols;
@@ -83,7 +69,7 @@ static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t ca
 static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
                             tlsuv_certificate_t cert);
 
-static int set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len);
+static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len);
 
 tlsuv_engine_t new_openssl_engine(void *ctx, const char *host);
 static void set_io(tlsuv_engine_t , io_ctx , io_read , io_write);
@@ -282,71 +268,6 @@ static const char* name_str(const X509_NAME *n) {
     BIO_free(b);
     return buf;
 }
-static X509_STORE** process_chains(X509_STORE *store, int *count) {
-    STACK_OF(X509_OBJECT ) *objects = X509_STORE_get0_objects(store);
-
-    STACK_OF(X509) *roots = sk_X509_new_null();
-    STACK_OF(X509) *inter = sk_X509_new_null();
-
-    int idx;
-    for (idx = 0; idx < sk_X509_OBJECT_num(objects); idx++) {
-        X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(objects, idx));
-        if (is_self_signed(c)) {
-            sk_X509_push(roots, c);
-        } else {
-            sk_X509_push(inter, c);
-        }
-    }
-
-    idx = 0;
-    int root_count = sk_X509_num(roots);
-    X509_STORE **stores = tlsuv__calloc(root_count, sizeof (X509_STORE*));
-    while(sk_X509_num(roots) > 0) {
-        X509 *r = sk_X509_pop(roots);
-        X509_STORE *s = X509_STORE_new();
-        X509_STORE_add_cert(s, r);
-
-        stores[idx++] = s;
-    }
-
-    int tries = 3;
-    while (sk_X509_num(inter) > 0 && tries > 0) {
-        for (int i = 0; i < sk_X509_num(inter);) {
-            X509 *c = sk_X509_value(inter, i);
-            int found = 0;
-            for (int n = 0; n < root_count; n++) {
-                ERR_clear_error();
-
-                X509_STORE_CTX *verifier = X509_STORE_CTX_new();
-                X509_STORE_CTX_init(verifier, stores[n], c, NULL);
-                int rc = X509_verify_cert(verifier);
-
-                X509_STORE_CTX_free(verifier);
-
-                if (rc == 1) {
-                    X509_STORE_add_cert(stores[n], c);
-                    found = 1;
-                    break;
-                }
-            }
-
-            if (found) {
-                sk_X509_delete(inter, i);
-            } else {
-                i++;
-            }
-        }
-        tries--;
-    }
-    if (sk_X509_num(inter) > 0) {
-        UM_LOG(WARN, "bundle contained %d un-rooted certs", sk_X509_num(inter));
-    }
-    sk_X509_free(roots);
-    sk_X509_free(inter);
-    ERR_clear_error();
-    *count = root_count;
-    return stores;
-}
 
 static int by_subj_old_hash(X509_LOOKUP *lu, X509_LOOKUP_TYPE t, const X509_NAME *name, X509_OBJECT *obj){
     if (t != X509_LU_X509) return 0;
@@ -396,13 +317,13 @@ static X509_LOOKUP_METHOD * old_hash_lookup(void) {
     return method;
 }
 
-static int set_ca_bundle(tls_context *tls, const char *cabuf, size_t cabuf_len) {
+static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
     struct openssl_ctx *c = (struct openssl_ctx *) tls;
     SSL_CTX *ctx = c->ctx;
 
-    if (cabuf != NULL) {
-        X509_STORE *ca = load_certs(cabuf, cabuf_len);
-        SSL_CTX_set0_verify_cert_store(ctx, ca);
+    if (ca != NULL) {
+        X509_STORE *store = load_certs(ca, ca_len);
+        SSL_CTX_set0_verify_cert_store(ctx, store);
     } else {
         // try loading default CA stores
 #if _WIN32
@@ -746,10 +667,6 @@ static void tls_free_ctx(tls_context *ctx) {
     if (c->alpn_protocols) {
         tlsuv__free(c->alpn_protocols);
     }
-    if (c->own_key) {
-        c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
-        c->own_key = NULL;
-    }
 
     SSL_CTX_free(c->ctx);
     tlsuv__free(c);
@@ -810,16 +727,7 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
     SSL_CTX_use_PrivateKey(ssl, NULL);
     SSL_CTX_use_certificate(ssl, NULL);
     SSL_CTX_clear_chain_certs(ssl);
-    if (c->own_key) {
-        c->own_key->free((struct tlsuv_private_key_s *)c->own_key);
-    }
-    if (c->own_cert) {
-        X509_free(c->own_cert);
-    }
-    c->own_key = NULL;
-    c->own_cert = NULL;
 
-    
     if (key == NULL) {
         return 0;
     }
@@ -832,6 +740,7 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
                 return -1;
             }
             store = crt->cert;
+            free(crt);
         }
     } else {
         // owned by the caller
@@ -850,12 +759,7 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
     X509_STORE_free(store);
 
     SSL_OP_CHECK(X509_check_private_key(certs, pk->pkey), "verify key/cert combo");
-
-    c->own_cert = certs;
-    c->own_key = pk;
-    pk->ref_count++;
-    
-    SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, c->own_key->pkey), "set private key");
+    SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, pk->pkey), "set private key");
     return 0;
 }
 
