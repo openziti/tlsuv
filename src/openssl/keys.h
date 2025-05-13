@@ -31,7 +31,6 @@ struct pub_key_s {
 struct priv_key_s {
     TLSUV_PRIVKEY_API
     EVP_PKEY *pkey;
-    int ref_count;
 };
 
 const char *tls_error(unsigned long code);
