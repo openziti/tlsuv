@@ -44,6 +44,7 @@
 
 struct openssl_ctx {
     tls_context api;
+    OSSL_LIB_CTX *lib_ctx;
     SSL_CTX *ctx;
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx);
     void *verify_ctx;
@@ -62,6 +63,8 @@ struct openssl_engine {
 
     unsigned long error;
 };
+
+extern const char* tlsuv_get_config_path();
 
 static int is_self_signed(X509 *cert);
 static const char* name_str(const X509_NAME *n);
@@ -343,12 +346,17 @@ static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
 
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len) {
     SSL_library_init();
+    const char *cnf = tlsuv_get_config_path();
+    if (cnf) {
+        c->lib_ctx = OSSL_LIB_CTX_new();
+        if (OSSL_LIB_CTX_load_config(c->lib_ctx, cnf) == 0) {
+            UM_LOG(ERR, "failed to load config from [%s]: %s", cnf,
+                   ERR_error_string(ERR_get_error(), NULL));
+        }
+    }
 
     const SSL_METHOD *method = TLS_client_method();
-    SSL_CONF_CTX *conf = SSL_CONF_CTX_new();
-    SSL_CONF_CTX_set_flags(conf, SSL_CONF_FLAG_CLIENT);
-
-    SSL_CTX *ctx = SSL_CTX_new(method);
+    SSL_CTX *ctx = SSL_CTX_new_ex(c->lib_ctx, NULL, method);
     if (ctx == NULL) {
         ERR_print_errors_fp(stderr);
         UM_LOG(ERR, "FATAL: failed to create SSL_CTX: %s", tls_error(ERR_get_error()));
@@ -356,10 +364,6 @@ static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t ca
     }
     SSL_CTX_set_app_data(ctx, c);
     c->ctx = ctx;
-
-    SSL_CONF_CTX_set_ssl_ctx(conf, ctx);
-    SSL_CONF_CTX_finish(conf);
-    SSL_CONF_CTX_free(conf);
 
     set_ca_bundle((tls_context *) c, cabuf, cabuf_len);
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
@@ -669,6 +673,7 @@ static void tls_free_ctx(tls_context *ctx) {
     }
 
     SSL_CTX_free(c->ctx);
+    OSSL_LIB_CTX_free(c->lib_ctx);
     tlsuv__free(c);
 }
 
