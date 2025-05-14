@@ -44,7 +44,6 @@
 
 struct openssl_ctx {
     tls_context api;
-    OSSL_LIB_CTX *lib_ctx;
     SSL_CTX *ctx;
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx);
     void *verify_ctx;
@@ -161,15 +160,33 @@ static struct tlsuv_engine_s openssl_engine_api = {
         .strerror = tls_eng_error,
 };
 
+static OSSL_LIB_CTX *global_ctx;
+int configure_openssl() {
+    const char *cnf = tlsuv_get_config_path();
+    if (cnf == NULL) {
+        OSSL_LIB_CTX_free(global_ctx);
+        global_ctx = NULL;
+    } else {
+        OSSL_LIB_CTX_free(global_ctx);
+        OSSL_LIB_CTX *ctx = OSSL_LIB_CTX_new();
+        if (OSSL_LIB_CTX_load_config(ctx, cnf) == 0) {
+            UM_LOG(ERR, "failed to load config from [%s]: %s", cnf,
+                   ERR_error_string(ERR_get_error(), NULL));
+            OSSL_LIB_CTX_free(ctx);
+            return UV_EINVAL;
+        }
+
+        OSSL_LIB_CTX_free(global_ctx);
+        global_ctx = ctx;
+    }
+    return 0;
+}
+
 static const char* tls_lib_version() {
     static char version[128];
-    static OSSL_LIB_CTX *libctx = NULL;
-    if (libctx == NULL) {
-        libctx = OSSL_LIB_CTX_get0_global_default();
-        int fips = EVP_default_properties_is_fips_enabled(libctx);
-        snprintf(version, sizeof(version), "%s%s",
-                 OpenSSL_version(OPENSSL_VERSION), fips ? " [FIPS]" : "");
-    }
+    int fips = EVP_default_properties_is_fips_enabled(global_ctx);
+    snprintf(version, sizeof(version), "%s%s",
+             OpenSSL_version(OPENSSL_VERSION), fips ? " [FIPS]" : "");
     return version;
 }
 
@@ -345,17 +362,9 @@ static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
 
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len) {
     SSL_library_init();
-    const char *cnf = tlsuv_get_config_path();
-    if (cnf) {
-        c->lib_ctx = OSSL_LIB_CTX_new();
-        if (OSSL_LIB_CTX_load_config(c->lib_ctx, cnf) == 0) {
-            UM_LOG(ERR, "failed to load config from [%s]: %s", cnf,
-                   ERR_error_string(ERR_get_error(), NULL));
-        }
-    }
 
     const SSL_METHOD *method = TLS_client_method();
-    SSL_CTX *ctx = SSL_CTX_new_ex(c->lib_ctx, NULL, method);
+    SSL_CTX *ctx = SSL_CTX_new_ex(global_ctx, NULL, method);
     if (ctx == NULL) {
         ERR_print_errors_fp(stderr);
         UM_LOG(ERR, "FATAL: failed to create SSL_CTX: %s", tls_error(ERR_get_error()));
@@ -672,7 +681,6 @@ static void tls_free_ctx(tls_context *ctx) {
     }
 
     SSL_CTX_free(c->ctx);
-    OSSL_LIB_CTX_free(c->lib_ctx);
     tlsuv__free(c);
 }
 
