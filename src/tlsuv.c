@@ -42,11 +42,47 @@
 #define TLSUV_VERS "<unknown>"
 #endif
 
+#ifndef PATH_MAX
+#define PATH_MAX 1024
+#endif
+
 static void on_clt_io(uv_poll_t *, int, int);
 static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
 static void check_read(uv_idle_t *idle);
 
 static tls_context *DEFAULT_TLS = NULL;
+static char tls_config_path[PATH_MAX] = {0};
+
+int tlsuv_set_config_path(const char *path) {
+    if (path == NULL) {
+        tls_config_path[0] = 0;
+        return 0;
+    }
+
+    if (strlen(path) >= sizeof(tls_config_path)) {
+        UM_LOG(ERR, "path too long: %s", path);
+        return UV_EINVAL;
+    }
+
+    uv_fs_t stat;
+    int rc = uv_fs_stat(NULL, &stat, path, NULL);
+    if (rc != 0) {
+        UM_LOG(ERR, "failed to stat %s: %s", path, uv_strerror(rc));
+        return rc;
+    }
+    if ((stat.statbuf.st_mode & (S_IFREG|S_IFLNK)) == 0) {
+        UM_LOG(ERR, "path is not a regular file: %s", path);
+        uv_fs_req_cleanup(&stat);
+        return UV_EINVAL;
+    }
+
+    strcpy(tls_config_path, path);
+    return 0;
+}
+
+const char* tlsuv_get_config_path(void) {
+    return tls_config_path[0] ? tls_config_path : NULL;
+}
 
 static void free_default_tls(void) {
     if (DEFAULT_TLS) {

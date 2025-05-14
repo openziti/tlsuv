@@ -28,6 +28,15 @@ extern "C" {
 const char* tlsuv_version();
 
 /**
+ * \brief set the path to the TLS config file.
+ *
+ * This is used to load the default TLS context if current engine supports it
+ * @param path path to the config file
+ * @return 0 on success, or error code
+ */
+extern int tlsuv_set_config_path(const char *path);
+
+/**
  * \brief Override the use of the standard library’s malloc(3), calloc(3), realloc(3), free(3),
  * memory allocation functions.
  *
