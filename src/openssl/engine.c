@@ -300,9 +300,8 @@ static int by_subj_old_hash(X509_LOOKUP *lu, X509_LOOKUP_TYPE t, const X509_NAME
     if (count == 0) return 0;
 
     X509_STORE *store = X509_LOOKUP_get_store(lu);
-    STACK_OF(X509_OBJECT) *objs = X509_STORE_get1_objects(store);
+    STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
     X509_OBJECT *res = X509_OBJECT_retrieve_by_subject(objs, X509_LU_X509, name);
-    sk_X509_OBJECT_free(objs);
     if (res) {
         X509_OBJECT_set1_X509(obj, X509_OBJECT_get0_X509(res));
         return 1;
