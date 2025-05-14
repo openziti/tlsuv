@@ -63,6 +63,8 @@ struct openssl_engine {
     unsigned long error;
 };
 
+extern const char* tlsuv_get_config_path();
+
 static int is_self_signed(X509 *cert);
 static const char* name_str(const X509_NAME *n);
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len);
@@ -158,15 +160,33 @@ static struct tlsuv_engine_s openssl_engine_api = {
         .strerror = tls_eng_error,
 };
 
+static OSSL_LIB_CTX *global_ctx;
+int configure_openssl() {
+    const char *cnf = tlsuv_get_config_path();
+    if (cnf == NULL) {
+        OSSL_LIB_CTX_free(global_ctx);
+        global_ctx = NULL;
+    } else {
+        OSSL_LIB_CTX_free(global_ctx);
+        OSSL_LIB_CTX *ctx = OSSL_LIB_CTX_new();
+        if (OSSL_LIB_CTX_load_config(ctx, cnf) == 0) {
+            UM_LOG(ERR, "failed to load config from [%s]: %s", cnf,
+                   ERR_error_string(ERR_get_error(), NULL));
+            OSSL_LIB_CTX_free(ctx);
+            return UV_EINVAL;
+        }
+
+        OSSL_LIB_CTX_free(global_ctx);
+        global_ctx = ctx;
+    }
+    return 0;
+}
+
 static const char* tls_lib_version() {
     static char version[128];
-    static OSSL_LIB_CTX *libctx = NULL;
-    if (libctx == NULL) {
-        libctx = OSSL_LIB_CTX_get0_global_default();
-        int fips = EVP_default_properties_is_fips_enabled(libctx);
-        snprintf(version, sizeof(version), "%s%s",
-                 OpenSSL_version(OPENSSL_VERSION), fips ? " [FIPS]" : "");
-    }
+    int fips = EVP_default_properties_is_fips_enabled(global_ctx);
+    snprintf(version, sizeof(version), "%s%s",
+             OpenSSL_version(OPENSSL_VERSION), fips ? " [FIPS]" : "");
     return version;
 }
 
@@ -297,9 +317,8 @@ static int by_subj_old_hash(X509_LOOKUP *lu, X509_LOOKUP_TYPE t, const X509_NAME
     if (count == 0) return 0;
 
     X509_STORE *store = X509_LOOKUP_get_store(lu);
-    STACK_OF(X509_OBJECT) *objs = X509_STORE_get1_objects(store);
+    STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
     X509_OBJECT *res = X509_OBJECT_retrieve_by_subject(objs, X509_LU_X509, name);
-    sk_X509_OBJECT_free(objs);
     if (res) {
         X509_OBJECT_set1_X509(obj, X509_OBJECT_get0_X509(res));
         return 1;
@@ -345,10 +364,7 @@ static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t ca
     SSL_library_init();
 
     const SSL_METHOD *method = TLS_client_method();
-    SSL_CONF_CTX *conf = SSL_CONF_CTX_new();
-    SSL_CONF_CTX_set_flags(conf, SSL_CONF_FLAG_CLIENT);
-
-    SSL_CTX *ctx = SSL_CTX_new(method);
+    SSL_CTX *ctx = SSL_CTX_new_ex(global_ctx, NULL, method);
     if (ctx == NULL) {
         ERR_print_errors_fp(stderr);
         UM_LOG(ERR, "FATAL: failed to create SSL_CTX: %s", tls_error(ERR_get_error()));
@@ -356,10 +372,6 @@ static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t ca
     }
     SSL_CTX_set_app_data(ctx, c);
     c->ctx = ctx;
-
-    SSL_CONF_CTX_set_ssl_ctx(conf, ctx);
-    SSL_CONF_CTX_finish(conf);
-    SSL_CONF_CTX_free(conf);
 
     set_ca_bundle((tls_context *) c, cabuf, cabuf_len);
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
