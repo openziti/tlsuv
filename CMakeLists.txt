@@ -15,6 +15,8 @@ include(cmake/project-is-top-level.cmake)
 include(cmake/variables.cmake)
 include(CMakeDependentOption)
 include(GNUInstallDirs)
+include(FindPkgConfig)
+find_package(PkgConfig)
 
 if(tlsuv_DEVELOPER_MODE)
     message(NOTICE "adding developer options")
@@ -27,14 +29,12 @@ if(tlsuv_DEVELOPER_MODE)
 endif ()
 option(TLSUV_HTTP "enable HTTP/websocket support" ON)
 
+set(supported_tls_libs openssl mbedtls)
 set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls)")
 
-if(NOT (TLSUV_TLSLIB STREQUAL "openssl" OR TLSUV_TLSLIB STREQUAL "mbedtls"))
+if(NOT TLSUV_TLSLIB IN_LIST supported_tls_libs)
     message(FATAL_ERROR "`${TLSUV_TLSLIB}' TLS library is not supported")
 endif()
-
-cmake_dependent_option(USE_OPENSSL "Use OpenSSL" ON "TLSUV_TLSLIB STREQUAL openssl; NOT USE_MBEDTLS" OFF)
-cmake_dependent_option(USE_MBEDTLS "Use mbedTLS" ON "TLSUV_TLSLIB STREQUAL mbedtls" OFF)
 
 if (TLSUV_TEST_COVERAGE)
     add_compile_options(--coverage)
@@ -83,25 +83,7 @@ if (TLSUV_HTTP)
     )
 endif (TLSUV_HTTP)
 
-if(USE_OPENSSL)
-    set(tlsImpl openssl)
-    FILE(GLOB ssl_files src/openssl/*)
-    LIST(APPEND tlsuv_sources
-            ${ssl_files}
-            )
-endif()
-
-if(USE_MBEDTLS)
-    set(tlsImpl mbedtls)
-    FILE(GLOB ssl_files src/mbedtls/*)
-
-    LIST(APPEND tlsuv_sources
-            ${ssl_files}
-            )
-endif()
-
-include(FindPkgConfig)
-find_package(PkgConfig)
+add_subdirectory(src/${TLSUV_TLSLIB})
 
 find_package(libuv CONFIG QUIET)
 if (libuv_FOUND)
@@ -137,10 +119,35 @@ target_include_directories(tlsuv
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         )
 
-target_link_libraries(tlsuv
-        PRIVATE ${TLSUV_LIBUV_LIB}
+target_compile_definitions(tlsuv PRIVATE
+        TLSUV_VERSION=v${PROJECT_VERSION}
+        USE_$<UPPER_CASE:${TLSUV_TLSLIB}>
+        TLS_IMPL=${TLSUV_TLSLIB}
 )
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(tlsuv PRIVATE _POSIX_C_SOURCE=200112 _GNU_SOURCE)
+elseif (WIN32)
+    target_compile_definitions(tlsuv
+            PRIVATE WIN32_LEAN_AND_MEAN
+            PRIVATE WINVER=0x0A00
+            PRIVATE _WIN32_WINNT=0x0A00
+            PRIVATE _CRT_SECURE_NO_WARNINGS
+    )
+    target_link_libraries(tlsuv PUBLIC crypt32 ncrypt)
+endif()
+
+target_link_libraries(tlsuv
+        PRIVATE ${TLSUV_LIBUV_LIB}
+        PRIVATE ${TLSUV_TLSLIB}-impl
+)
+
+if (APPLE)
+    target_link_libraries(tlsuv PRIVATE
+            "-framework Security"
+            "-framework CoreFoundation"
+    )
+endif (APPLE)
 
 if (TLSUV_HTTP)
 
@@ -161,39 +168,6 @@ if (TLSUV_HTTP)
     endif ()
 
 endif (TLSUV_HTTP)
-
-if (APPLE)
-    target_link_libraries(tlsuv PRIVATE
-            "-framework Security"
-            "-framework CoreFoundation"
-    )
-endif (APPLE)
-
-TARGET_COMPILE_DEFINITIONS(tlsuv PRIVATE TLSUV_VERSION=v${PROJECT_VERSION})
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    TARGET_COMPILE_DEFINITIONS(tlsuv PRIVATE _POSIX_C_SOURCE=200112 _GNU_SOURCE)
-endif()
-
-if (USE_MBEDTLS)
-    find_package(MbedTLS REQUIRED)
-    target_compile_definitions(tlsuv PRIVATE USE_MBEDTLS)
-    target_include_directories(tlsuv PUBLIC $<BUILD_INTERFACE:${MBEDTLS_INCLUDE_DIRS}>)
-    target_link_libraries(tlsuv PRIVATE ${MBEDTLS_LIBRARIES})
-elseif(USE_OPENSSL)
-    find_package(OpenSSL REQUIRED)
-    target_compile_definitions(tlsuv PRIVATE USE_OPENSSL)
-    target_link_libraries(tlsuv PRIVATE OpenSSL::SSL)
-endif()
-
-if (WIN32)
-    target_compile_definitions(tlsuv
-            PRIVATE WIN32_LEAN_AND_MEAN
-            PRIVATE WINVER=0x0A00
-            PRIVATE _WIN32_WINNT=0x0A00
-            PRIVATE _CRT_SECURE_NO_WARNINGS
-    )
-    target_link_libraries(tlsuv PUBLIC crypt32 ncrypt)
-endif()
 
 install(DIRECTORY include/tlsuv DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(TARGETS tlsuv

@@ -36,7 +36,7 @@
 #include "../um_debug.h"
 #include "keys.h"
 #include "mbed_p11.h"
-#include <tlsuv/tlsuv.h>
+#include <tlsuv/tls_engine.h>
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -212,6 +212,11 @@ const char *mbedtls_error(long code) {
 static const char *mbedtls_eng_error(tlsuv_engine_t eng) {
     struct mbedtls_engine *e = (struct mbedtls_engine *)eng;
     return mbedtls_error(e->error);
+}
+
+int configure_mbedtls() {
+    // NOOP
+    return 0;
 }
 
 tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len) {

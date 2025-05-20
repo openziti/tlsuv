@@ -19,29 +19,21 @@
 
 typedef int (*tls_configure)(void);
 
-#ifdef USE_MBEDTLS
-extern tls_context* new_mbedtls_ctx(const char* ca, size_t ca_len);
-static tls_context_factory factory = new_mbedtls_ctx;
-static tls_configure configure_tls = NULL;
-#elif USE_OPENSSL
-extern tls_context* new_openssl_ctx(const char* ca, size_t ca_len);
-static tls_context_factory factory = new_openssl_ctx;
-extern int configure_openssl();
-static tls_configure configure_tls = configure_openssl;
-extern
-#else
-static tls_configure configure_tls = NULL;
-static tls_context_factory factory = NULL;
-#endif
+#define TLS_FACTORY_NAME(impl) new_## impl ## _ctx
+#define TLS_FACTORY(impl) TLS_FACTORY_NAME(impl)
+
+#define TLS_CONFIGURE_NAME(impl) configure_## impl
+#define TLS_CONFIGURE(impl) TLS_CONFIGURE_NAME(impl)
+
+extern tls_context* TLS_FACTORY(TLS_IMPL)(const char* ca, size_t ca_len);
+extern int TLS_CONFIGURE(TLS_IMPL)();
+
+static tls_configure configure_tls = TLS_CONFIGURE(TLS_IMPL);
+static tls_context_factory factory = TLS_FACTORY(TLS_IMPL);
 
 #ifndef PATH_MAX
 #define PATH_MAX 1024
 #endif
-
-#ifdef TLSUV_USE_OPENSSL
-extern void configure_openssl();
-#endif
-
 
 void set_default_tls_impl(tls_context_factory f) {
     factory = f;
