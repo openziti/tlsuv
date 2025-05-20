@@ -12,10 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef USE_OPENSSL
-#error "USE_OPENSSL must be set to compile this file"
-#endif
-
 #include <assert.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -24,7 +20,6 @@
 
 #include "../alloc.h"
 #include "../um_debug.h"
-#include <tlsuv/tlsuv.h>
 
 #include <openssl/err.h>
 #include <openssl/x509.h>

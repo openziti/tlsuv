@@ -16,7 +16,7 @@
 #ifndef TLSUV_OPENSSL_KEYS_H
 #define TLSUV_OPENSSL_KEYS_H
 
-#include <tlsuv/tlsuv.h>
+#include <tlsuv/tls_engine.h>
 
 struct cert_s {
     TLSUV_CERT_API
