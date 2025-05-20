@@ -269,8 +269,16 @@ TEST_CASE("http_tests", "[http]") {
         size_t content_len = strtol(resp.headers["Content-Length"].c_str(), nullptr, 10);
         REQUIRE(body_len == content_len);
 
-        REQUIRE_THAT(resp.body, Catch::Matchers::ContainsSubstring(req_body));
+        auto resp_json = json_parse_string(resp.body.c_str());
+        auto resp_data = json_object_dotget_string(json_value_get_object(resp_json), "data");
+
+        char *req64 = nullptr;
+        size_t req64_len;
+        size_t req_len = tlsuv_base64_encode((uint8_t *)req_body.c_str(), req_body.length(), &req64, &req64_len);
+        REQUIRE_THAT(resp_data, Catch::Matchers::ContainsSubstring(req64));
         REQUIRE(resp.req_body_cb_called);
+        json_value_free(resp_json);
+        free(req64);
     }
 
 
