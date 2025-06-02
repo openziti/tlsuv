@@ -16,6 +16,7 @@
 #include <tlsuv/tls_engine.h>
 #include "um_debug.h"
 
+#include <uv.h>
 
 typedef int (*tls_configure)(void);
 

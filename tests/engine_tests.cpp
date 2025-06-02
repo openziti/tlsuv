@@ -115,9 +115,11 @@ fcwJ0v2IisYTCMavk0DJSj9Hd+coMSyTa7ghp8ja/0PSoQAxAA==
 TEST_CASE("implementation test", "[engine]") {
     tls_context *tls = default_tls_context(nullptr, 0);
 #if defined(TEST_mbedtls)
-    REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("mbed TLS", Catch::CaseSensitive::No));
+    CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("mbed TLS", Catch::CaseSensitive::No));
 #elif defined(TEST_openssl)
-    REQUIRE_THAT(tls->version(), Catch::Matchers::StartsWith("OpenSSL"));
+    CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("OpenSSL"));
+#elif defined(TEST_win32crypto)
+    CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("win32"));
 #else
     FAIL("invalid engine");
 #endif
@@ -169,12 +171,19 @@ rzqUvKOfg8HVwOSngZyPa4zgd5ieZfxcFnDc2IK4fnI=
 
     auto input = "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbSI6Im90dCIsImV4cCI6MTY4MTMyNDg5OCwiaXNzIjoiaHR0cHM6Ly9jdHJsLmNsaW50LmRlbW8ub3BlbnppdGkub3JnOjg0NDEiLCJqdGkiOiI1OWQxOTgwOC0zYTEyLTQzNWEtYTM3My1iY2UwZTFmNzIxOTgiLCJzdWIiOiJ5bUxHZUlQaTQifQ";
     auto sig = "UE6IVn1c2xxPEp93J_dIkpjwaennq2HLzi8EJKkXyugRzYXANxj_peyQxwWythI4nT9RPS_gothILTFe8B3cew";
+    auto sig2 = "WE6IVn1c2xxPEp93J_dIkpjwaennq2HLzi8EJKkXyugRzYXANxj_peyQxwWythI4nT9RPS_gothILTFe8B3cew";
 
     char *sigbin = nullptr;
     size_t sigbinlen;
     tlsuv_base64url_decode(sig, &sigbin, &sigbinlen);
-    REQUIRE(c->verify(c, hash_SHA256, input, strlen(input), sigbin, sigbinlen) == 0);
+    CHECK(c->verify(c, hash_SHA256, input, strlen(input), sigbin, sigbinlen) == 0);
     free(sigbin);
+    sigbin = nullptr;
+
+    tlsuv_base64url_decode(sig2, &sigbin, &sigbinlen);
+    CHECK(c->verify(c, hash_SHA256, input, strlen(input), sigbin, sigbinlen) == -1);
+    free(sigbin);
+
     c->free(c);
     tls->free_ctx(tls);
 }
@@ -212,7 +221,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
         perror("failed to connect");
     }
 
-    engine->set_io_fd(engine, (uv_os_fd_t)sock);
+    engine->set_io_fd(engine, (tlsuv_sock_t)sock);
 
     // do handshake
     do {

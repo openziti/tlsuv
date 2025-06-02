@@ -29,8 +29,14 @@ if(tlsuv_DEVELOPER_MODE)
 endif ()
 option(TLSUV_HTTP "enable HTTP/websocket support" ON)
 
-set(supported_tls_libs openssl mbedtls)
-set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls)")
+if(WIN32)
+    set(default_crypto "win32crypto")
+else ()
+    set(default_crypto "openssl")
+endif ()
+
+set(supported_tls_libs openssl mbedtls win32crypto)
+set(TLSUV_TLSLIB ${default_crypto} CACHE STRING "TLS implementation library ${supported_tls_libs}")
 
 if(NOT TLSUV_TLSLIB IN_LIST supported_tls_libs)
     message(FATAL_ERROR "`${TLSUV_TLSLIB}' TLS library is not supported")
