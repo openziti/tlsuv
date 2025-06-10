@@ -48,7 +48,7 @@ enum hash_algo {
 #ifdef _WIN32
 
 #ifndef _WIN32_WINNT
-# define _WIN32_WINNT   0x0600
+# define _WIN32_WINNT   0x0a00
 #endif
 #include <winsock2.h>
 typedef SOCKET tlsuv_sock_t;

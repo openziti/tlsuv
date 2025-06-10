@@ -22,14 +22,15 @@
 #ifndef TLSUV_HTTP_H
 #define TLSUV_HTTP_H
 
-#include <llhttp.h>
-#include <uv_link_t.h>
-
 #include <stdbool.h>
 #include "queue.h"
 #include "tls_engine.h"
 #include "tcp_src.h"
 #include "tls_link.h"
+
+#include <llhttp.h>
+#include <uv_link_t.h>
+
 
 #ifdef __cplusplus
 extern "C" {

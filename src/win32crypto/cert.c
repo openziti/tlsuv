@@ -65,6 +65,13 @@ static int cert_to_pem(const struct tlsuv_certificate_s *cert, int full, char **
             tlsuv__free(pem_buf);
             return -1;
         }
+
+        if (!full) {
+            // If not full, we only need the first cert
+            CertFreeCertificateContext(cert_ctx);
+            break;
+        }
+
         cert_ctx = CertEnumCertificatesInStore(store, cert_ctx);
     }
 

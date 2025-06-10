@@ -21,6 +21,7 @@
 #include "../alloc.h"
 #include "../um_debug.h"
 #include "cert.h"
+#include "keys.h"
 
 struct win32tls {
     tls_context api;
@@ -146,9 +147,8 @@ static tls_context win32tls_context_api = {
 //        .set_cert_verify = tls_set_cert_verify,
 //        .verify_signature =  tls_verify_signature,
         .parse_pkcs7_certs = parse_pkcs7_certs,
-//        .write_cert_to_pem = write_cert_pem,
-//        .generate_key = gen_key,
-//        .load_key = load_key,
+        .generate_key = win32crypto_generate_key,
+        .load_key = win32crypto_load_key,
 //        .load_pkcs11_key = load_pkcs11_key,
 //        .generate_pkcs11_key = gen_pkcs11_key,
 //        .generate_keychain_key = gen_keychain_key,

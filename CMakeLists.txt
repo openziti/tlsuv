@@ -130,6 +130,14 @@ target_compile_definitions(tlsuv PRIVATE
         USE_$<UPPER_CASE:${TLSUV_TLSLIB}>
         TLS_IMPL=${TLSUV_TLSLIB}
 )
+if(WIN32)
+    target_compile_definitions(tlsuv PRIVATE
+            _WIN32_WINNT=0x0A00
+            _CRT_SECURE_NO_WARNINGS
+            _CRT_NONSTDC_NO_DEPRECATE
+            _WINSOCK_DEPRECATED_NO_WARNINGS
+    )
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(tlsuv PRIVATE _POSIX_C_SOURCE=200112 _GNU_SOURCE)
