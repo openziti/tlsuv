@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
 
     // Forcefully attaching socket to the port 8080
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
-                   &opt, sizeof(opt))) {
+                   (void*)&opt, sizeof(opt))) {
         perror("setsockopt");
     }
     address.sin_family = AF_INET;
@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
         printf("connected\n");
     }
 
-    engine->set_io_fd(engine, (uv_os_sock_t)sock);
+    engine->set_io_fd(engine, (uv_os_fd_t)sock);
 
     // do handshake
     do {

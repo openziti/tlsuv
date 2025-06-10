@@ -245,7 +245,7 @@ static void connect_work(uv_work_t *work) {
         for (int i = 0; i < poll_count; i++) {
             if (poll_fds[i].revents & (POLLERR | POLLHUP)) {
                 socklen_t len = sizeof(err);
-                getsockopt(poll_fds[i].fd, SOL_SOCKET, SO_ERROR, &err, &len);
+                getsockopt(poll_fds[i].fd, SOL_SOCKET, SO_ERROR, (void*)&err, &len);
                 if (err != 0) {
                     UM_LOG(TRACE, "fd[%ld] failed to connect: %d/%s",
                            (long) poll_fds[i].fd, err, get_error_msg(err));
