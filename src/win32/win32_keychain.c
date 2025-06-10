@@ -176,7 +176,7 @@ static enum keychain_key_type key_type(keychain_key_t key){
     wchar_t buf[16];
     DWORD len;
 
-    SECURITY_STATUS rc = NCryptGetProperty(h, NCRYPT_ALGORITHM_GROUP_PROPERTY, buf, sizeof(buf), &len, 0);
+    SECURITY_STATUS rc = NCryptGetProperty(h, NCRYPT_ALGORITHM_GROUP_PROPERTY, (PBYTE)buf, sizeof(buf), &len, 0);
     if (rc == ERROR_SUCCESS) {
         if (wcscmp(NCRYPT_RSA_ALGORITHM_GROUP, buf) == 0) {
             return keychain_key_rsa;

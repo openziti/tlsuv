@@ -599,7 +599,7 @@ static void set_io_fd(tlsuv_engine_t self, uv_os_fd_t fd) {
     struct openssl_engine *e = (struct openssl_engine *) self;
     assert(e->bio == NULL);
 
-    e->bio = BIO_new_socket(fd, false);
+    e->bio = BIO_new_socket((int)fd, false);
     SSL_set_bio(e->ssl, e->bio, e->bio);
 }
 
