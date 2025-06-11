@@ -28,7 +28,6 @@
 #define PUB_HEADER  "-----BEGIN PUBLIC KEY-----\n"
 #define PUB_FOOTER "-----END PUBLIC KEY-----\n"
 
-
 static struct win32crypto_private_key_s* new_private_key(BCRYPT_KEY_HANDLE kh);
 
 static CRYPT_DECODE_PARA DECODE_PARAMS = {
@@ -46,97 +45,124 @@ static CRYPT_ENCODE_PARA ENCODE_PARAMS = {
 extern int win32crypto_generate_key(tlsuv_private_key_t *key) {
     BCRYPT_ALG_HANDLE algo = NULL;
     BCRYPT_KEY_HANDLE kh = NULL;
+    *key = NULL;
 
-    BCryptOpenAlgorithmProvider(&algo, BCRYPT_ECDSA_P256_ALGORITHM, NULL, 0);
-    BCryptGenerateKeyPair(algo, &kh, 256, 0);
-    BCryptFinalizeKeyPair(kh, 0);
-    BCryptCloseAlgorithmProvider(algo, 0);
-
-    if (kh == NULL) {
-        return -1;
+    if (
+        BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algo, BCRYPT_ECDSA_P256_ALGORITHM, NULL, 0)) &&
+        BCRYPT_SUCCESS(BCryptGenerateKeyPair(algo, &kh, 256, 0)) &&
+        BCRYPT_SUCCESS(BCryptFinalizeKeyPair(kh, 0))
+    ) {
+        *key = (tlsuv_private_key_t) new_private_key(kh);
+    } else {
+        UM_LOG(WARN, "failed to generate key: %s", win32_error(GetLastError()));
     }
-    *key = (tlsuv_private_key_t) new_private_key(kh);
 
-    return 0;
+    if (algo) {
+        BCryptCloseAlgorithmProvider(algo, 0);
+    }
+
+    return *key ? 0 : -1;
 }
 
+static BCRYPT_KEY_HANDLE load_ecc_key(const BYTE *der, size_t der_len) {
+    BCRYPT_ALG_HANDLE algoH = NULL;
+    BCRYPT_KEY_HANDLE keyH = INVALID_HANDLE_VALUE;
+    NTSTATUS rc = 0;
+    struct {
+        CRYPT_ECC_PRIVATE_KEY_INFO eck;
+        BYTE buf[1024];
+    } ecc_info = {};
+    ULONG len = sizeof(ecc_info);
 
+    rc = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                             X509_ECC_PRIVATE_KEY, der, der_len,
+                             0, &DECODE_PARAMS, &ecc_info, &len);
+    if (!rc) {
+        UM_LOG(ERR, "failed to parse EC KEY info: %s", win32_error(GetLastError()));
+        return INVALID_HANDLE_VALUE;
+    }
+
+    struct {
+        BCRYPT_ECCKEY_BLOB ec_blob;
+        char key_data[256]; // variable length: should be enough for P521 (66 * 3)
+    } ecc_blob = {};
+    memset(&ecc_blob, 0, sizeof(ecc_blob));
+
+    LPCWSTR algoId = NULL;
+    if (strcmp(ecc_info.eck.szCurveOid, szOID_ECC_CURVE_P256) == 0) {
+        ecc_blob.ec_blob.dwMagic = BCRYPT_ECDSA_PRIVATE_P256_MAGIC;
+        algoId = BCRYPT_ECDSA_P256_ALGORITHM;
+    } else if (strcmp(ecc_info.eck.szCurveOid, szOID_ECC_CURVE_P384) == 0) {
+        ecc_blob.ec_blob.dwMagic = BCRYPT_ECDSA_PRIVATE_P384_MAGIC;
+        algoId = BCRYPT_ECDSA_P384_ALGORITHM;
+    } else if (strcmp(ecc_info.eck.szCurveOid, szOID_ECC_CURVE_P521) == 0) {
+        ecc_blob.ec_blob.dwMagic = BCRYPT_ECDSA_PRIVATE_P521_MAGIC;
+        algoId = BCRYPT_ECDSA_P521_ALGORITHM;
+    } else {
+        UM_LOG(ERR, "Unsupported ECC curve: %s", ecc_info.eck.szCurveOid);
+        return INVALID_HANDLE_VALUE;
+    }
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algoH, algoId, NULL, 0))) {
+        UM_LOG(ERR, "failed to open EC algorithm[%ls]: %s", algoId, win32_error(GetLastError()));
+    }
+
+    ecc_blob.ec_blob.cbKey = ecc_info.eck.PrivateKey.cbData;
+    // construct ECC import blob X[cbData]|Y[cbData]|d[cbData]
+    memcpy(ecc_blob.key_data, ecc_info.eck.PublicKey.pbData + 1, ecc_info.eck.PrivateKey.cbData * 2);
+    memcpy(ecc_blob.key_data + 2 * ecc_info.eck.PrivateKey.cbData,
+        ecc_info.eck.PrivateKey.pbData, ecc_info.eck.PrivateKey.cbData);
+
+    if (!BCRYPT_SUCCESS(BCryptImportKeyPair(
+        algoH, NULL, BCRYPT_ECCPRIVATE_BLOB, &keyH,
+        (PBYTE) &ecc_blob, sizeof(ecc_blob.ec_blob) + 3 * ecc_blob.ec_blob.cbKey, 0))) {
+        UM_LOG(ERR, "failed to import ecc key pair: %s", win32_error(GetLastError()));
+    }
+    return keyH;
+}
 
 extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size_t data_len) {
     ULONG der_len;
     DWORD skip;
-    BOOL r;
     BYTE *der = NULL;
-    r = CryptStringToBinaryA(data, data_len,
-                             CRYPT_STRING_BASE64HEADER, NULL, &der_len, &skip, NULL);
-    if (r) {
-        der = tlsuv__malloc(der_len);
-        CryptStringToBinaryA(data, data_len,
-                             CRYPT_STRING_BASE64HEADER, der, &der_len, &skip, NULL);
-    }
-
     union {
         CRYPT_PRIVATE_KEY_INFO info;
         char buf[1024];
     } pk_info = {};
 
-    DWORD str_info = sizeof(pk_info);
-    r = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-                            PKCS_PRIVATE_KEY_INFO, der, der_len,
-                            0, &DECODE_PARAMS,
-                            &pk_info, &str_info);
-    tlsuv__free(der);
-
-    if (strcmp(pk_info.info.Algorithm.pszObjId, szOID_ECC_PUBLIC_KEY) == 0) {
-        ULONG len = 0;
-        CRYPT_ECC_PRIVATE_KEY_INFO *ecc_info = NULL;
-        r = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-                            X509_ECC_PRIVATE_KEY,
-                            pk_info.info.PrivateKey.pbData, pk_info.info.PrivateKey.cbData,
-                            CRYPT_DECODE_ALLOC_FLAG, &DECODE_PARAMS,
-                            &ecc_info, &len);
-        printf("r = %d %s\n", r, win32_error(GetLastError()));
-
-        struct {
-            BCRYPT_ECCKEY_BLOB ec_blob;
-            char key_data[256]; // variable length: should be enough for P521 (66 * 3)
-        } ecc_blob = {};
-        memset(&ecc_blob, 0, sizeof(ecc_blob));
-
-        LPCWSTR algoId = NULL;
-        ecc_blob.ec_blob.cbKey = ecc_info->PrivateKey.cbData;
-        // construct ECC import blob X[cbData]|Y[cbData]|d[cbData]
-        memcpy(ecc_blob.key_data, ecc_info->PublicKey.pbData + 1, ecc_info->PrivateKey.cbData * 2);
-        memcpy(ecc_blob.key_data + 2 * ecc_info->PrivateKey.cbData, ecc_info->PrivateKey.pbData, ecc_info->PrivateKey.cbData);
-
-        if (strcmp(ecc_info->szCurveOid, szOID_ECC_CURVE_P256) == 0) {
-            ecc_blob.ec_blob.dwMagic = BCRYPT_ECDSA_PRIVATE_P256_MAGIC;
-            algoId = BCRYPT_ECDSA_P256_ALGORITHM;
-        } else if (strcmp(ecc_info->szCurveOid, szOID_ECC_CURVE_P384) == 0) {
-            ecc_blob.ec_blob.dwMagic = BCRYPT_ECDSA_PRIVATE_P384_MAGIC;
-            algoId = BCRYPT_ECDSA_P384_ALGORITHM;
-        } else if (strcmp(ecc_info->szCurveOid, szOID_ECC_CURVE_P521) == 0) {
-            ecc_blob.ec_blob.dwMagic = BCRYPT_ECDSA_PRIVATE_P521_MAGIC;
-            algoId = BCRYPT_ECDSA_P521_ALGORITHM;
-        } else {
-            UM_LOG(ERR, "Unsupported ECC curve: %s", ecc_info->szCurveOid);
-            r = -1;
-        }
-        BCRYPT_ALG_HANDLE algoH = NULL;
-        BCryptOpenAlgorithmProvider(&algoH, algoId, NULL, 0);
-
-        BCRYPT_KEY_HANDLE keyH = NULL;
-        ecc_blob.ec_blob.cbKey = ecc_info->PrivateKey.cbData;
-        if (BCRYPT_SUCCESS(BCryptImportKeyPair(
-                algoH, NULL, BCRYPT_ECCPRIVATE_BLOB, &keyH,
-                (PBYTE) &ecc_blob, sizeof(ecc_blob.ec_blob) + 3 * ecc_blob.ec_blob.cbKey, 0))) {
-            *key = (tlsuv_private_key_t) new_private_key(keyH);
-            return 0;
-        }
-    } else if (strcmp(pk_info.info.Algorithm.pszObjId, szOID_RSA_RSA) == 0) {
+    if (CryptStringToBinaryA(data, data_len, CRYPT_STRING_BASE64HEADER, NULL,
+                             &der_len, &skip, NULL)) {
+        der = tlsuv__malloc(der_len);
+        CryptStringToBinaryA(data, data_len,
+                             CRYPT_STRING_BASE64HEADER, der, &der_len, &skip, NULL);
+    } else {
+        UM_LOG(ERR, "failed to decode PEM data");
+        return -1;
     }
-    if (!r) {
-        UM_LOG(ERR, "decode error: %s", win32_error(GetLastError()));
+
+    const char *header = data + skip;
+    if (strncmp(header, ""))
+
+    DWORD str_info = sizeof(pk_info);
+    WINBOOL rc = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                                     PKCS_PRIVATE_KEY_INFO, der, der_len,
+                                     0, &DECODE_PARAMS,
+                                     &pk_info, &str_info);
+    tlsuv__free(der);
+    if (!rc) {
+        UM_LOG(ERR, "failed to parse private key info: %s", win32_error(GetLastError()));
+        return -1;
+    }
+
+    BCRYPT_KEY_HANDLE kh = INVALID_HANDLE_VALUE;
+    if (strcmp(pk_info.info.Algorithm.pszObjId, szOID_ECC_PUBLIC_KEY) == 0) {
+        kh = load_ecc_key(pk_info.info.PrivateKey.pbData, pk_info.info.PrivateKey.cbData);
+    } else if (strcmp(pk_info.info.Algorithm.pszObjId, szOID_RSA_RSA) == 0) {
+        UM_LOG(WARN, "TODO: implement here");
+    }
+
+    if (kh != INVALID_HANDLE_VALUE) {
+        *key = (tlsuv_private_key_t)new_private_key(kh);
+        return 0;
     }
     return -1;
 }

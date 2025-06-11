@@ -323,8 +323,7 @@ TEST_CASE("keychain", "[key]") {
         uv_random(nullptr, nullptr, data, sizeof(data), 0, nullptr);
         size_t datalen = sizeof(data);
 
-        char sig[512];
-        memset(sig, 0, sizeof(sig));
+        char sig[512] = {};
         size_t siglen = sizeof(sig);
 
         WHEN("it can sign data") {

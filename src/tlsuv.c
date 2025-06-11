@@ -256,7 +256,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
         if (clt->alpn_protocols) {
             clt->tls_engine->set_protocols(clt->tls_engine, clt->alpn_protocols, clt->alpn_count);
         }
-        clt->tls_engine->set_io_fd(clt->tls_engine, (uv_os_fd_t) clt->sock);
+        clt->tls_engine->set_io_fd(clt->tls_engine, (tlsuv_sock_t) clt->sock);
     }
 
     int rc;

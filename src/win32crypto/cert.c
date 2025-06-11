@@ -179,8 +179,8 @@ static int get_expiration(const struct tlsuv_certificate_s *cert,  struct tm *tm
 static struct tlsuv_certificate_s cert_api = {
     .free = free_cert,
     .to_pem = cert_to_pem,
-    .get_expiration = get_expiration, // Not implemented
-    .verify = cert_verify, // Not implemented
+    .get_expiration = get_expiration,
+    .verify = cert_verify,
 };
 
 win32_cert_t *win32_new_cert(HCERTSTORE store) {

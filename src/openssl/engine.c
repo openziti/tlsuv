@@ -70,7 +70,7 @@ static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len);
 
 tlsuv_engine_t new_openssl_engine(void *ctx, const char *host);
 static void set_io(tlsuv_engine_t , io_ctx , io_read , io_write);
-static void set_io_fd(tlsuv_engine_t , uv_os_fd_t);
+static void set_io_fd(tlsuv_engine_t , tlsuv_sock_t);
 static void set_protocols(tlsuv_engine_t self, const char** protocols, int len);
 
 static tls_handshake_state tls_hs_state(tlsuv_engine_t engine);
