@@ -5,6 +5,7 @@ add_library(win32crypto-impl OBJECT
         wc_context.c
         cert.c
         keys.c
+        engine.c
 )
 
 target_compile_definitions(win32crypto-impl PUBLIC

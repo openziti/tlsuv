@@ -140,7 +140,6 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
     }
 
     const char *header = data + skip;
-    if (strncmp(header, ""))
 
     DWORD str_info = sizeof(pk_info);
     WINBOOL rc = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,

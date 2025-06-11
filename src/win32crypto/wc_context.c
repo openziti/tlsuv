@@ -21,6 +21,7 @@
 #include "../alloc.h"
 #include "../um_debug.h"
 #include "cert.h"
+#include "engine.h"
 #include "keys.h"
 
 struct win32tls {
@@ -28,6 +29,8 @@ struct win32tls {
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx);
     void *verify_ctx;
     unsigned char *alpn_protocols;
+
+    HCERTSTORE ca_bundle;
 };
 
 static tls_context win32tls_context_api;
@@ -105,8 +108,8 @@ static int parse_pkcs7_certs(tlsuv_certificate_t *ctx, const char *data, size_t 
     return 0;
 }
 
-static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buflen) {
-    if (buf == NULL || buflen == 0) {
+static int load_cert_internal(HCERTSTORE *storep, const char *buf, size_t buf_len) {
+    if (buf == NULL || buf_len == 0) {
         UM_LOG(ERR, "no data to load certificate");
         return -1;
     }
@@ -121,9 +124,9 @@ static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buflen) 
 
     const char *p = buf;
     DWORD cert_len = 0;
-    while(CryptStringToBinaryA(p, buflen - (p - buf), CRYPT_STRING_BASE64HEADER, NULL, &cert_len, NULL, NULL)) {
+    while(CryptStringToBinaryA(p, buf_len - (p - buf), CRYPT_STRING_BASE64HEADER, NULL, &cert_len, NULL, NULL)) {
         BYTE *cert_bin = tlsuv__malloc(cert_len);
-        CryptStringToBinaryA(p, buflen - (p - buf), CRYPT_STRING_BASE64HEADER, cert_bin, &cert_len, NULL, NULL);
+        CryptStringToBinaryA(p, buf_len - (p - buf), CRYPT_STRING_BASE64HEADER, cert_bin, &cert_len, NULL, NULL);
         p += cert_len;
         PCCERT_CONTEXT cert_ctx = CertCreateCertificateContext(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, cert_bin, cert_len);
         if (cert_ctx == NULL || !CertAddCertificateContextToStore(store, cert_ctx, CERT_STORE_ADD_ALWAYS, NULL)) {
@@ -131,17 +134,42 @@ static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buflen) 
             CertFreeCertificateContext(cert_ctx);
         }
     }
+    *storep = store;
+    return 0;
+}
 
+static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buf_len) {
+    HCERTSTORE store;
+    if (load_cert_internal(&store, buf, buf_len) || store == INVALID_HANDLE_VALUE) {
+        *cert = NULL;
+        return -1;
+    }
     *cert = (tlsuv_certificate_t) win32_new_cert(store);
     return 0;
 }
 
+static int set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len) {
+    struct win32tls *c = (struct win32tls*)ctx;
+
+    HCERTSTORE store;
+    if (load_cert_internal(&store, ca, ca_len) || store == INVALID_HANDLE_VALUE) {
+        return -1;
+    }
+
+    c->ca_bundle = store;
+    return 0;
+}
+
+static tlsuv_engine_t new_win32_engine(tls_context *ctx, const char *hostname) {
+    return (tlsuv_engine_t)new_win32engine(hostname);
+}
+
 static tls_context win32tls_context_api = {
         .version = tls_lib_version,
-//        .strerror = (const char *(*)(long)) tls_error,
-//        .new_engine = new_openssl_engine,
+        .strerror = (const char *(*)(long)) win32_error,
+        .new_engine = new_win32_engine,
         .free_ctx = tls_free_ctx,
-//        .set_ca_bundle = set_ca_bundle,
+        .set_ca_bundle = set_ca_bundle,
 //        .set_own_cert = tls_set_own_cert,
 //        .allow_partial_chain = tls_set_partial_vfy,
 //        .set_cert_verify = tls_set_cert_verify,

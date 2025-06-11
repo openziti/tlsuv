@@ -195,7 +195,7 @@ struct tlsuv_certificate_s {
 
 struct tls_context_s {
     /* creates new TLS engine for a host */
-    tlsuv_engine_t (*new_engine)(void *ctx, const char *host);
+    tlsuv_engine_t (*new_engine)(tls_context *ctx, const char *host);
 
     void (*free_ctx)(tls_context *ctx);
 

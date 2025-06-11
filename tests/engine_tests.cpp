@@ -199,6 +199,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     }
 
     tls_context *tls = default_tls_context(nullptr, 0);
+    REQUIRE(tls != nullptr);
     printf("tls engine: %s\n", tls->version());
     const char *protos[] = {
         "foo",
@@ -208,6 +209,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     };
     int num_protos = sizeof(protos)/sizeof(*protos);
     tlsuv_engine_t engine = tls->new_engine(tls, host);
+    REQUIRE(engine);
     engine->set_protocols(engine, protos, num_protos);
 
     SOCKET sock = socket(addr->ai_family, SOCK_STREAM, 0);
