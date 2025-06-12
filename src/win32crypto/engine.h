@@ -14,14 +14,25 @@ struct win32crypto_engine_s {
     struct tlsuv_engine_s api;
     char *hostname;
 
+    // requested protocols
+    char *protocols;
+    size_t protocols_len;
+    // negotiated protocol
+    char *alpn;
+
     SCHANNEL_CRED cred;
     CredHandle cred_handle;
     CtxtHandle ctxt_handle;
 
+    SECURITY_STATUS status;
     tls_handshake_state handshake_st;
     io_ctx io;
     io_read read_fn;
     io_write write_fn;
+    char outbound[32 * 1024];
+    size_t outbound_len;
+    char inbound[32 * 1024];
+    size_t inbound_len;
 };
 
 extern struct win32crypto_engine_s* new_win32engine(const char* hostname);

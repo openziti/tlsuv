@@ -205,7 +205,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
         "foo",
         "bar",
         "h2",
-        "http1.1"
+        "http/1.1"
     };
     int num_protos = sizeof(protos)/sizeof(*protos);
     tlsuv_engine_t engine = tls->new_engine(tls, host);
@@ -239,6 +239,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     } while (true);
 
     const char *alpn = engine->get_alpn(engine);
+    REQUIRE(alpn != nullptr);
     CHECK_THAT(alpn, Catch::Matchers::Matches("h2"));
 
     engine->close(engine);
