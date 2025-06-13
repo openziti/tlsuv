@@ -20,7 +20,7 @@ struct win32crypto_engine_s {
     // negotiated protocol
     char *alpn;
 
-    SCHANNEL_CRED cred;
+    HCERTSTORE ca;
     CredHandle cred_handle;
     CtxtHandle ctxt_handle;
     SecPkgContext_StreamSizes sizes;
@@ -38,6 +38,6 @@ struct win32crypto_engine_s {
     size_t decoded_len;
 };
 
-extern struct win32crypto_engine_s* new_win32engine(const char* hostname);
+extern struct win32crypto_engine_s *new_win32engine(const char *hostname, HCERTSTORE ca);
 
 #endif //ENGINE_H

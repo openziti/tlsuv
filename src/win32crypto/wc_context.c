@@ -50,7 +50,9 @@ const char* win32_error(DWORD code) {
 tls_context * new_win32crypto_ctx(const char* ca, size_t ca_len) {
     struct win32tls *ctx = tlsuv__calloc(1, sizeof(*ctx));
     ctx->api = win32tls_context_api;
-
+    if (ca && ca_len > 0) {
+        ctx->api.set_ca_bundle((tls_context *) ctx, ca, ca_len);
+    }
     return &ctx->api;
 }
 
@@ -114,19 +116,44 @@ static int load_cert_internal(HCERTSTORE *storep, const char *buf, size_t buf_le
         return -1;
     }
 
+    const char *pem = buf;
+    WIN32_FIND_DATA file_data;
+    HANDLE pem_file = FindFirstFileA(buf, &file_data);
+    FindClose(pem_file);
+    if (pem_file != INVALID_HANDLE_VALUE) {
+        if (file_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            UM_LOG(ERR, "file[%s] is a directory", buf);
+            return -1;
+        }
+
+        pem = (const char*)tlsuv__malloc(file_data.nFileSizeLow);
+        buf_len = file_data.nFileSizeLow;
+
+        pem_file = CreateFileA(buf, GENERIC_READ, FILE_SHARE_READ, NULL,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (!ReadFile(pem_file, (LPVOID)pem, file_data.nFileSizeLow, NULL, NULL)) {
+            UM_LOG(ERR, "failed to read file[%s]: %s", buf, win32_error(GetLastError()));
+            return -1;
+        }
+        CloseHandle(pem_file);
+    }
+
     HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_MEMORY,
                                      PKCS_7_ASN_ENCODING | X509_ASN_ENCODING,
                                      (HCRYPTPROV_LEGACY) NULL, 0, NULL);
     if (!store) {
         UM_LOG(ERR, "failed to open memory store: %s", win32_error(GetLastError()));
+        if (pem != buf) {
+            tlsuv__free((void*)pem);
+        }
         return -1;
     }
 
-    const char *p = buf;
+    const char *p = pem;
     DWORD cert_len = 0;
-    while(CryptStringToBinaryA(p, buf_len - (p - buf), CRYPT_STRING_BASE64HEADER, NULL, &cert_len, NULL, NULL)) {
+    while(CryptStringToBinaryA(p, buf_len - (p - pem), CRYPT_STRING_BASE64HEADER, NULL, &cert_len, NULL, NULL)) {
         BYTE *cert_bin = tlsuv__malloc(cert_len);
-        CryptStringToBinaryA(p, buf_len - (p - buf), CRYPT_STRING_BASE64HEADER, cert_bin, &cert_len, NULL, NULL);
+        CryptStringToBinaryA(p, buf_len - (p - pem), CRYPT_STRING_BASE64HEADER, cert_bin, &cert_len, NULL, NULL);
         p += cert_len;
         PCCERT_CONTEXT cert_ctx = CertCreateCertificateContext(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, cert_bin, cert_len);
         if (cert_ctx == NULL || !CertAddCertificateContextToStore(store, cert_ctx, CERT_STORE_ADD_ALWAYS, NULL)) {
@@ -135,6 +162,11 @@ static int load_cert_internal(HCERTSTORE *storep, const char *buf, size_t buf_le
         }
     }
     *storep = store;
+
+    if (pem != buf) {
+        tlsuv__free((void*)pem);
+    }
+
     return 0;
 }
 
@@ -161,7 +193,9 @@ static int set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len) {
 }
 
 static tlsuv_engine_t new_win32_engine(tls_context *ctx, const char *hostname) {
-    return (tlsuv_engine_t)new_win32engine(hostname);
+    struct win32tls *c = (struct win32tls*)ctx;
+
+    return (tlsuv_engine_t) new_win32engine(hostname, c->ca_bundle);
 }
 
 static tls_context win32tls_context_api = {

@@ -72,9 +72,43 @@ static void engine_set_io_fd(tlsuv_engine_t self, tlsuv_sock_t fd) {
 static tls_handshake_state engine_handshake_state(tlsuv_engine_t self) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
     if (engine->handshake_st == TLS_HS_BEFORE) {
-        UM_LOG(INFO, "starting TLS handshake");
+        UM_LOG(VERB, "starting TLS handshake");
     }
     return engine->handshake_st;
+}
+
+static SECURITY_STATUS verify_server_cert(struct win32crypto_engine_s *engine) {
+    CERT_CONTEXT *server_cert = NULL;
+    SECURITY_STATUS rc;
+    HCERTCHAINENGINE verifier = NULL;
+    const CERT_CHAIN_CONTEXT *server_chain = NULL;
+    CERT_CHAIN_PARA params = {
+            .cbSize = sizeof(CERT_CHAIN_PARA),
+    };
+
+    rc = QueryContextAttributes(&engine->ctxt_handle, SECPKG_ATTR_REMOTE_CERT_CONTEXT, &server_cert);
+    if (rc != SEC_E_OK) {
+        UM_LOG(ERR, "failed to get server cert: 0x%lX/%s", rc, win32_error(GetLastError()));
+        return rc;
+    }
+
+    CERT_CHAIN_ENGINE_CONFIG cfg = {
+            .cbSize = sizeof(cfg),
+            .hExclusiveRoot = engine->ca,
+    };
+
+    CertCreateCertificateChainEngine(&cfg, &verifier);
+
+    if (!CertGetCertificateChain(
+            verifier, server_cert,
+            NULL, NULL,
+            &params, 0, NULL,
+            &server_chain)) {
+        rc = (SECURITY_STATUS)GetLastError();
+        UM_LOG(ERR, "failed to get certificate chain: 0x%lX/%s", rc, win32_error(rc));
+    }
+
+    return rc;
 }
 
 static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
@@ -115,7 +149,7 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
                                       sizeof(engine->inbound) - engine->inbound_len);
         if (read > 0) {
             engine->inbound_len += read;
-            UM_LOG(ERR, "read %zd bytes of handshake data", read);
+            UM_LOG(VERB, "read %zd bytes of handshake data", read);
             inbuf.cbBuffer = (unsigned long)engine->inbound_len;
             inbuf.pvBuffer = engine->inbound;
         } else {
@@ -141,14 +175,14 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         0, ctx ? NULL : &engine->ctxt_handle,
         &outbuf_desc, &ret_flags, &ts);
 
-    UM_LOG(ERR, "handshake result: 0x%lX/%s", rc, win32_error(rc));
+    UM_LOG(VERB, "handshake result: 0x%lX/%s", rc, win32_error(rc));
 
     engine->status = rc;
     tlsuv__free(engine->protocols);
     engine->protocols = NULL;
 
     if (inbuf.BufferType == SECBUFFER_EXTRA) {
-        UM_LOG(ERR, "extra data in handshake buffer: %lu bytes", inbuf.cbBuffer);
+        UM_LOG(VERB, "extra data in handshake buffer: %lu bytes", inbuf.cbBuffer);
     } else {
         engine->inbound_len = 0;
     }
@@ -156,15 +190,17 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
     switch (rc) {
         case SEC_E_OK:
             engine->handshake_st = TLS_HS_COMPLETE;
+            if (engine->ca) {
+                rc = verify_server_cert(engine);
+            }
+            if (rc != SEC_E_OK) {
+                UM_LOG(ERR, "failed to verify server certificate: 0x%lX/%s", rc, win32_error(GetLastError()));
+                engine->handshake_st = TLS_HS_ERROR;
+                return engine->handshake_st;
+            }
             QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_STREAM_SIZES, &engine->sizes);
-            UM_LOG(INFO, "handshake complete, sizes: "
-                    "header: %lu, trailer: %lu, max message: %lu",
-                    engine->sizes.cbHeader, engine->sizes.cbTrailer,
-                    engine->sizes.cbMaximumMessage);
             break;
         case SEC_I_CONTINUE_NEEDED:
-            engine->handshake_st = TLS_HS_CONTINUE;
-            break;
         case SEC_E_INCOMPLETE_MESSAGE:
             engine->handshake_st = TLS_HS_CONTINUE;
             break;
@@ -486,17 +522,23 @@ static struct tlsuv_engine_s api = {
     .free = engine_free,
 };
 
-struct win32crypto_engine_s* new_win32engine(const char* hostname) {
+struct win32crypto_engine_s *new_win32engine(const char *hostname, HCERTSTORE ca) {
     struct win32crypto_engine_s *engine = tlsuv__calloc(1, sizeof(*engine));
     engine->api = api;
     engine->handshake_st = TLS_HS_BEFORE;
-    engine->hostname = tlsuv__strdup(hostname);
+    engine->hostname = hostname ? tlsuv__strdup(hostname) : NULL;
+
+    DWORD flags = SCH_USE_STRONG_CRYPTO | SCH_CRED_NO_DEFAULT_CREDS;
+    if (ca == NULL || ca == INVALID_HANDLE_VALUE) {
+        flags |= SCH_CRED_AUTO_CRED_VALIDATION;
+    } else {
+        engine->ca = ca;
+        flags |= SCH_CRED_MANUAL_CRED_VALIDATION;
+    }
 
     SCHANNEL_CRED credentials = {
         .dwVersion = SCHANNEL_CRED_VERSION,
-        .dwFlags = SCH_USE_STRONG_CRYPTO
-        | SCH_CRED_AUTO_CRED_VALIDATION  // automatically validate server certificate
-        | SCH_CRED_NO_DEFAULT_CREDS,     // no client certificate authentication
+        .dwFlags = flags,
         .grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT,
     };
 
