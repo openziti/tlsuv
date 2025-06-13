@@ -7,6 +7,8 @@
 #include <sspi.h>
 #include <schannel.h>
 #include <stdint.h>
+#include <assert.h>
+#include <stdbool.h>
 
 #include "../alloc.h"
 #include "../um_debug.h"
@@ -34,18 +36,30 @@ static ssize_t socket_read(io_ctx io, char *buf, size_t len) {
     SOCKET sock = (SOCKET)io;
     int read = recv(sock, buf, (int)len, 0);
     if (read == SOCKET_ERROR) {
-        read = WSAGetLastError();
+        DWORD err = WSAGetLastError();
+        if (err == WSAEWOULDBLOCK) return TLS_AGAIN;
+
+        UM_LOG(ERR, "socket read error: %s", win32_error(err));
+        return TLS_ERR;
+    }
+    if (read == 0) {
+        return TLS_EOF;
     }
     return read;
 }
 
 static ssize_t socket_write(io_ctx io, const char *buf, size_t len) {
     SOCKET sock = (SOCKET)io;
-    int read = send(sock, buf, (int)len, 0);
-    if (read == SOCKET_ERROR) {
-        read = WSAGetLastError();
+    int count = send(sock, buf, (int)len, 0);
+    if (count == SOCKET_ERROR) {
+        DWORD err = WSAGetLastError();
+        if (err == WSAEWOULDBLOCK) {
+            return TLS_AGAIN;
+        }
+
+        return TLS_ERR;
     }
-    return read;
+    return count;
 }
 
 static void engine_set_io_fd(tlsuv_engine_t self, tlsuv_sock_t fd) {
@@ -142,6 +156,11 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
     switch (rc) {
         case SEC_E_OK:
             engine->handshake_st = TLS_HS_COMPLETE;
+            QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_STREAM_SIZES, &engine->sizes);
+            UM_LOG(INFO, "handshake complete, sizes: "
+                    "header: %lu, trailer: %lu, max message: %lu",
+                    engine->sizes.cbHeader, engine->sizes.cbTrailer,
+                    engine->sizes.cbMaximumMessage);
             break;
         case SEC_I_CONTINUE_NEEDED:
             engine->handshake_st = TLS_HS_CONTINUE;
@@ -232,14 +251,14 @@ static int engine_close(tlsuv_engine_t self) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
     DWORD shut = SCHANNEL_SHUTDOWN;
     SECURITY_STATUS rc;
-    rc = ApplyControlToken(&engine->ctxt_handle, &(SecBufferDesc){
-        .cBuffers = 1,
-        .pBuffers = &(SecBuffer){
-            .pvBuffer = &shut,
-            .cbBuffer = sizeof(shut),
-            .BufferType = SECBUFFER_TOKEN
-        },
-        .ulVersion = SECBUFFER_VERSION
+    ApplyControlToken(&engine->ctxt_handle, &(SecBufferDesc){
+            .cBuffers = 1,
+            .pBuffers = &(SecBuffer){
+                    .pvBuffer = &shut,
+                    .cbBuffer = sizeof(shut),
+                    .BufferType = SECBUFFER_TOKEN
+            },
+            .ulVersion = SECBUFFER_VERSION
     });
 
     char buf[256];
@@ -276,6 +295,182 @@ static int engine_close(tlsuv_engine_t self) {
     return 0;
 }
 
+static int engine_flush(struct win32crypto_engine_s *engine) {
+    if (engine->outbound_len == 0) return 0;
+
+    DWORD err = 0;
+    size_t written = 0;
+    char *p = engine->outbound;
+    while (written < engine->outbound_len) {
+        ssize_t rc = engine->write_fn(engine->io, p, engine->outbound + engine->outbound_len - p);
+        if (rc > 0) {
+            p += rc;
+            written += rc;
+            UM_LOG(INFO, "wrote %zd bytes of outbound data", rc);
+            continue;
+        }
+
+        err = WSAGetLastError();
+        break;
+    }
+
+    if (written == engine->outbound_len) {
+        engine->outbound_len = 0;
+        UM_LOG(INFO, "flushed %zu bytes of outbound data", written);
+        return 0;
+    }
+
+    if (written > 0) {
+        UM_LOG(ERR, "partial write: %zu of %zu bytes, error: %s", written, engine->outbound_len, win32_error(err));
+        memmove(engine->outbound, engine->outbound + written, engine->outbound_len - written);
+        engine->outbound_len -= written;
+        return 0;
+    }
+
+    if (err == WSAEWOULDBLOCK || err == WSAEINTR) {
+        UM_LOG(INFO, "write would block or interrupted, retrying later");
+        return TLS_AGAIN;
+    }
+    return TLS_ERR;
+}
+
+static int engine_write(tlsuv_engine_t self, const char *data, size_t data_len) {
+    struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
+    int flush = engine_flush(engine);
+    if (flush != 0) {
+        return flush;
+    }
+
+    if (engine->outbound_len > 0) {
+        return TLS_AGAIN;
+    }
+
+    size_t sent = 0;
+    const char *p = data;
+    size_t p_len = data_len > engine->sizes.cbMaximumMessage ? engine->sizes.cbMaximumMessage : data_len;
+
+    // setup buffers for encryption
+    SecBuffer bufs[4] = {
+        { .BufferType = SECBUFFER_STREAM_HEADER },
+        { .BufferType = SECBUFFER_DATA },
+        { .BufferType = SECBUFFER_STREAM_TRAILER },
+        { .BufferType = SECBUFFER_EMPTY }
+    };
+    bufs[0].pvBuffer = engine->outbound;
+    bufs[0].cbBuffer = engine->sizes.cbHeader;
+    bufs[1].pvBuffer = (char*)bufs[0].pvBuffer + bufs[0].cbBuffer;
+    bufs[1].cbBuffer = p_len;
+    memcpy(bufs[1].pvBuffer, p, p_len);
+    bufs[2].pvBuffer = (char*)bufs[1].pvBuffer + bufs[1].cbBuffer;
+    bufs[2].cbBuffer = engine->sizes.cbTrailer;
+
+    SecBufferDesc bufferDesc = {
+        .cBuffers = 4,
+        .pBuffers = bufs,
+        .ulVersion = SECBUFFER_VERSION,
+    };
+
+    SECURITY_STATUS rc = EncryptMessage(&engine->ctxt_handle, 0, &bufferDesc, 0);
+    if (rc != SEC_E_OK) {
+        UM_LOG(ERR, "failed to encrypt message: 0x%lX/%s", rc, win32_error(rc));
+        return -1;
+    }
+    sent += p_len;
+    engine->outbound_len += bufs[0].cbBuffer + bufs[1].cbBuffer + bufs[2].cbBuffer;
+    engine_flush(engine);
+    return (int)sent;
+}
+
+static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max) {
+    struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
+    char *p = data;
+
+    // copy any leftover data from previous read
+    if (engine->decoded_len > 0) {
+        size_t len = engine->decoded_len > max ? max : engine->decoded_len;
+        memcpy(p, engine->decoded, len);
+        p += len;
+        engine->decoded_len -= len;
+        if (engine->decoded_len > 0) {
+            memmove(engine->decoded, engine->decoded + len, engine->decoded_len);
+        }
+    }
+    if (p - data == max) {
+        *out = max;
+        return engine->decoded_len > 0 ? TLS_MORE_AVAILABLE : 0;
+    }
+    
+    assert(engine->decoded_len == 0);
+
+    bool eof = false;
+    do {
+        ssize_t read = engine->read_fn(engine->io, engine->inbound + engine->inbound_len,
+                                       sizeof(engine->inbound) - engine->outbound_len);
+        if (read > 0) {
+            engine->inbound_len += read;
+            UM_LOG(VERB, "read %zd bytes of TLS data", read);
+        }
+
+        if (engine->inbound_len == 0) {
+            *out = p - data;
+            return read > 0 ? TLS_OK : (int)read;
+        }
+
+        SecBuffer bufs[4] = {
+                {.BufferType = SECBUFFER_DATA},
+                {.BufferType = SECBUFFER_EMPTY},
+                {.BufferType = SECBUFFER_EMPTY},
+                {.BufferType = SECBUFFER_EMPTY}
+        };
+        bufs[0].pvBuffer = engine->inbound;
+        bufs[0].cbBuffer = engine->inbound_len;
+
+        SecBufferDesc desc = {SECBUFFER_VERSION, 4, bufs};
+        SECURITY_STATUS rc = DecryptMessage(&engine->ctxt_handle, &desc, 0, NULL);
+        UM_LOG(VERB, "decrypt message: 0x%lX/%s", rc, win32_error(rc));
+
+        if (rc == SEC_E_OK) {
+            assert(bufs[0].BufferType == SECBUFFER_STREAM_HEADER);
+            assert(bufs[1].BufferType == SECBUFFER_DATA);
+            assert(bufs[2].BufferType == SECBUFFER_STREAM_TRAILER);
+
+            size_t len = bufs[1].cbBuffer > (max - (p - data)) ? max - (p - data) : bufs[1].cbBuffer;
+            memcpy(p, bufs[1].pvBuffer, len);
+            p += len;
+
+            memcpy(engine->decoded, (char *) bufs[1].pvBuffer + len, bufs[1].cbBuffer - len);
+            engine->decoded_len = bufs[1].cbBuffer - len;
+
+            size_t consumed = bufs[0].cbBuffer + bufs[1].cbBuffer + bufs[2].cbBuffer;
+            assert(consumed <= engine->inbound_len);
+            memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
+            engine->inbound_len -= consumed;
+        } else if (rc == SEC_E_INCOMPLETE_MESSAGE) {
+            break;
+        } else if (rc == SEC_I_CONTEXT_EXPIRED) {
+            size_t consumed = bufs[0].cbBuffer + bufs[1].cbBuffer + bufs[2].cbBuffer;
+            assert(consumed <= engine->inbound_len);
+            memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
+            engine->inbound_len -= consumed;
+            eof = true;
+        } else {
+            UM_LOG(ERR, "failed to decrypt message: 0x%lX/%s", rc, win32_error(rc));
+            return TLS_ERR;
+        }
+
+    } while (!eof && p - data < max);
+    *out = p - data;
+
+    if (engine->decoded_len > 0) return TLS_MORE_AVAILABLE;
+    if (engine->inbound_len > 0) return TLS_AGAIN;
+    if (eof) return TLS_EOF;
+    return TLS_OK;
+}
+
+static const char* engine_strerror(tlsuv_engine_t self) {
+    struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
+    return win32_error(engine->status);
+}
 static struct tlsuv_engine_s api = {
     .set_io = engine_set_io,
     .set_io_fd = engine_set_io_fd,
@@ -284,9 +479,9 @@ static struct tlsuv_engine_s api = {
     .handshake = engine_handshake,
     .get_alpn = engine_get_protocol,
     .close = engine_close,
-    .write = NULL,
-    .read = NULL,
-    .strerror = NULL,
+    .write = engine_write,
+    .read = engine_read,
+    .strerror = engine_strerror,
     .reset = NULL,
     .free = engine_free,
 };

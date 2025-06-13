@@ -23,6 +23,7 @@ struct win32crypto_engine_s {
     SCHANNEL_CRED cred;
     CredHandle cred_handle;
     CtxtHandle ctxt_handle;
+    SecPkgContext_StreamSizes sizes;
 
     SECURITY_STATUS status;
     tls_handshake_state handshake_st;
@@ -33,6 +34,8 @@ struct win32crypto_engine_s {
     size_t outbound_len;
     char inbound[32 * 1024];
     size_t inbound_len;
+    char decoded[32 * 1024];
+    size_t decoded_len;
 };
 
 extern struct win32crypto_engine_s* new_win32engine(const char* hostname);
