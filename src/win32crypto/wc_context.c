@@ -55,7 +55,7 @@ tls_context * new_win32crypto_ctx(const char* ca, size_t ca_len) {
     if (ca && ca_len > 0) {
         ctx->api.set_ca_bundle((tls_context *) ctx, ca, ca_len);
     }
-    return &ctx->api;
+    return (tls_context*)ctx;
 }
 
 static void tls_free_ctx (tls_context *ctx) {
@@ -135,6 +135,7 @@ static int load_cert_internal(HCERTSTORE *storep, const char *buf, size_t buf_le
                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         if (!ReadFile(pem_file, (LPVOID)pem, file_data.nFileSizeLow, NULL, NULL)) {
             UM_LOG(ERR, "failed to read file[%s]: %s", buf, win32_error(GetLastError()));
+            tlsuv__free((void*)pem);
             return -1;
         }
         CloseHandle(pem_file);
@@ -162,6 +163,7 @@ static int load_cert_internal(HCERTSTORE *storep, const char *buf, size_t buf_le
             UM_LOG(WARN, "failed to create certificate context: %s", win32_error(GetLastError()));
             CertFreeCertificateContext(cert_ctx);
         }
+        tlsuv__free(cert_bin);
     }
     *storep = store;
 
@@ -207,17 +209,84 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
     if (crt == NULL || pk == NULL) {
         return 0;
     }
-    CERT_KEY_CONTEXT key_ctx = {
-        .cbSize = sizeof(key_ctx),
-        .hCryptProv = pk->provider,
-        .dwKeySpec = CERT_NCRYPT_KEY_SPEC,
-    };
+    DWORD len;
+    wchar_t prov_name[128] = {};
+    NCryptGetProperty(pk->provider, NCRYPT_NAME_PROPERTY, (PVOID)prov_name, sizeof(prov_name), &len, 0);
 
+    PCCERT_CONTEXT pcc = CertEnumCertificatesInStore(crt->store, NULL);
+
+    wchar_t *key_name = NULL;
+    SECURITY_STATUS rc = NCryptGetProperty(pk->key, NCRYPT_NAME_PROPERTY, (PVOID)NULL, 0, &len, 0);
+    if (BCRYPT_SUCCESS(rc)) {
+        key_name = tlsuv__malloc(len);
+        NCryptGetProperty(pk->key, NCRYPT_NAME_PROPERTY, (PVOID)key_name, len, &len, 0);
+    } else if (rc == NTE_NOT_SUPPORTED) {
+        // this probably means that key is not persisted
+        // we need to store it in order to use it for mutual auth
+        // step 1: stable key name
+        char kid[64] = {};
+        DWORD kid_len = sizeof(kid);
+        if (!CertGetCertificateContextProperty(pcc, CERT_KEY_IDENTIFIER_PROP_ID, kid, &kid_len)) {
+            UM_LOG(ERR, "failed to get key id from the certificate: %s", win32_error(GetLastError()));
+            return -1;
+        }
+
+        CryptBinaryToStringW(kid, kid_len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, NULL, &len);
+        key_name = tlsuv__calloc(len + 1, sizeof(*key_name));
+        if (!CryptBinaryToStringW(kid, kid_len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, key_name, &len)) {
+            DWORD err = GetLastError();
+            UM_LOG(ERR, " key name error: 0x%lX/%s", err, win32_error(err));
+        }
+
+        // step 2: export
+        const wchar_t *exp_type = NCRYPT_PKCS8_PRIVATE_KEY_BLOB;
+        DWORD key_blob_len = 0;
+        rc = NCryptExportKey(pk->key, 0, exp_type, NULL, NULL, 0, &key_blob_len, 0);
+        if (rc != 0) {
+            UM_LOG(ERR, "failed to export the key: 0x%lX/%s", rc, win32_error(rc));
+            tlsuv__free(key_name);
+            return -1;
+        }
+        BYTE *key_blob = tlsuv__malloc(key_blob_len);
+        NCryptExportKey(pk->key, 0, exp_type, NULL, key_blob, key_blob_len, &key_blob_len, 0);
+
+        // step 3: import the key with the name to make it persistent
+        NCRYPT_KEY_HANDLE imported = 0;
+        NCryptBuffer name_buf ={
+            .BufferType = NCRYPTBUFFER_PKCS_KEY_NAME,
+            .pvBuffer = (PVOID)key_name,
+            .cbBuffer = (len + 1) * sizeof(wchar_t),
+        };
+        NCryptBufferDesc name_desc = {
+            .pBuffers = &name_buf,
+            .cBuffers = 1,
+        };
+        rc = NCryptImportKey(pk->provider, 0, exp_type,
+                             &name_desc,
+                             &imported,
+                             key_blob, key_blob_len, 0);
+        tlsuv__free(key_blob);
+        if (rc < 0) {
+            UM_LOG(ERR, "import key error: 0x%lX/%s", rc, win32_error(rc));
+        }
+
+    } else {
+        UM_LOG(ERR, "unexpected key error: 0x%lX/%s", rc, win32_error(rc));
+        return -1;
+    }
 
     c->own_store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, (HCRYPTPROV)NULL, 0, NULL);
-    PCCERT_CONTEXT pcc = CertEnumCertificatesInStore(crt->store, NULL);
     CertAddCertificateContextToStore(c->own_store, pcc, CERT_STORE_ADD_ALWAYS, &c->own_cert);
-    CertSetCertificateContextProperty(c->own_cert, CERT_KEY_PROV_INFO_PROP_ID, 0, (void*)&pk->key);
+
+    CRYPT_KEY_PROV_INFO key_info = {
+        .pwszContainerName = key_name,
+        .pwszProvName = prov_name,
+    };
+    if (!CertSetCertificateContextProperty(c->own_cert, CERT_KEY_PROV_INFO_PROP_ID, 0, &key_info)) {
+        DWORD err = GetLastError();
+        UM_LOG(ERR, "failed to set cert key: %lx/%s", err, win32_error(err));
+    }
+    tlsuv__free(key_name);
 
     pcc = CertEnumCertificatesInStore(crt->store, pcc);
     while (pcc) {

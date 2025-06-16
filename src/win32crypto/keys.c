@@ -82,11 +82,11 @@ static NCRYPT_KEY_HANDLE load_rsa_key(NCRYPT_PROV_HANDLE prov, const BYTE *der, 
     NCRYPT_KEY_HANDLE kh = 0;
 
     r = NCryptImportKey(prov, 0, BCRYPT_RSAPRIVATE_BLOB, NULL,
-                        &kh, (void*)key_blob, info, 0);
+                        &kh, (void*)key_blob, info, NCRYPT_DO_NOT_FINALIZE_FLAG);
 
     if (!BCRYPT_SUCCESS(r))
     {
-        UM_LOG(ERR, "failed to import RSA key");
+        UM_LOG(ERR, "failed to import RSA key: %s", win32_error(r));
     }
     return kh;
 }
@@ -135,10 +135,12 @@ static NCRYPT_KEY_HANDLE load_ecc_key(NCRYPT_PROV_HANDLE prov, const BYTE *der, 
     memcpy(ecc_blob.key_data + 2 * ecc_info.eck.PrivateKey.cbData,
         ecc_info.eck.PrivateKey.pbData, ecc_info.eck.PrivateKey.cbData);
 
-    if (!BCRYPT_SUCCESS(NCryptImportKey(
+    rc = NCryptImportKey(
         prov, 0, BCRYPT_ECCPRIVATE_BLOB, NULL, &keyH,
-        (PBYTE) &ecc_blob, sizeof(ecc_blob.ec_blob) + 3 * ecc_blob.ec_blob.cbKey, 0))) {
-        UM_LOG(ERR, "failed to import ecc key pair: %s", win32_error(GetLastError()));
+        (PBYTE) &ecc_blob, sizeof(ecc_blob.ec_blob) + 3 * ecc_blob.ec_blob.cbKey, NCRYPT_DO_NOT_FINALIZE_FLAG);
+
+    if (rc != 0) {
+        UM_LOG(ERR, "failed to import ecc key pair: %s", win32_error(rc));
     }
     return keyH;
 }
@@ -165,7 +167,21 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
         return -1;
     }
 
+    NCRYPT_PROV_HANDLE ph = 0;
+    NCRYPT_KEY_HANDLE kh = 0;
+    NCryptOpenStorageProvider(&ph, MS_KEY_STORAGE_PROVIDER, 0);
+
     const char *header = data + skip;
+    if (strncmp(header, PK_HEADER, sizeof(PK_HEADER) -1) == 0) {
+        SECURITY_STATUS status = NCryptImportKey(
+            ph, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, NULL,
+            &kh, der, der_len,
+            NCRYPT_SILENT_FLAG | NCRYPT_DO_NOT_FINALIZE_FLAG);
+        if (status == 0) {
+            goto finish;
+        }
+        UM_LOG(ERR, "failed to parse private key info: %s", win32_error(status));
+    }
 
     DWORD str_info = sizeof(pk_info);
     rc = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
@@ -178,9 +194,6 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
         return -1;
     }
 
-    NCRYPT_PROV_HANDLE ph = 0;
-    NCRYPT_KEY_HANDLE kh = 0;
-    NCryptOpenStorageProvider(&ph, MS_KEY_STORAGE_PROVIDER, 0);
     if (strcmp(pk_info.info.Algorithm.pszObjId, szOID_ECC_PUBLIC_KEY) == 0) {
         char *algo = NULL;
         DWORD algo_len = 0;
@@ -193,9 +206,15 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
     } else if (strcmp(pk_info.info.Algorithm.pszObjId, szOID_RSA_RSA) == 0) {
         kh = load_rsa_key(ph, pk_info.info.PrivateKey.pbData, pk_info.info.PrivateKey.cbData);
     }
-
+finish:
     tlsuv__free(der);
     if (kh != 0) {
+        // make key exportable in case we need to re-import it for mutual auth
+        DWORD export_policy = NCRYPT_ALLOW_EXPORT_FLAG | NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG;
+        NCryptSetProperty(kh, NCRYPT_EXPORT_POLICY_PROPERTY,
+                          (PVOID)&export_policy, sizeof(export_policy),
+                          NCRYPT_PERSIST_FLAG);
+        NCryptFinalizeKey(kh, NCRYPT_SILENT_FLAG);
         *key = (tlsuv_private_key_t)new_private_key(ph, kh);
         return 0;
     }
