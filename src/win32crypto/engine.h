@@ -38,6 +38,6 @@ struct win32crypto_engine_s {
     size_t decoded_len;
 };
 
-extern struct win32crypto_engine_s *new_win32engine(const char *hostname, HCERTSTORE ca);
+extern struct win32crypto_engine_s *new_win32engine(const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert);
 
 #endif //ENGINE_H

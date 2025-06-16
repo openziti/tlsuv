@@ -1,6 +1,6 @@
-//
-// Created by eugen on 6/11/2025.
-//
+
+#define SCHANNEL_USE_BLACKLISTS
+#include <ntdef.h>
 
 #include "engine.h"
 
@@ -205,7 +205,7 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
             engine->handshake_st = TLS_HS_CONTINUE;
             break;
         default:
-            UM_LOG(ERR, "handshake result: 0x%lX", rc);
+            UM_LOG(ERR, "handshake result: 0x%lX/%s", rc, win32_error(rc));
             engine->handshake_st = TLS_HS_ERROR;
             break;
     }
@@ -522,13 +522,14 @@ static struct tlsuv_engine_s api = {
     .free = engine_free,
 };
 
-struct win32crypto_engine_s *new_win32engine(const char *hostname, HCERTSTORE ca) {
+struct win32crypto_engine_s *new_win32engine(const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert)
+{
     struct win32crypto_engine_s *engine = tlsuv__calloc(1, sizeof(*engine));
     engine->api = api;
     engine->handshake_st = TLS_HS_BEFORE;
     engine->hostname = hostname ? tlsuv__strdup(hostname) : NULL;
 
-    DWORD flags = SCH_USE_STRONG_CRYPTO | SCH_CRED_NO_DEFAULT_CREDS;
+    DWORD flags = SCH_CRED_NO_DEFAULT_CREDS;
     if (ca == NULL || ca == INVALID_HANDLE_VALUE) {
         flags |= SCH_CRED_AUTO_CRED_VALIDATION;
     } else {
@@ -536,10 +537,18 @@ struct win32crypto_engine_s *new_win32engine(const char *hostname, HCERTSTORE ca
         flags |= SCH_CRED_MANUAL_CRED_VALIDATION;
     }
 
+    NCRYPT_KEY_HANDLE kh = 0;
+    DWORD ks = sizeof(kh);
+    if (own_cert)
+        CertGetCertificateContextProperty(own_cert, CERT_NCRYPT_KEY_HANDLE_PROP_ID, &kh, &ks);
+
+    PCCERT_CONTEXT certs[1] = { own_cert, };
     SCHANNEL_CRED credentials = {
         .dwVersion = SCHANNEL_CRED_VERSION,
         .dwFlags = flags,
         .grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT,
+        .cCreds = own_cert ? 1 : 0,
+        .paCred = certs,
     };
 
     SECURITY_STATUS rc = AcquireCredentialsHandleA(NULL,
@@ -548,5 +557,6 @@ struct win32crypto_engine_s *new_win32engine(const char *hostname, HCERTSTORE ca
                               &credentials, NULL, NULL,
                               &engine->cred_handle,
                               NULL);
+    UM_LOG(INFO, "rc = 0x%lX/%s", rc, win32_error(rc));
     return engine;
 }

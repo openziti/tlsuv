@@ -22,6 +22,7 @@
 
 #include <tlsuv/tls_engine.h>
 #include <stdbool.h>
+#include <ncrypt.h>
 
 #define PK_HEADER  "-----BEGIN PRIVATE KEY-----\n"
 #define PK_FOOTER "-----END PRIVATE KEY-----\n"
@@ -29,7 +30,7 @@
 #define PUB_HEADER  "-----BEGIN PUBLIC KEY-----\n"
 #define PUB_FOOTER "-----END PUBLIC KEY-----\n"
 
-static struct win32crypto_private_key_s* new_private_key(BCRYPT_KEY_HANDLE kh);
+static struct win32crypto_private_key_s* new_private_key(NCRYPT_PROV_HANDLE ph, NCRYPT_KEY_HANDLE kh);
 
 static CRYPT_DECODE_PARA DECODE_PARAMS = {
     .cbSize = sizeof(CRYPT_DECODE_PARA),
@@ -44,30 +45,53 @@ static CRYPT_ENCODE_PARA ENCODE_PARAMS = {
 };
 
 extern int win32crypto_generate_key(tlsuv_private_key_t *key) {
-    BCRYPT_ALG_HANDLE algo = NULL;
-    BCRYPT_KEY_HANDLE kh = NULL;
+    NCRYPT_PROV_HANDLE ph = 0;
+    NCRYPT_KEY_HANDLE kh = 0;
     *key = NULL;
 
+    DWORD export_flags = NCRYPT_ALLOW_EXPORT_FLAG | NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG;
     if (
-        BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algo, BCRYPT_ECDSA_P256_ALGORITHM, NULL, 0)) &&
-        BCRYPT_SUCCESS(BCryptGenerateKeyPair(algo, &kh, 256, 0)) &&
-        BCRYPT_SUCCESS(BCryptFinalizeKeyPair(kh, 0))
+        BCRYPT_SUCCESS(NCryptOpenStorageProvider(&ph, MS_KEY_STORAGE_PROVIDER, 0)) &&
+        BCRYPT_SUCCESS(NCryptCreatePersistedKey(ph, &kh, BCRYPT_ECDSA_P256_ALGORITHM, NULL, 0, 0)) &&
+        BCRYPT_SUCCESS(NCryptSetProperty(kh, NCRYPT_EXPORT_POLICY_PROPERTY, (BYTE*)&export_flags, sizeof(export_flags), 0)) &&
+        BCRYPT_SUCCESS(NCryptFinalizeKey(kh, 0))
     ) {
-        *key = (tlsuv_private_key_t) new_private_key(kh);
+        *key = (tlsuv_private_key_t) new_private_key(ph, kh);
     } else {
         UM_LOG(WARN, "failed to generate key: %s", win32_error(GetLastError()));
-    }
-
-    if (algo) {
-        BCryptCloseAlgorithmProvider(algo, 0);
+        NCryptDeleteKey(kh, 0);
+        NCryptFreeObject(ph);
     }
 
     return *key ? 0 : -1;
 }
 
-static BCRYPT_KEY_HANDLE load_ecc_key(const BYTE *der, size_t der_len) {
-    BCRYPT_ALG_HANDLE algoH = NULL;
-    BCRYPT_KEY_HANDLE keyH = INVALID_HANDLE_VALUE;
+static NCRYPT_KEY_HANDLE load_rsa_key(NCRYPT_PROV_HANDLE prov, const BYTE *der, size_t der_len) {
+    NTSTATUS r;
+    BCRYPT_RSAKEY_BLOB *key_blob;
+    DWORD info;
+    bool rc = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                                  CNG_RSA_PRIVATE_KEY_BLOB, der, der_len,
+                                  CRYPT_DECODE_ALLOC_FLAG, &DECODE_PARAMS,
+                                  &key_blob, &info);
+    if (!rc) {
+        UM_LOG(ERR, "failed to parse RSA KEY info: %s", win32_error(GetLastError()));
+        return 0;
+    }
+
+    NCRYPT_KEY_HANDLE kh = 0;
+
+    r = NCryptImportKey(prov, 0, BCRYPT_RSAPRIVATE_BLOB, NULL,
+                        &kh, (void*)key_blob, info, 0);
+
+    if (!BCRYPT_SUCCESS(r))
+    {
+        UM_LOG(ERR, "failed to import RSA key");
+    }
+    return kh;
+}
+static NCRYPT_KEY_HANDLE load_ecc_key(NCRYPT_PROV_HANDLE prov, const BYTE *der, size_t der_len) {
+    NCRYPT_KEY_HANDLE keyH = 0;
     NTSTATUS rc = 0;
     struct {
         CRYPT_ECC_PRIVATE_KEY_INFO eck;
@@ -80,7 +104,7 @@ static BCRYPT_KEY_HANDLE load_ecc_key(const BYTE *der, size_t der_len) {
                              0, &DECODE_PARAMS, &ecc_info, &len);
     if (!rc) {
         UM_LOG(ERR, "failed to parse EC KEY info: %s", win32_error(GetLastError()));
-        return INVALID_HANDLE_VALUE;
+        return 0;
     }
 
     struct {
@@ -90,7 +114,8 @@ static BCRYPT_KEY_HANDLE load_ecc_key(const BYTE *der, size_t der_len) {
     memset(&ecc_blob, 0, sizeof(ecc_blob));
 
     LPCWSTR algoId = NULL;
-    if (strcmp(ecc_info.eck.szCurveOid, szOID_ECC_CURVE_P256) == 0) {
+    if ((ecc_info.eck.szCurveOid && strcmp(ecc_info.eck.szCurveOid, szOID_ECC_CURVE_P256) == 0) ||
+        ecc_info.eck.PrivateKey.cbData == 32) {
         ecc_blob.ec_blob.dwMagic = BCRYPT_ECDSA_PRIVATE_P256_MAGIC;
         algoId = BCRYPT_ECDSA_P256_ALGORITHM;
     } else if (strcmp(ecc_info.eck.szCurveOid, szOID_ECC_CURVE_P384) == 0) {
@@ -101,10 +126,7 @@ static BCRYPT_KEY_HANDLE load_ecc_key(const BYTE *der, size_t der_len) {
         algoId = BCRYPT_ECDSA_P521_ALGORITHM;
     } else {
         UM_LOG(ERR, "Unsupported ECC curve: %s", ecc_info.eck.szCurveOid);
-        return INVALID_HANDLE_VALUE;
-    }
-    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algoH, algoId, NULL, 0))) {
-        UM_LOG(ERR, "failed to open EC algorithm[%ls]: %s", algoId, win32_error(GetLastError()));
+        return 0;
     }
 
     ecc_blob.ec_blob.cbKey = ecc_info.eck.PrivateKey.cbData;
@@ -113,8 +135,8 @@ static BCRYPT_KEY_HANDLE load_ecc_key(const BYTE *der, size_t der_len) {
     memcpy(ecc_blob.key_data + 2 * ecc_info.eck.PrivateKey.cbData,
         ecc_info.eck.PrivateKey.pbData, ecc_info.eck.PrivateKey.cbData);
 
-    if (!BCRYPT_SUCCESS(BCryptImportKeyPair(
-        algoH, NULL, BCRYPT_ECCPRIVATE_BLOB, &keyH,
+    if (!BCRYPT_SUCCESS(NCryptImportKey(
+        prov, 0, BCRYPT_ECCPRIVATE_BLOB, NULL, &keyH,
         (PBYTE) &ecc_blob, sizeof(ecc_blob.ec_blob) + 3 * ecc_blob.ec_blob.cbKey, 0))) {
         UM_LOG(ERR, "failed to import ecc key pair: %s", win32_error(GetLastError()));
     }
@@ -125,16 +147,19 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
     ULONG der_len;
     DWORD skip;
     BYTE *der = NULL;
+    bool rc;
     union {
         CRYPT_PRIVATE_KEY_INFO info;
         char buf[1024];
     } pk_info = {};
 
-    if (CryptStringToBinaryA(data, data_len, CRYPT_STRING_BASE64HEADER, NULL,
-                             &der_len, &skip, NULL)) {
+    if (CryptStringToBinaryA(data, data_len,
+                             CRYPT_STRING_BASE64HEADER, NULL, &der_len,
+                             &skip, NULL)) {
         der = tlsuv__malloc(der_len);
-        CryptStringToBinaryA(data, data_len,
-                             CRYPT_STRING_BASE64HEADER, der, &der_len, &skip, NULL);
+        rc = CryptStringToBinaryA(data, data_len,
+                                  CRYPT_STRING_BASE64HEADER, der, &der_len,
+                                  &skip, NULL);
     } else {
         UM_LOG(ERR, "failed to decode PEM data");
         return -1;
@@ -143,49 +168,61 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
     const char *header = data + skip;
 
     DWORD str_info = sizeof(pk_info);
-    bool rc = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-                                     PKCS_PRIVATE_KEY_INFO, der, der_len,
-                                     0, &DECODE_PARAMS,
-                                     &pk_info, &str_info);
-    tlsuv__free(der);
+    rc = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                             PKCS_PRIVATE_KEY_INFO, der, der_len,
+                             CRYPT_DECODE_NOCOPY_FLAG, &DECODE_PARAMS,
+                             &pk_info, &str_info);
     if (!rc) {
         UM_LOG(ERR, "failed to parse private key info: %s", win32_error(GetLastError()));
+        tlsuv__free(der);
         return -1;
     }
 
-    BCRYPT_KEY_HANDLE kh = INVALID_HANDLE_VALUE;
+    NCRYPT_PROV_HANDLE ph = 0;
+    NCRYPT_KEY_HANDLE kh = 0;
+    NCryptOpenStorageProvider(&ph, MS_KEY_STORAGE_PROVIDER, 0);
     if (strcmp(pk_info.info.Algorithm.pszObjId, szOID_ECC_PUBLIC_KEY) == 0) {
-        kh = load_ecc_key(pk_info.info.PrivateKey.pbData, pk_info.info.PrivateKey.cbData);
+        char *algo = NULL;
+        DWORD algo_len = 0;
+        CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, X509_OBJECT_IDENTIFIER,
+                            pk_info.info.Algorithm.Parameters.pbData,
+                            pk_info.info.Algorithm.Parameters.cbData,
+                            CRYPT_DECODE_ALLOC_FLAG, NULL,
+                            &algo, &algo_len);
+        kh = load_ecc_key(ph, pk_info.info.PrivateKey.pbData, pk_info.info.PrivateKey.cbData);
     } else if (strcmp(pk_info.info.Algorithm.pszObjId, szOID_RSA_RSA) == 0) {
-        UM_LOG(WARN, "TODO: implement here");
+        kh = load_rsa_key(ph, pk_info.info.PrivateKey.pbData, pk_info.info.PrivateKey.cbData);
     }
 
-    if (kh != INVALID_HANDLE_VALUE) {
-        *key = (tlsuv_private_key_t)new_private_key(kh);
+    tlsuv__free(der);
+    if (kh != 0) {
+        *key = (tlsuv_private_key_t)new_private_key(ph, kh);
         return 0;
     }
+
+    NCryptFreeObject(ph);
     return -1;
 }
 
 static int priv_key_pem(struct tlsuv_private_key_s *key, char **pem, size_t *pem_len) {
     struct win32crypto_private_key_s *priv_key = (struct win32crypto_private_key_s *) key;
-    if (priv_key->key == NULL) {
+    if (priv_key->key == 0) {
         return -1; // Key not initialized
     }
-    BCRYPT_KEY_HANDLE kh = priv_key->key;
+    NCRYPT_KEY_HANDLE kh = priv_key->key;
 
     ULONG len = 0;
     CRYPT_PRIVATE_KEY_INFO pk_info = {};
     const char *param_oid = NULL;
 
     LPCWSTR type = BCRYPT_PRIVATE_KEY_BLOB;
-    if (!BCRYPT_SUCCESS(BCryptExportKey(priv_key->key, NULL, type, NULL, 0, &len, 0))) {
+    if (!BCRYPT_SUCCESS(NCryptExportKey(priv_key->key, 0, type, NULL, NULL, 0, &len, 0))) {
         UM_LOG(ERR, "Failed to export key: %s", win32_error(GetLastError()));
         return -1;
     }
 
     BCRYPT_KEY_BLOB *key_blob = (BCRYPT_KEY_BLOB *) tlsuv__malloc(len);
-    if (!BCRYPT_SUCCESS(BCryptExportKey(kh, NULL, type, (BYTE*)key_blob, len, &len, 0))) {
+    if (!BCRYPT_SUCCESS(NCryptExportKey(kh, 0, type, NULL, (BYTE*)key_blob, len, &len, 0))) {
         UM_LOG(ERR, "Failed to export key: %s", win32_error(GetLastError()));
         tlsuv__free(key_blob);
         return -1;
@@ -274,8 +311,11 @@ static int priv_key_pem(struct tlsuv_private_key_s *key, char **pem, size_t *pem
 static void free_priv_key(struct tlsuv_private_key_s *key) {
     struct win32crypto_private_key_s *priv_key = (struct win32crypto_private_key_s *) key;
     if (priv_key->key) {
-        BCryptDestroyKey(priv_key->key);
-        priv_key->key = NULL;
+        NCryptFreeObject(priv_key->key);
+        priv_key->key = 0;
+    }
+    if (priv_key->provider) {
+        NCryptFreeObject(priv_key->provider);
     }
     tlsuv__free(priv_key);
 }
@@ -295,9 +335,10 @@ static struct tlsuv_private_key_s private_key_api = {
         .store_certificate = NULL,
 };
 
-static struct win32crypto_private_key_s* new_private_key(BCRYPT_KEY_HANDLE kh) {
+static struct win32crypto_private_key_s* new_private_key(NCRYPT_PROV_HANDLE ph, NCRYPT_KEY_HANDLE kh) {
     struct win32crypto_private_key_s *key = tlsuv__calloc(1, sizeof(*key));
     key->api = private_key_api;
+    key->provider = ph;
     key->key = kh;
     return key;
 }

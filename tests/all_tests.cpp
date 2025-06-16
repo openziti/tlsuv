@@ -33,6 +33,7 @@ static void test_log_f(int lvl, const char *file, unsigned int line, const char*
 
     fprintf(stderr, "[%6ld.%03ld]%5s %s:%d %s\n", elapsed/1000, elapsed % 1000,
             err_labels[lvl], file, line, msg);
+    fflush(stderr);
 }
 
 tlsuv_log_func test_log = test_log_f;
