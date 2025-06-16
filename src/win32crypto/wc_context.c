@@ -16,13 +16,15 @@
 
 #include <tlsuv/tls_engine.h>
 
-#include <wincrypt.h>
-#include <security.h>
 #include "../alloc.h"
 #include "../um_debug.h"
 #include "cert.h"
 #include "engine.h"
 #include "keys.h"
+#include <security.h>
+#include <wincrypt.h>
+
+#include <stdbool.h>
 
 struct win32tls {
     tls_context api;
@@ -308,6 +310,82 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
     return 0;
 }
 
+#define DN_MAX_ATTRS (8)
+static const char* get_obj_id(const char *id) {
+    if (strcmp(id, "C") == 0) return szOID_COUNTRY_NAME;
+    if (strcmp(id, "ST") == 0) return szOID_STATE_OR_PROVINCE_NAME;
+    if (strcmp(id, "L") == 0) return szOID_LOCALITY_NAME;
+    if (strcmp(id, "O") == 0) return szOID_ORGANIZATION_NAME;
+    if (strcmp(id, "OU") == 0) return szOID_ORGANIZATIONAL_UNIT_NAME;
+    if (strcmp(id, "CN") == 0) return szOID_COMMON_NAME;
+    if (strcmp(id, "DC") == 0) return szOID_DOMAIN_COMPONENT;
+    return NULL;
+}
+static int win32crypto_generate_csr(tlsuv_private_key_t pk, char **pem, size_t *pemlen, ...) {
+    struct win32crypto_private_key_s *key = (struct win32crypto_private_key_s*) pk;
+    CERT_RDN_ATTR attrs[8] = {};
+    int attr_idx = 0;
+
+    va_list va;
+    va_start(va, pemlen);
+    while (attr_idx < DN_MAX_ATTRS) {
+        char *id = va_arg(va, char*);
+        if (id == NULL) { break; }
+
+        const char *val = va_arg(va, char*);
+        if (val == NULL) { break; }
+
+        const char *objId = get_obj_id(id);
+        if (objId == NULL) continue;
+        attrs[attr_idx].pszObjId = (char*)objId;
+        attrs[attr_idx].dwValueType = CERT_RDN_PRINTABLE_STRING;
+        attrs[attr_idx].Value.pbData = (BYTE*)val;
+        attrs[attr_idx].Value.cbData = strlen(val);
+        attr_idx++;
+    }
+    va_end(va);
+    CERT_REQUEST_INFO req = {
+        .dwVersion = CERT_REQUEST_V1,
+    };
+
+    CERT_RDN cert_rdn = { .cRDNAttr = attr_idx, .rgRDNAttr = attrs };
+    CERT_NAME_INFO cert_name = { 1, &cert_rdn };
+
+    CryptEncodeObject(X509_ASN_ENCODING, X509_NAME, &cert_name, NULL, &req.Subject.cbData);
+    req.Subject.pbData = tlsuv__malloc(req.Subject.cbData);
+    CryptEncodeObject(X509_ASN_ENCODING, X509_NAME, &cert_name, req.Subject.pbData, &req.Subject.cbData);
+
+    DWORD len = 0;
+    CERT_PUBLIC_KEY_INFO *pub_info = NULL;
+    CryptExportPublicKeyInfo(key->key, 0, X509_ASN_ENCODING, NULL, &len);
+    pub_info = tlsuv__malloc(len);
+    CryptExportPublicKeyInfo(key->key, 0, X509_ASN_ENCODING, pub_info, &len);
+    req.SubjectPublicKeyInfo = *pub_info;
+
+    CRYPT_ALGORITHM_IDENTIFIER signer = { szOID_ECDSA_SHA256 };
+    BYTE *req_der = NULL;
+    if (CryptSignAndEncodeCertificate(key->key, 0, X509_ASN_ENCODING,
+        X509_CERT_REQUEST_TO_BE_SIGNED, &req, &signer, NULL, NULL, &len)) {
+        req_der = tlsuv__malloc(len);
+        CryptSignAndEncodeCertificate(key->key, 0, X509_ASN_ENCODING,
+        X509_CERT_REQUEST_TO_BE_SIGNED, &req, &signer, NULL, req_der, &len);
+    }
+
+    DWORD pem_len;
+    CryptBinaryToStringA(req_der, len, CRYPT_STRING_BASE64REQUESTHEADER, NULL, &pem_len);
+    char *p = tlsuv__malloc(pem_len);
+    CryptBinaryToStringA(req_der, len, CRYPT_STRING_BASE64REQUESTHEADER, p, &pem_len);
+
+    *pem = p;
+    *pemlen = pem_len;
+
+    tlsuv__free(req_der);
+    tlsuv__free(pub_info);
+    tlsuv__free(req.Subject.pbData);
+    return 0;
+}
+
+
 static tlsuv_engine_t new_win32_engine(tls_context *ctx, const char *hostname) {
     struct win32tls *c = (struct win32tls*)ctx;
 
@@ -334,5 +412,5 @@ static tls_context win32tls_context_api = {
         .load_keychain_key = win32crypto_load_keychain_key,
         .remove_keychain_key = win32crypto_remove_keychain_key,
         .load_cert = load_cert,
-//        .generate_csr_to_pem = generate_csr,
+        .generate_csr_to_pem = win32crypto_generate_csr,
 };
