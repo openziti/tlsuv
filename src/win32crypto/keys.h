@@ -37,4 +37,8 @@ struct win32crypto_public_key_s {
 extern int win32crypto_generate_key(tlsuv_private_key_t *key);
 extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size_t datalen);
 
+extern int win32crypto_gen_keychain_key(tlsuv_private_key_t *pk, const char *id);
+extern int win32crypto_load_keychain_key(tlsuv_private_key_t *pk, const char *name);
+extern int win32crypto_remove_keychain_key(const char *name);
+
 #endif //TLSUV_KEYS_H

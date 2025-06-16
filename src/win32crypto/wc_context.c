@@ -296,6 +296,7 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
 
     return 0;
 }
+
 static tlsuv_engine_t new_win32_engine(tls_context *ctx, const char *hostname) {
     struct win32tls *c = (struct win32tls*)ctx;
 
@@ -317,9 +318,9 @@ static tls_context win32tls_context_api = {
         .load_key = win32crypto_load_key,
 //        .load_pkcs11_key = load_pkcs11_key,
 //        .generate_pkcs11_key = gen_pkcs11_key,
-//        .generate_keychain_key = gen_keychain_key,
-//        .load_keychain_key = load_keychain_key,
-//        .remove_keychain_key = remove_keychain_key,
+        .generate_keychain_key = win32crypto_gen_keychain_key,
+        .load_keychain_key = win32crypto_load_keychain_key,
+        .remove_keychain_key = win32crypto_remove_keychain_key,
         .load_cert = load_cert,
 //        .generate_csr_to_pem = generate_csr,
 };

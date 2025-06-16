@@ -14,7 +14,6 @@
 //
 //
 
-#define _WIN32_WINNT 0x0a00 // Windows 7 or later
 #include "keys.h"
 #include "cert.h"
 #include "../alloc.h"
@@ -361,5 +360,114 @@ static struct win32crypto_private_key_s* new_private_key(NCRYPT_PROV_HANDLE ph, 
     key->key = kh;
     return key;
 }
+
+static wchar_t *providers[] = {
+    MS_PLATFORM_KEY_STORAGE_PROVIDER,
+    MS_KEY_STORAGE_PROVIDER,
+};
+
+static wchar_t *key_algos[] = {
+    NCRYPT_ECDSA_P521_ALGORITHM,
+    NCRYPT_ECDSA_P384_ALGORITHM,
+    NCRYPT_ECDSA_P256_ALGORITHM,
+};
+
+static NCRYPT_PROV_HANDLE get_provider() {
+    NCRYPT_PROV_HANDLE prov = 0;
+    SECURITY_STATUS rc = 0;
+    for (int i = 0; i < sizeof(providers)/sizeof(providers[0]); i++) {
+        rc = NCryptOpenStorageProvider(&prov, providers[i], 0);
+        if (rc == ERROR_SUCCESS) return prov;
+    }
+
+    UM_LOG(ERR, "failed to open supported provider: %s", win32_error(rc));
+    return 0;
+}
+
+static wchar_t* key_name(const char *id) {
+    wchar_t *key_name = tlsuv__calloc(strlen(id) + 1, sizeof(wchar_t));
+    swprintf(key_name, strlen(id) + 1, L"%s", id);
+    return key_name;
+}
+
+int win32crypto_gen_keychain_key(tlsuv_private_key_t *pk, const char *id) {
+    NCRYPT_PROV_HANDLE prov = get_provider();
+
+    if (prov == 0) {
+        UM_LOG(ERR, "failed to open a supported key storage provider");
+        return -1;
+    }
+
+    wchar_t *name = key_name(id);
+    NCRYPT_KEY_HANDLE kh = 0;
+    for (int i = 0; i < sizeof(key_algos)/sizeof(key_algos[0]); i++) {
+        SECURITY_STATUS rc = NCryptCreatePersistedKey(prov, &kh, key_algos[i], name, 0, 0);
+        if (rc != ERROR_SUCCESS) continue;
+
+        rc = NCryptFinalizeKey(kh, 0);
+        if (rc == ERROR_SUCCESS) break;
+
+        NCryptFreeObject(kh);
+        kh = 0;
+    }
+    tlsuv__free(name);
+
+    if (kh) {
+        *pk = (tlsuv_private_key_t)new_private_key(prov, kh);
+        return 0;
+    }
+
+    NCryptFreeObject(prov);
+    return -1;
+}
+
+int win32crypto_load_keychain_key(tlsuv_private_key_t *pk, const char *id) {
+    NCRYPT_PROV_HANDLE ph = 0;
+    NCRYPT_KEY_HANDLE kh = 0;
+    wchar_t* name = key_name(id);
+    for (int i = 0; i < sizeof(providers)/sizeof(providers[0]); i++) {
+        SECURITY_STATUS rc = NCryptOpenStorageProvider(&ph, providers[i], 0);
+        if (rc != ERROR_SUCCESS) continue;
+
+        rc = NCryptOpenKey(ph, &kh, name, 0, 0);
+        if (rc == ERROR_SUCCESS) break;
+
+        NCryptFreeObject(ph);
+    }
+    tlsuv__free(name);
+    if (kh) {
+        *pk = (tlsuv_private_key_t)new_private_key(ph, kh);
+        return 0;
+    }
+
+    UM_LOG(ERR, "failed to find key[%s] in any provider", id);
+    NCryptFreeObject(ph);
+    return -1;
+}
+
+int win32crypto_remove_keychain_key(const char *id) {
+    NCRYPT_PROV_HANDLE ph = 0;
+    NCRYPT_KEY_HANDLE kh = 0;
+    wchar_t* name = key_name(id);
+    for (int i = 0; i < sizeof(providers)/sizeof(providers[0]); i++) {
+        SECURITY_STATUS rc = NCryptOpenStorageProvider(&ph, providers[i], 0);
+        if (rc != ERROR_SUCCESS) continue;
+
+        rc = NCryptOpenKey(ph, &kh, name, 0, 0);
+        if (rc != ERROR_SUCCESS) {
+            NCryptFreeObject(ph);
+            continue;
+        }
+
+        if (NCryptDeleteKey(kh, 0) != ERROR_SUCCESS) {
+            NCryptFreeObject(kh);
+        }
+        NCryptFreeObject(ph);
+        break;
+    }
+    tlsuv__free(name);
+    return 0;
+}
+
 
 
