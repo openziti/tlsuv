@@ -20,6 +20,8 @@ struct win32crypto_engine_s {
     // negotiated protocol
     char *alpn;
 
+    int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx);
+    void *verify_ctx;
     HCERTSTORE ca;
     CredHandle cred_handle;
     CtxtHandle ctxt_handle;
@@ -38,6 +40,9 @@ struct win32crypto_engine_s {
     size_t decoded_len;
 };
 
-extern struct win32crypto_engine_s *new_win32engine(const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert);
+extern struct win32crypto_engine_s *new_win32engine(
+    const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
+    int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
+    void *verify_ctx);
 
 #endif //ENGINE_H

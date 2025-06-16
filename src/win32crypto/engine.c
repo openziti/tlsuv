@@ -1,9 +1,8 @@
 
-#define SCHANNEL_USE_BLACKLISTS
-#include <ntdef.h>
-
+#include <windows.h>
 #include "engine.h"
 
+#define SCHANNEL_USE_BLACKLISTS
 #include <sspi.h>
 #include <schannel.h>
 #include <stdint.h>
@@ -12,6 +11,8 @@
 
 #include "../alloc.h"
 #include "../um_debug.h"
+
+#include "cert.h"
 
 extern const char* win32_error(DWORD code);
 
@@ -80,17 +81,31 @@ static tls_handshake_state engine_handshake_state(tlsuv_engine_t self) {
 static SECURITY_STATUS verify_server_cert(struct win32crypto_engine_s *engine) {
     CERT_CONTEXT *server_cert = NULL;
     SECURITY_STATUS rc;
-    HCERTCHAINENGINE verifier = NULL;
-    const CERT_CHAIN_CONTEXT *server_chain = NULL;
-    CERT_CHAIN_PARA params = {
-            .cbSize = sizeof(CERT_CHAIN_PARA),
-    };
 
     rc = QueryContextAttributes(&engine->ctxt_handle, SECPKG_ATTR_REMOTE_CERT_CONTEXT, &server_cert);
     if (rc != SEC_E_OK) {
         UM_LOG(ERR, "failed to get server cert: 0x%lX/%s", rc, win32_error(GetLastError()));
         return rc;
     }
+
+    if (engine->cert_verify_f) {
+      HCERTSTORE s = CertOpenStore(CERT_STORE_PROV_MEMORY,
+                                   PKCS_7_ASN_ENCODING | X509_ASN_ENCODING,
+                                   (HCRYPTPROV_LEGACY) NULL, 0, NULL);
+      CertAddCertificateContextToStore(s, server_cert, CERT_STORE_ADD_ALWAYS,
+                                       NULL);
+      tlsuv_certificate_t crt = (tlsuv_certificate_t)win32_new_cert(s);
+      int verified = engine->cert_verify_f(crt, engine->verify_ctx);
+      crt->free(crt);
+
+      CertFreeCertificateContext(server_cert);
+      return  verified == 0 ? ERROR_SUCCESS : TRUST_E_FAIL;
+    }
+    HCERTCHAINENGINE verifier = NULL;
+    const CERT_CHAIN_CONTEXT *server_chain = NULL;
+    CERT_CHAIN_PARA params = {
+        .cbSize = sizeof(CERT_CHAIN_PARA),
+    };
 
     CERT_CHAIN_ENGINE_CONFIG cfg = {
             .cbSize = sizeof(cfg),
@@ -470,14 +485,16 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
             assert(bufs[1].BufferType == SECBUFFER_DATA);
             assert(bufs[2].BufferType == SECBUFFER_STREAM_TRAILER);
 
-            size_t len = bufs[1].cbBuffer > (max - (p - data)) ? max - (p - data) : bufs[1].cbBuffer;
+            size_t len = bufs[1].cbBuffer > (max - (p - data)) ?
+                max - (p - data) : bufs[1].cbBuffer;
             memcpy(p, bufs[1].pvBuffer, len);
             p += len;
 
             memcpy(engine->decoded, (char *) bufs[1].pvBuffer + len, bufs[1].cbBuffer - len);
             engine->decoded_len = bufs[1].cbBuffer - len;
 
-            size_t consumed = bufs[0].cbBuffer + bufs[1].cbBuffer + bufs[2].cbBuffer;
+            size_t consumed = engine->inbound_len -
+                (bufs[3].BufferType == SECBUFFER_EXTRA ? bufs[3].cbBuffer : 0);
             assert(consumed <= engine->inbound_len);
             memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
             engine->inbound_len -= consumed;
@@ -522,7 +539,10 @@ static struct tlsuv_engine_s api = {
     .free = engine_free,
 };
 
-struct win32crypto_engine_s *new_win32engine(const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert)
+struct win32crypto_engine_s *new_win32engine(
+    const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
+    int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
+    void *verify_ctx)
 {
     struct win32crypto_engine_s *engine = tlsuv__calloc(1, sizeof(*engine));
     engine->api = api;
@@ -530,10 +550,12 @@ struct win32crypto_engine_s *new_win32engine(const char *hostname, HCERTSTORE ca
     engine->hostname = hostname ? tlsuv__strdup(hostname) : NULL;
 
     DWORD flags = SCH_CRED_NO_DEFAULT_CREDS;
-    if (ca == NULL || ca == INVALID_HANDLE_VALUE) {
+    if ((ca == NULL || ca == INVALID_HANDLE_VALUE) && cert_verify_f == NULL) {
         flags |= SCH_CRED_AUTO_CRED_VALIDATION;
     } else {
         engine->ca = ca;
+        engine->cert_verify_f = cert_verify_f;
+        engine->verify_ctx = verify_ctx;
         flags |= SCH_CRED_MANUAL_CRED_VALIDATION;
     }
 

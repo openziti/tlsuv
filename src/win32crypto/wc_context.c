@@ -184,6 +184,17 @@ static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buf_len)
     return 0;
 }
 
+static int tls_set_cert_verify(
+    tls_context *ctx,
+    int (*verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
+    void *v_ctx) {
+    struct win32tls *c = (struct win32tls*)ctx;
+
+    c->cert_verify_f = verify_f;
+    c->verify_ctx = v_ctx;
+    return 0;
+}
+
 static int set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len) {
     struct win32tls *c = (struct win32tls*)ctx;
 
@@ -300,7 +311,8 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
 static tlsuv_engine_t new_win32_engine(tls_context *ctx, const char *hostname) {
     struct win32tls *c = (struct win32tls*)ctx;
 
-    return (tlsuv_engine_t) new_win32engine(hostname, c->ca_bundle, c->own_cert);
+    return (tlsuv_engine_t) new_win32engine(
+        hostname, c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx);
 }
 
 static tls_context win32tls_context_api = {
@@ -311,7 +323,7 @@ static tls_context win32tls_context_api = {
         .set_ca_bundle = set_ca_bundle,
         .set_own_cert = set_own_cert,
 //        .allow_partial_chain = tls_set_partial_vfy,
-//        .set_cert_verify = tls_set_cert_verify,
+        .set_cert_verify = tls_set_cert_verify,
 //        .verify_signature =  tls_verify_signature,
         .parse_pkcs7_certs = parse_pkcs7_certs,
         .generate_key = win32crypto_generate_key,
