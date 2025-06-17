@@ -24,6 +24,8 @@
 #include <tlsuv/tls_engine.h>
 #include <ncrypt.h>
 
+#include "cert.h"
+
 struct win32crypto_private_key_s {
     struct tlsuv_private_key_s api;
     NCRYPT_PROV_HANDLE provider;
@@ -32,6 +34,8 @@ struct win32crypto_private_key_s {
 
 struct win32crypto_public_key_s {
     struct tlsuv_public_key_s api;
+    BCRYPT_KEY_HANDLE key;
+    CERT_PUBLIC_KEY_INFO *info;
 };
 
 extern int win32crypto_generate_key(tlsuv_private_key_t *key);

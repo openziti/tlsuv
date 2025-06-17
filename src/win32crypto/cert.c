@@ -92,7 +92,8 @@ static int cert_verify(const struct tlsuv_certificate_s *cert, enum hash_algo md
 
     win32_cert_t *c = (win32_cert_t *) cert;
 
-    PCCERT_CONTEXT cert_ctx = CertEnumCertificatesInStore(c->store, NULL);
+    PCCERT_CONTEXT cert_ctx = c->cert ? CertDuplicateCertificateContext(c->cert)
+                                  : CertEnumCertificatesInStore(c->store, NULL);
     if (!cert_ctx) {
         UM_LOG(ERR, "No certificates found in store");
         rc = -1;

@@ -233,99 +233,214 @@ static int priv_key_pem(struct tlsuv_private_key_s *key, char **pem, size_t *pem
     CRYPT_PRIVATE_KEY_INFO pk_info = {};
     const char *param_oid = NULL;
 
-    LPCWSTR type = BCRYPT_PRIVATE_KEY_BLOB;
-    if (!BCRYPT_SUCCESS(NCryptExportKey(priv_key->key, 0, type, NULL, NULL, 0, &len, 0))) {
-        UM_LOG(ERR, "Failed to export key: %s", win32_error(GetLastError()));
+    LPCWSTR type = NCRYPT_PKCS8_PRIVATE_KEY_BLOB;
+    DWORD rc = NCryptExportKey(priv_key->key, 0, type, NULL, NULL, 0, &len, 0);
+    if (rc != ERROR_SUCCESS) {
+        LOG_ERROR(ERR, rc, "Failed to export key");
         return -1;
     }
-
-    BCRYPT_KEY_BLOB *key_blob = (BCRYPT_KEY_BLOB *) tlsuv__malloc(len);
-    if (!BCRYPT_SUCCESS(NCryptExportKey(kh, 0, type, NULL, (BYTE*)key_blob, len, &len, 0))) {
-        UM_LOG(ERR, "Failed to export key: %s", win32_error(GetLastError()));
-        tlsuv__free(key_blob);
-        return -1;
-    }
-
-    switch (key_blob->Magic) {
-        case BCRYPT_ECDSA_PRIVATE_P256_MAGIC:
-            pk_info.Algorithm.pszObjId = szOID_ECC_PUBLIC_KEY;
-            param_oid = szOID_ECC_CURVE_P256;
-            break;
-        case BCRYPT_ECDSA_PRIVATE_P384_MAGIC:
-            pk_info.Algorithm.pszObjId = szOID_ECC_PUBLIC_KEY;
-            param_oid = szOID_ECC_CURVE_P384;
-            break;
-        case BCRYPT_ECDSA_PRIVATE_P521_MAGIC: {
-            pk_info.Algorithm.pszObjId = szOID_ECC_PUBLIC_KEY;
-            param_oid = szOID_ECC_CURVE_P521;
-            break;
-        }
-        case BCRYPT_RSAPRIVATE_MAGIC: {
-            BCRYPT_RSAKEY_BLOB *rsa_blob = (BCRYPT_RSAKEY_BLOB *) key_blob;
-            pk_info.Algorithm.pszObjId = szOID_RSA_RSA;
-            pk_info.PrivateKey.pbData = (BYTE*)key_blob + sizeof(BCRYPT_RSAKEY_BLOB);
-            pk_info.PrivateKey.cbData = len - sizeof(BCRYPT_RSAKEY_BLOB);
-            break;
-        }
-        default:
-            tlsuv__free(key_blob);
-            return -1; // Unsupported key type
-    }
-
-    if (strcmp(pk_info.Algorithm.pszObjId, szOID_ECC_PUBLIC_KEY) == 0) {
-        BCRYPT_ECCKEY_BLOB *ecc_blob = (BCRYPT_ECCKEY_BLOB *) key_blob;
-        // ECC key is exported in format X[cbKey]|Y[cbKey]|d[cbKey]:
-        // https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/ns-bcrypt-bcrypt_ecckey_blob
-        CRYPT_ECC_PRIVATE_KEY_INFO ecc_info = {
-                .szCurveOid = (LPSTR)param_oid,
-        };
-
-        ecc_info.PrivateKey.cbData = ecc_blob->cbKey;
-        ecc_info.PrivateKey.pbData = (BYTE *) ecc_blob + sizeof(BCRYPT_ECCKEY_BLOB) + 2 * ecc_blob->cbKey; // d is at the end of the blob
-        ecc_info.PublicKey.cbData = ecc_blob->cbKey * 2 + 1; // uncompressed format: 0x04|X|Y
-        ecc_info.PublicKey.pbData = (BYTE*)ecc_blob + sizeof(BCRYPT_ECCKEY_BLOB) - 1;
-        ecc_info.PublicKey.pbData[0] = 0x04; // uncompressed point format
-
-        CryptEncodeObjectEx(X509_ASN_ENCODING,
-                            X509_OBJECT_IDENTIFIER, &param_oid,
-                            CRYPT_ENCODE_ALLOC_FLAG, &ENCODE_PARAMS,
-                            &pk_info.Algorithm.Parameters.pbData, &pk_info.Algorithm.Parameters.cbData);
-        CryptEncodeObjectEx(X509_ASN_ENCODING,
-                            X509_ECC_PRIVATE_KEY, &ecc_info,
-                            CRYPT_ENCODE_ALLOC_FLAG, &ENCODE_PARAMS,
-                            &pk_info.PrivateKey.pbData, &pk_info.PrivateKey.cbData);
-    } else if (strcmp(pk_info.Algorithm.pszObjId, szOID_RSA_RSA) == 0) {
-    } else {
-        tlsuv__free(key_blob);
-        return -1; // Unsupported key type
-
-    }
-
-    char *der = NULL;
+    BYTE *der = tlsuv__malloc(len);
     ULONG der_len;
     ULONG der64_len;
+    NCryptExportKey(priv_key->key, 0, type, NULL, der, len, &der_len, 0);
 
-    CryptEncodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, PKCS_PRIVATE_KEY_INFO,
-                        &pk_info, CRYPT_ENCODE_ALLOC_FLAG, &ENCODE_PARAMS,
-                        &der, &der_len);
-
-    CryptBinaryToStringA((BYTE *) der, der_len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCR, NULL, &der64_len);
+    CryptBinaryToStringA(der, der_len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCR, NULL, &der64_len);
     char *p = (char *) tlsuv__calloc(strlen(PK_HEADER) + strlen(PK_FOOTER) + der64_len + 1, 1);
     strcpy_s(p, strlen(PK_HEADER) + 1, PK_HEADER);
-    CryptBinaryToStringA((BYTE *) der, der_len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCR, p + strlen(PK_HEADER),
+    CryptBinaryToStringA(der, der_len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCR, p + strlen(PK_HEADER),
                          &der64_len);
     strcpy_s(p + strlen(PK_HEADER) + der64_len, strlen(PK_FOOTER) + 1, PK_FOOTER);
 
-    tlsuv__free(pk_info.Algorithm.Parameters.pbData);
-    tlsuv__free(pk_info.PrivateKey.pbData);
-
+    tlsuv__free(der);
+    if (pem_len) {
+        *pem_len = strlen(p);
+    }
     *pem = p;
-    *pem_len = strlen(p);
-
-    tlsuv__free(key_blob);
     return 0;
 }
 
+static void pub_free(tlsuv_public_key_t *k) {
+    struct win32crypto_public_key_s *pub = (struct win32crypto_public_key_s*)k;
+    if (pub) {
+        BCryptDestroyKey(pub->key);
+        tlsuv__free(pub->info);
+        tlsuv__free(pub);
+    }
+}
+
+static int pub_pem(tlsuv_public_key_t k, char **pem, size_t *pem_len) {
+    struct win32crypto_public_key_s *pub = (struct win32crypto_public_key_s*)k;
+
+    DWORD der_len;
+    CryptEncodeObjectEx(X509_ASN_ENCODING, X509_PUBLIC_KEY_INFO, pub->info, 0, NULL, NULL, &der_len);
+    BYTE *der = tlsuv__malloc(der_len);
+    CryptEncodeObjectEx(X509_ASN_ENCODING, X509_PUBLIC_KEY_INFO, pub->info, 0, NULL, der, &der_len);
+
+    DWORD der64_len;
+    CryptBinaryToStringA(der, der_len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCR, NULL, &der64_len);
+    char *p = (char *) tlsuv__calloc(strlen(PUB_HEADER) + strlen(PUB_FOOTER) + der64_len + 1, 1);
+    strcpy_s(p, strlen(PUB_HEADER) + 1, PUB_HEADER);
+    CryptBinaryToStringA(der, der_len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCR, p + strlen(PUB_HEADER),
+                         &der64_len);
+    strcpy_s(p + strlen(PUB_HEADER) + der64_len, strlen(PUB_FOOTER) + 1, PUB_FOOTER);
+    tlsuv__free(der);
+
+    if (pem_len) *pem_len = strlen(p);
+    *pem = p;
+    return 0;
+}
+
+static int pub_verify(struct tlsuv_public_key_s * pubkey, enum hash_algo md,
+    const char *data, size_t datalen, const char *sig, size_t siglen) {
+    struct win32crypto_public_key_s *pub = (struct win32crypto_public_key_s*)pubkey;
+    int rc = 0;
+    LPCWSTR hash_algo_id = NULL;
+    BCRYPT_ALG_HANDLE hash_algo = NULL;
+    BCRYPT_HASH_HANDLE hash = NULL;
+    BYTE hash_bin[64] = {0}; // SHA-512 is the largest hash size we support
+    ULONG hash_bin_len = 0;
+
+    switch(md) {
+        case hash_SHA256:
+            hash_algo_id = BCRYPT_SHA256_ALGORITHM;
+            break;
+        case hash_SHA384:
+            hash_algo_id = BCRYPT_SHA384_ALGORITHM;
+            break;
+        case hash_SHA512:
+            hash_algo_id = BCRYPT_SHA512_ALGORITHM;
+            break;
+        default:
+            UM_LOG(ERR, "Unsupported hash algorithm");
+            return -1;
+    }
+
+#define CHECK(op) do { \
+NTSTATUS res = op;                       \
+if (!BCRYPT_SUCCESS(res)) {  \
+        UM_LOG(ERR, "BCrypt operation{" #op "} failed: 0x%x", res); \
+        rc = -1; \
+        goto done; \
+    }} while(0)
+
+    CHECK(BCryptOpenAlgorithmProvider(&hash_algo, hash_algo_id, NULL, 0));
+    ULONG count;
+    CHECK(BCryptGetProperty(hash_algo, BCRYPT_HASH_LENGTH, (PUCHAR) &hash_bin_len, sizeof(hash_bin_len), &count, 0));
+    CHECK(BCryptCreateHash(hash_algo, &hash, NULL, 0, NULL, 0, 0));
+    CHECK(BCryptHashData(hash, (PUCHAR)data, datalen, 0));
+    CHECK(BCryptFinishHash(hash, hash_bin, hash_bin_len, 0));
+
+    BCRYPT_PKCS1_PADDING_INFO pad = {
+        .pszAlgId = hash_algo_id
+    };
+    DWORD flags = strcmp(pub->info->Algorithm.pszObjId, szOID_RSA_RSA) == 0 ? NCRYPT_PAD_PKCS1_FLAG : 0;
+
+    NTSTATUS verified = BCryptVerifySignature(pub->key, flags ? &pad : NULL,
+                                              hash_bin, hash_bin_len, (PUCHAR) sig, siglen, flags);
+    if (!BCRYPT_SUCCESS(verified)) {
+        UM_LOG(ERR, "Signature verification failed: 0x%X", verified);
+        rc = -1;
+    }
+
+    done:
+
+    if (hash_algo) BCryptCloseAlgorithmProvider(hash_algo, 0);
+    if (hash) BCryptDestroyHash(hash);
+
+    return rc;
+
+}
+
+static struct tlsuv_public_key_s pub_key_api = {
+    .to_pem = pub_pem,
+    .free = pub_free,
+    .verify = pub_verify, // Not implemented for win32crypto
+};
+
+struct tlsuv_public_key_s* priv_key_pub(struct tlsuv_private_key_s * priv) {
+    struct win32crypto_private_key_s *pk = (struct win32crypto_private_key_s *) priv;
+
+    DWORD blob_len = 0;
+    CryptExportPublicKeyInfo(pk->key, 0, X509_ASN_ENCODING, NULL, &blob_len);
+    BYTE *blob = tlsuv__malloc(blob_len);
+    CryptExportPublicKeyInfo(pk->key, 0, X509_ASN_ENCODING, (PCERT_PUBLIC_KEY_INFO)blob, &blob_len);
+
+    CERT_PUBLIC_KEY_INFO *pub_info = (PCERT_PUBLIC_KEY_INFO)blob;
+    BCRYPT_KEY_HANDLE kh = 0;
+    if (!CryptImportPublicKeyInfoEx2(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                                     pub_info, 0, NULL, &kh)) {
+        LOG_LAST_ERROR(ERR, "Failed to import public key");
+    }
+    if (kh == 0) {
+        tlsuv__free(blob);
+        return NULL;
+    }
+
+    struct win32crypto_public_key_s* pub = tlsuv__malloc(sizeof(*pub));
+    pub->api = pub_key_api;
+    pub->key = kh;
+    pub->info = pub_info;
+    return (tlsuv_public_key_t)pub;
+}
+
+static int priv_key_sign(tlsuv_private_key_t privkey, enum hash_algo md,
+                         const char *data, size_t datalen, char *sig, size_t *siglen) {
+    struct win32crypto_private_key_s *pk = (struct win32crypto_private_key_s*)privkey;
+    int rc = 0;
+    LPCWSTR hash_algo_id = NULL;
+    BCRYPT_ALG_HANDLE hash_algo = NULL;
+    BCRYPT_HASH_HANDLE hash = NULL;
+    BYTE hash_bin[64] = {0}; // SHA-512 is the largest hash size we support
+    ULONG hash_bin_len = 0;
+
+    switch(md) {
+    case hash_SHA256: hash_algo_id = BCRYPT_SHA256_ALGORITHM; break;
+    case hash_SHA384: hash_algo_id = BCRYPT_SHA384_ALGORITHM; break;
+    case hash_SHA512: hash_algo_id = BCRYPT_SHA512_ALGORITHM; break;
+    default:
+        UM_LOG(ERR, "Unsupported hash algorithm");
+        return -1;
+    }
+
+#define CHECK(op) do { \
+NTSTATUS res = op;                       \
+if (!BCRYPT_SUCCESS(res)) {  \
+UM_LOG(ERR, "BCrypt operation{" #op "} failed: 0x%x", res); \
+rc = -1; \
+goto done; \
+}} while(0)
+
+    CHECK(BCryptOpenAlgorithmProvider(&hash_algo, hash_algo_id, NULL, 0));
+    ULONG count;
+    CHECK(BCryptGetProperty(hash_algo, BCRYPT_HASH_LENGTH, (PUCHAR) &hash_bin_len, sizeof(hash_bin_len), &count, 0));
+    CHECK(BCryptCreateHash(hash_algo, &hash, NULL, 0, NULL, 0, 0));
+    CHECK(BCryptHashData(hash, (PUCHAR)data, datalen, 0));
+    CHECK(BCryptFinishHash(hash, hash_bin, hash_bin_len, 0));
+
+    wchar_t key_type[16] = {};
+    DWORD kt_len;
+    NCryptGetProperty(pk->key, NCRYPT_ALGORITHM_GROUP_PROPERTY, key_type, sizeof(key_type), &kt_len, 0);
+    DWORD len = *siglen;
+    BCRYPT_PKCS1_PADDING_INFO pad = {
+        .pszAlgId = hash_algo_id
+    };
+    DWORD flags = lstrcmpW(key_type, L"RSA") == 0 ? NCRYPT_PAD_PKCS1_FLAG : 0;
+
+    NTSTATUS err = NCryptSignHash(pk->key,
+                                  flags ? &pad : NULL, hash_bin, hash_bin_len,
+                                  (PBYTE)sig, len, &len, flags);
+    if (err != ERROR_SUCCESS) {
+        LOG_ERROR(ERR, err, "Signature failed");
+        rc = -1;
+    }
+    *siglen = len;
+done:
+
+    if (hash_algo) BCryptCloseAlgorithmProvider(hash_algo, 0);
+    if (hash) BCryptDestroyHash(hash);
+
+    return rc;
+}
 static void free_priv_key(struct tlsuv_private_key_s *key) {
     struct win32crypto_private_key_s *priv_key = (struct win32crypto_private_key_s *) key;
     if (priv_key->key) {
@@ -338,18 +453,12 @@ static void free_priv_key(struct tlsuv_private_key_s *key) {
     tlsuv__free(priv_key);
 }
 
-static struct tlsuv_public_key_s pub_key_api = {
-        .to_pem = NULL, // Not implemented for win32crypto
-        .free = NULL, // Not implemented for win32crypto
-        .verify = NULL, // Not implemented for win32crypto
-};
-
 static struct tlsuv_private_key_s private_key_api = {
         .to_pem = priv_key_pem,
         .free = free_priv_key,
         .get_certificate = NULL,
-        .pubkey = NULL,
-        .sign = NULL,
+        .pubkey = priv_key_pub,
+        .sign = priv_key_sign,
         .store_certificate = NULL,
 };
 

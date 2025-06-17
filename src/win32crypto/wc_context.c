@@ -390,12 +390,15 @@ static int win32crypto_generate_csr(tlsuv_private_key_t pk, char **pem, size_t *
     }
 
     DWORD pem_len;
-    CryptBinaryToStringA(req_der, len, CRYPT_STRING_BASE64REQUESTHEADER, NULL, &pem_len);
+    DWORD flags = CRYPT_STRING_BASE64REQUESTHEADER | CRYPT_STRING_NOCR;
+    CryptBinaryToStringA(req_der, len, flags, NULL, &pem_len);
     char *p = tlsuv__malloc(pem_len);
-    CryptBinaryToStringA(req_der, len, CRYPT_STRING_BASE64REQUESTHEADER, p, &pem_len);
+    CryptBinaryToStringA(req_der, len, flags, p, &pem_len);
 
     *pem = p;
-    *pemlen = pem_len;
+    if (pemlen) {
+        *pemlen = pem_len;
+    }
 
     tlsuv__free(req_der);
     tlsuv__free(pub_info);
