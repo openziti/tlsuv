@@ -24,10 +24,21 @@
 typedef struct win32_cert {
     struct tlsuv_certificate_s api;
     HCERTSTORE store;
+    PCCERT_CONTEXT cert;
 } win32_cert_t;
 
-extern win32_cert_t *win32_new_cert(HCERTSTORE);
+extern win32_cert_t *win32_new_cert(PCCERT_CONTEXT, HCERTSTORE);
 
 const char* win32_error(DWORD code);
+
+#define LOG_ERROR(lvl, code, fmt, ...) do { \
+UM_LOG(lvl, fmt ": 0x%lX/%s", ##__VA_ARGS__, code, win32_error(code));\
+} while(0)
+
+#define LOG_LAST_ERROR(lvl, fmt, ...) do { \
+DWORD err = GetLastError();\
+LOG_ERROR(lvl, err, fmt, ##__VA_ARGS__); \
+} while(0)
+
 
 #endif //TLSUV_CERT_H

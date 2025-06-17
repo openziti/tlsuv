@@ -61,7 +61,7 @@ static int cert_to_pem(const struct tlsuv_certificate_s *cert, int full, char **
         if (CryptBinaryToStringA(cert_ctx->pbCertEncoded, cert_ctx->cbCertEncoded, flags, p, &len)) {
             p += len;
         } else {
-            UM_LOG(ERR, "Failed to convert certificate to PEM: %s", win32_error(GetLastError()));
+            LOG_LAST_ERROR(ERR, "Failed to convert certificate to PEM");
             tlsuv__free(pem_buf);
             return -1;
         }
@@ -102,7 +102,7 @@ static int cert_verify(const struct tlsuv_certificate_s *cert, enum hash_algo md
     if (!CryptImportPublicKeyInfoEx2(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
             pk, 0, NULL, &key
             )) {
-        UM_LOG(ERR, "Failed to import public key: %s", win32_error(GetLastError()));
+        LOG_LAST_ERROR(ERR, "Failed to import public key");
         rc = -1;
         goto done;
     }
@@ -155,7 +155,7 @@ if (!BCRYPT_SUCCESS(res)) {  \
 
 static int get_expiration(const struct tlsuv_certificate_s *cert,  struct tm *tm) {
     win32_cert_t *c = (win32_cert_t *) cert;
-    PCCERT_CONTEXT cert_ctx = CertEnumCertificatesInStore(c->store, NULL);
+    PCCERT_CONTEXT cert_ctx = c->cert;
     if (!cert_ctx) {
         UM_LOG(ERR, "No certificates found in store");
         return -1;
@@ -183,10 +183,11 @@ static struct tlsuv_certificate_s cert_api = {
     .verify = cert_verify,
 };
 
-win32_cert_t *win32_new_cert(HCERTSTORE store) {
+win32_cert_t *win32_new_cert(PCCERT_CONTEXT crt, HCERTSTORE store) {
     win32_cert_t *cert = tlsuv__calloc(1, sizeof(*cert));
     cert->api = cert_api;
     cert->store = store;
+    cert->cert = crt;
     return cert;
 }
 

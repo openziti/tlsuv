@@ -88,7 +88,7 @@ static int parse_pkcs7_certs(tlsuv_certificate_t *ctx, const char *data, size_t 
     BYTE *bin = NULL;
     DWORD bin_len = 0;
     if (!CryptStringToBinaryA(data, len, CRYPT_STRING_BASE64, bin, &bin_len, NULL, NULL)) {
-        UM_LOG(ERR, "failed to get binary length: %s", win32_error(GetLastError()));
+        LOG_LAST_ERROR(ERR, "failed to get binary length");
         return -1;
     }
 
@@ -112,11 +112,11 @@ static int parse_pkcs7_certs(tlsuv_certificate_t *ctx, const char *data, size_t 
         return -1;
     }
 
-    *ctx = (tlsuv_certificate_t) win32_new_cert(store);
+    *ctx = (tlsuv_certificate_t) win32_new_cert(NULL, store);
     return 0;
 }
 
-static int load_cert_internal(HCERTSTORE *storep, const char *buf, size_t buf_len) {
+static int load_cert_internal(HCERTSTORE *storep, PCCERT_CONTEXT *crt, const char *buf, size_t buf_len) {
     if (buf == NULL || buf_len == 0) {
         UM_LOG(ERR, "no data to load certificate");
         return -1;
@@ -138,7 +138,7 @@ static int load_cert_internal(HCERTSTORE *storep, const char *buf, size_t buf_le
         pem_file = CreateFileA(buf, GENERIC_READ, FILE_SHARE_READ, NULL,
                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         if (!ReadFile(pem_file, (LPVOID)pem, file_data.nFileSizeLow, NULL, NULL)) {
-            UM_LOG(ERR, "failed to read file[%s]: %s", buf, win32_error(GetLastError()));
+            LOG_LAST_ERROR(ERR, "failed to read file[%s]", buf);
             tlsuv__free((void*)pem);
             return -1;
         }
@@ -149,7 +149,7 @@ static int load_cert_internal(HCERTSTORE *storep, const char *buf, size_t buf_le
                                      PKCS_7_ASN_ENCODING | X509_ASN_ENCODING,
                                      (HCRYPTPROV_LEGACY) NULL, 0, NULL);
     if (!store) {
-        UM_LOG(ERR, "failed to open memory store: %s", win32_error(GetLastError()));
+        LOG_LAST_ERROR(ERR, "failed to open memory store");
         if (pem != buf) {
             tlsuv__free((void*)pem);
         }
@@ -158,15 +158,22 @@ static int load_cert_internal(HCERTSTORE *storep, const char *buf, size_t buf_le
 
     const char *p = pem;
     DWORD cert_len = 0;
+    bool first = true;
     while(CryptStringToBinaryA(p, buf_len - (p - pem), CRYPT_STRING_BASE64HEADER, NULL, &cert_len, NULL, NULL)) {
         BYTE *cert_bin = tlsuv__malloc(cert_len);
         CryptStringToBinaryA(p, buf_len - (p - pem), CRYPT_STRING_BASE64HEADER, cert_bin, &cert_len, NULL, NULL);
         p += cert_len;
         PCCERT_CONTEXT cert_ctx = CertCreateCertificateContext(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, cert_bin, cert_len);
         if (cert_ctx == NULL || !CertAddCertificateContextToStore(store, cert_ctx, CERT_STORE_ADD_ALWAYS, NULL)) {
-            UM_LOG(WARN, "failed to create certificate context: %s", win32_error(GetLastError()));
+            LOG_LAST_ERROR(WARN, "failed to create certificate context");
             CertFreeCertificateContext(cert_ctx);
+            cert_ctx = NULL;
         }
+
+        if (first && crt != NULL) {
+          *crt = cert_ctx;
+        }
+        first = false;
         tlsuv__free(cert_bin);
     }
     *storep = store;
@@ -180,11 +187,12 @@ static int load_cert_internal(HCERTSTORE *storep, const char *buf, size_t buf_le
 
 static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buf_len) {
     HCERTSTORE store;
-    if (load_cert_internal(&store, buf, buf_len) || store == INVALID_HANDLE_VALUE) {
+    PCCERT_CONTEXT crt;
+    if (load_cert_internal(&store, &crt, buf, buf_len) || store == INVALID_HANDLE_VALUE) {
         *cert = NULL;
         return -1;
     }
-    *cert = (tlsuv_certificate_t) win32_new_cert(store);
+    *cert = (tlsuv_certificate_t) win32_new_cert(crt, store);
     return 0;
 }
 
@@ -203,7 +211,7 @@ static int set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len) {
     struct win32tls *c = (struct win32tls*)ctx;
 
     HCERTSTORE store;
-    if (load_cert_internal(&store, ca, ca_len) || store == INVALID_HANDLE_VALUE) {
+    if (load_cert_internal(&store, NULL, ca, ca_len) || store == INVALID_HANDLE_VALUE) {
         return -1;
     }
 
@@ -252,15 +260,14 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
         char kid[64] = {};
         DWORD kid_len = sizeof(kid);
         if (!CertGetCertificateContextProperty(pcc, CERT_KEY_IDENTIFIER_PROP_ID, kid, &kid_len)) {
-            UM_LOG(ERR, "failed to get key id from the certificate: %s", win32_error(GetLastError()));
+            LOG_LAST_ERROR(ERR, "failed to get key id from the certificate");
             return -1;
         }
 
         CryptBinaryToStringW(kid, kid_len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, NULL, &len);
         key_name = tlsuv__calloc(len + 1, sizeof(*key_name));
         if (!CryptBinaryToStringW(kid, kid_len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, key_name, &len)) {
-            DWORD err = GetLastError();
-            UM_LOG(ERR, " key name error: 0x%lX/%s", err, win32_error(err));
+            LOG_LAST_ERROR(ERR,"key name error");
         }
 
         // step 2: export
@@ -268,7 +275,7 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
         DWORD key_blob_len = 0;
         rc = NCryptExportKey(pk->key, 0, exp_type, NULL, NULL, 0, &key_blob_len, 0);
         if (rc != 0) {
-            UM_LOG(ERR, "failed to export the key: 0x%lX/%s", rc, win32_error(rc));
+            LOG_ERROR(ERR, rc, "failed to export the key");
             tlsuv__free(key_name);
             return -1;
         }
@@ -292,11 +299,11 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
                              key_blob, key_blob_len, 0);
         tlsuv__free(key_blob);
         if (rc < 0) {
-            UM_LOG(ERR, "import key error: 0x%lX/%s", rc, win32_error(rc));
+            LOG_ERROR(ERR, rc, "import key error");
         }
 
     } else {
-        UM_LOG(ERR, "unexpected key error: 0x%lX/%s", rc, win32_error(rc));
+        LOG_ERROR(ERR, rc, "unexpected key error");
         return -1;
     }
 
@@ -308,8 +315,7 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
         .pwszProvName = prov_name,
     };
     if (!CertSetCertificateContextProperty(c->own_cert, CERT_KEY_PROV_INFO_PROP_ID, 0, &key_info)) {
-        DWORD err = GetLastError();
-        UM_LOG(ERR, "failed to set cert key: %lx/%s", err, win32_error(err));
+        LOG_LAST_ERROR(ERR, "failed to set cert key");
     }
     tlsuv__free(key_name);
 

@@ -14,8 +14,6 @@
 
 #include "cert.h"
 
-extern const char* win32_error(DWORD code);
-
 static void engine_free(tlsuv_engine_t e) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)e;
     tlsuv__free(engine->hostname);
@@ -40,7 +38,7 @@ static ssize_t socket_read(io_ctx io, char *buf, size_t len) {
         DWORD err = WSAGetLastError();
         if (err == WSAEWOULDBLOCK) return TLS_AGAIN;
 
-        UM_LOG(ERR, "socket read error: %s", win32_error(err));
+        LOG_ERROR(ERR, err, "socket read error");
         return TLS_ERR;
     }
     if (read == 0) {
@@ -78,52 +76,42 @@ static tls_handshake_state engine_handshake_state(tlsuv_engine_t self) {
     return engine->handshake_st;
 }
 
-static SECURITY_STATUS verify_server_cert(struct win32crypto_engine_s *engine) {
-    CERT_CONTEXT *server_cert = NULL;
+static int verify_cert_ca(const struct tlsuv_certificate_s * c, void *v_ctx) {
+    struct win32crypto_engine_s *engine = v_ctx;
+    win32_cert_t *cert = (win32_cert_t*)c;
+
+    PCCERT_CONTEXT peer_cert = CertDuplicateCertificateContext(cert->cert);
+    do {
+        DWORD check = CERT_STORE_SIGNATURE_FLAG;
+        PCCERT_CONTEXT local_iss = CertGetIssuerCertificateFromStore(engine->ca, peer_cert, NULL, &check);
+        if (local_iss) {
+            CertFreeCertificateContext(peer_cert);
+            CertFreeCertificateContext(local_iss);
+            return 0;
+        }
+
+        check = 0;
+        peer_cert = CertGetIssuerCertificateFromStore(peer_cert->hCertStore, peer_cert, peer_cert, &check);
+    } while (peer_cert);
+
+    return -1;
+}
+
+static SECURITY_STATUS verify_server_cert(struct win32crypto_engine_s *engine)
+{
+    PCCERT_CONTEXT server_cert = NULL;
     SECURITY_STATUS rc;
 
-    rc = QueryContextAttributes(&engine->ctxt_handle, SECPKG_ATTR_REMOTE_CERT_CONTEXT, &server_cert);
+    rc = QueryContextAttributes(&engine->ctxt_handle, SECPKG_ATTR_REMOTE_CERT_CHAIN, &server_cert);
     if (rc != SEC_E_OK) {
-        UM_LOG(ERR, "failed to get server cert: 0x%lX/%s", rc, win32_error(GetLastError()));
+        LOG_LAST_ERROR(ERR, "failed to get server cert");
         return rc;
     }
 
-    if (engine->cert_verify_f) {
-      HCERTSTORE s = CertOpenStore(CERT_STORE_PROV_MEMORY,
-                                   PKCS_7_ASN_ENCODING | X509_ASN_ENCODING,
-                                   (HCRYPTPROV_LEGACY) NULL, 0, NULL);
-      CertAddCertificateContextToStore(s, server_cert, CERT_STORE_ADD_ALWAYS,
-                                       NULL);
-      tlsuv_certificate_t crt = (tlsuv_certificate_t)win32_new_cert(s);
-      int verified = engine->cert_verify_f(crt, engine->verify_ctx);
-      crt->free(crt);
-
-      CertFreeCertificateContext(server_cert);
-      return  verified == 0 ? ERROR_SUCCESS : TRUST_E_FAIL;
-    }
-    HCERTCHAINENGINE verifier = NULL;
-    const CERT_CHAIN_CONTEXT *server_chain = NULL;
-    CERT_CHAIN_PARA params = {
-        .cbSize = sizeof(CERT_CHAIN_PARA),
-    };
-
-    CERT_CHAIN_ENGINE_CONFIG cfg = {
-            .cbSize = sizeof(cfg),
-            .hExclusiveRoot = engine->ca,
-    };
-
-    CertCreateCertificateChainEngine(&cfg, &verifier);
-
-    if (!CertGetCertificateChain(
-            verifier, server_cert,
-            NULL, NULL,
-            &params, 0, NULL,
-            &server_chain)) {
-        rc = (SECURITY_STATUS)GetLastError();
-        UM_LOG(ERR, "failed to get certificate chain: 0x%lX/%s", rc, win32_error(rc));
-    }
-
-    return rc;
+    tlsuv_certificate_t crt = (tlsuv_certificate_t)win32_new_cert(server_cert, server_cert->hCertStore);
+    int verified = engine->cert_verify_f(crt, engine->verify_ctx);
+    crt->free(crt);
+    return  verified == 0 ? ERROR_SUCCESS : TRUST_E_FAIL;
 }
 
 static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
@@ -190,9 +178,8 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         ctx ? NULL : &engine->ctxt_handle,
         &outbuf_desc, &ret_flags, NULL);
 
-    UM_LOG(VERB, "handshake result: 0x%lX/%s", rc, win32_error(rc));
     if (rc < 0) {
-        UM_LOG(VERB, "handshake result: 0x%lX/%s", rc, win32_error(rc));
+      LOG_ERROR(VERB, rc, "handshake result");
     }
 
     engine->status = rc;
@@ -211,11 +198,11 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
     switch (rc) {
         case SEC_E_OK:
             engine->handshake_st = TLS_HS_COMPLETE;
-            if (engine->ca) {
+            if (engine->cert_verify_f) {
                 rc = verify_server_cert(engine);
             }
             if (rc != SEC_E_OK) {
-                UM_LOG(ERR, "failed to verify server certificate: 0x%lX/%s", rc, win32_error(GetLastError()));
+                LOG_ERROR(ERR, rc, "failed to verify server certificate");
                 engine->handshake_st = TLS_HS_ERROR;
                 return engine->handshake_st;
             }
@@ -226,7 +213,7 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
             engine->handshake_st = TLS_HS_CONTINUE;
             break;
         default:
-            UM_LOG(ERR, "handshake result: 0x%lX/%s", rc, win32_error(rc));
+            LOG_ERROR(ERR, rc, "handshake failed");
             engine->handshake_st = TLS_HS_ERROR;
             break;
     }
@@ -293,7 +280,7 @@ static const char* engine_get_protocol(tlsuv_engine_t self) {
 
     SecPkgContext_ApplicationProtocol alpn = {0};
     if (QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_APPLICATION_PROTOCOL, &alpn) != SEC_E_OK) {
-        UM_LOG(ERR, "failed to get ALPN: %s", win32_error(GetLastError()));
+        LOG_LAST_ERROR(ERR, "failed to get ALPN");
         return NULL;
     }
 
@@ -348,7 +335,7 @@ static int engine_close(tlsuv_engine_t self) {
             }
         }
     } else {
-        UM_LOG(ERR, "failed to close TLS connection: %s", win32_error(GetLastError()));
+        LOG_LAST_ERROR(ERR, "failed to close TLS connection");
         return -1;
     }
     return 0;
@@ -380,7 +367,7 @@ static int engine_flush(struct win32crypto_engine_s *engine) {
     }
 
     if (written > 0) {
-        UM_LOG(VERB, "partial write: %zu of %zu bytes, error: %s", written, engine->outbound_len, win32_error(err));
+        LOG_ERROR(VERB, err, "partial write: %zu of %zu bytes", written, engine->outbound_len);
         memmove(engine->outbound, engine->outbound + written, engine->outbound_len - written);
         engine->outbound_len -= written;
         return 0;
@@ -431,7 +418,7 @@ static int engine_write(tlsuv_engine_t self, const char *data, size_t data_len) 
 
     SECURITY_STATUS rc = EncryptMessage(&engine->ctxt_handle, 0, &bufferDesc, 0);
     if (rc != SEC_E_OK) {
-        UM_LOG(ERR, "failed to encrypt message: 0x%lX/%s", rc, win32_error(rc));
+        LOG_ERROR(ERR, rc, "failed to encrypt message");
         return -1;
     }
     sent += p_len;
@@ -486,7 +473,7 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
 
         SecBufferDesc desc = {SECBUFFER_VERSION, 4, bufs};
         SECURITY_STATUS rc = DecryptMessage(&engine->ctxt_handle, &desc, 0, NULL);
-        UM_LOG(VERB, "decrypt message: 0x%lX/%s", rc, win32_error(rc));
+        LOG_ERROR(VERB, rc, "decrypt message");
 
         if (rc == SEC_E_OK) {
             assert(bufs[0].BufferType == SECBUFFER_STREAM_HEADER);
@@ -515,7 +502,7 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
             engine->inbound_len -= consumed;
             eof = true;
         } else {
-            UM_LOG(ERR, "failed to decrypt message: 0x%lX/%s", rc, win32_error(rc));
+            LOG_ERROR(ERR, rc, "failed to decrypt message: 0x%lX/%s");
             return TLS_ERR;
         }
 
@@ -561,13 +548,17 @@ struct win32crypto_engine_s *new_win32engine(
     engine->handshake_st = TLS_HS_BEFORE;
     engine->hostname = hostname ? tlsuv__strdup(hostname) : NULL;
 
+    engine->ca = ca;
     DWORD flags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_MEMORY_STORE_CERT ;
     if ((ca == NULL || ca == INVALID_HANDLE_VALUE) && cert_verify_f == NULL) {
         flags |= SCH_CRED_AUTO_CRED_VALIDATION;
-    } else {
-        engine->ca = ca;
+    } else if (cert_verify_f) {
         engine->cert_verify_f = cert_verify_f;
         engine->verify_ctx = verify_ctx;
+        flags |= SCH_CRED_MANUAL_CRED_VALIDATION;
+    } else {
+        engine->cert_verify_f = verify_cert_ca;
+        engine->verify_ctx = engine;
         flags |= SCH_CRED_MANUAL_CRED_VALIDATION;
     }
 
@@ -586,6 +577,6 @@ struct win32crypto_engine_s *new_win32engine(
                               &credentials, NULL, NULL,
                               &engine->cred_handle,
                               NULL);
-    UM_LOG(VERB, "rc = 0x%lX/%s", rc, win32_error(rc));
+    LOG_ERROR(VERB, rc, "AcquireCredentialsHandleA result");
     return engine;
 }
