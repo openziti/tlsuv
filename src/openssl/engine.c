@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <sys/stat.h>
 
 #include "../alloc.h"
 #include "../um_debug.h"
@@ -68,7 +69,7 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
 
 static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len);
 
-tlsuv_engine_t new_openssl_engine(void *ctx, const char *host);
+tlsuv_engine_t new_openssl_engine(tls_context *ctx, const char *host);
 static void set_io(tlsuv_engine_t , io_ctx , io_read , io_write);
 static void set_io_fd(tlsuv_engine_t , tlsuv_sock_t);
 static void set_protocols(tlsuv_engine_t self, const char** protocols, int len);
@@ -168,7 +169,7 @@ int configure_openssl() {
             UM_LOG(ERR, "failed to load config from [%s]: %s", cnf,
                    ERR_error_string(ERR_get_error(), NULL));
             OSSL_LIB_CTX_free(ctx);
-            return UV_EINVAL;
+            return -1;
         }
 
         OSSL_LIB_CTX_free(global_ctx);
@@ -564,8 +565,8 @@ void info_cb(const SSL *s, int where, int ret) {
     }
 }
 
-tlsuv_engine_t new_openssl_engine(void *ctx, const char *host) {
-    struct openssl_ctx *context = ctx;
+tlsuv_engine_t new_openssl_engine(tls_context *ctx, const char *host) {
+    struct openssl_ctx *context = (openssl_ctx *) ctx;
 
     struct openssl_engine *engine = tlsuv__calloc(1, sizeof(struct openssl_engine));
     engine->api = openssl_engine_api;
@@ -595,7 +596,7 @@ static void set_io(tlsuv_engine_t self, io_ctx io, io_read rdf, io_write wrtf) {
     e->write_f = wrtf;
 }
 
-static void set_io_fd(tlsuv_engine_t self, uv_os_fd_t fd) {
+static void set_io_fd(tlsuv_engine_t self, tlsuv_sock_t fd) {
     struct openssl_engine *e = (struct openssl_engine *) self;
     assert(e->bio == NULL);
 
