@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <sys/stat.h>
 
 #include "../alloc.h"
 #include "../um_debug.h"
@@ -29,7 +30,6 @@
 
 #include "keys.h"
 #include "../keychain.h"
-#include "uv.h"
 
 #if _WIN32
 #include <windows.h>
@@ -169,7 +169,7 @@ int configure_openssl() {
             UM_LOG(ERR, "failed to load config from [%s]: %s", cnf,
                    ERR_error_string(ERR_get_error(), NULL));
             OSSL_LIB_CTX_free(ctx);
-            return UV_EINVAL;
+            return -1;
         }
 
         OSSL_LIB_CTX_free(global_ctx);
