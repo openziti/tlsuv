@@ -136,37 +136,30 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
             ISC_REQ_SEQUENCE_DETECT |
             ISC_REQ_STREAM;
     u_long ret_flags = 0;
-    SecBuffer outbuf = {
-            .pvBuffer = engine->outbound,
-            .cbBuffer = sizeof(engine->outbound),
-            .BufferType = SECBUFFER_TOKEN,
+    SecBuffer outbuf[3] = {
+        { .BufferType = SECBUFFER_TOKEN, },
+        { .BufferType = SECBUFFER_EMPTY },
+        { .BufferType = SECBUFFER_EMPTY },
     };
-    SecBufferDesc outbuf_desc = {
-            .cBuffers = 1,
-            .pBuffers = &outbuf,
-            .ulVersion = SECBUFFER_VERSION,
-    };
+    SecBufferDesc outbuf_desc = { SECBUFFER_VERSION, 2, outbuf };
 
-    SecBuffer inbuf = {
-            .pvBuffer = engine->inbound + engine->inbound_len,
-            .cbBuffer = sizeof(inbuf) - engine->inbound_len,
-            .BufferType = SECBUFFER_TOKEN,
-    };
-    SecBufferDesc inbuf_desc = {
-            .cBuffers = 1,
-            .pBuffers = &inbuf,
-            .ulVersion = SECBUFFER_VERSION,
-    };
+    SecBuffer inbuf[2] = { };
+    inbuf[0].cbBuffer = engine->inbound_len;
+    inbuf[0].pvBuffer = engine->inbound;
+    inbuf[0].BufferType = SECBUFFER_TOKEN;
 
-    if (engine->status == SEC_I_CONTINUE_NEEDED || engine->status == SEC_E_INCOMPLETE_MESSAGE) {
-        size_t read = engine->read_fn(engine->io,
+    SecBufferDesc inbuf_desc = { SECBUFFER_VERSION, 2, inbuf };
+
+    if (engine->status == SEC_I_CONTINUE_NEEDED ||
+        engine->status == SEC_E_INCOMPLETE_MESSAGE) {
+        ssize_t read = engine->read_fn(engine->io,
                                       engine->inbound + engine->inbound_len,
                                       sizeof(engine->inbound) - engine->inbound_len);
         if (read > 0) {
             engine->inbound_len += read;
             UM_LOG(VERB, "read %zd bytes of handshake data", read);
-            inbuf.cbBuffer = (unsigned long)engine->inbound_len;
-            inbuf.pvBuffer = engine->inbound;
+            inbuf[0].cbBuffer = (unsigned long)engine->inbound_len;
+            inbuf[0].pvBuffer = engine->inbound;
         } else {
             UM_LOG(ERR, "failed to read handshake data: %zd", read);
             engine->handshake_st = TLS_HS_ERROR;
@@ -174,30 +167,43 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         }
     }
 
+    char in[32000];
     if (engine->protocols) {
-        memcpy(inbuf.pvBuffer, engine->protocols, engine->protocols_len);
-        inbuf.BufferType = SECBUFFER_APPLICATION_PROTOCOLS;
-        inbuf.cbBuffer = engine->protocols_len;
+        memcpy(inbuf[0].pvBuffer, engine->protocols, engine->protocols_len);
+        inbuf[0].BufferType = SECBUFFER_APPLICATION_PROTOCOLS;
+        inbuf[0].cbBuffer = engine->protocols_len;
+    } else if (engine->inbound_len > 0) {
+        memcpy(in, engine->inbound, engine->inbound_len);
+        inbuf[0].BufferType = SECBUFFER_TOKEN;
+        inbuf[0].pvBuffer = in;
+        inbuf[0].cbBuffer = engine->inbound_len;
     }
 
     PCtxtHandle ctx = engine->handshake_st == TLS_HS_BEFORE ? NULL : &engine->ctxt_handle;
 
-    TimeStamp ts;
+    UM_LOG(ERR, "processing %d bytes", inbuf[0].cbBuffer);
     SECURITY_STATUS rc = InitializeSecurityContextA(
         &engine->cred_handle, ctx, ctx ? NULL : engine->hostname,
         req_flags, 0, 0,
         ctx || engine->protocols ? &inbuf_desc : NULL,
-        0, ctx ? NULL : &engine->ctxt_handle,
-        &outbuf_desc, &ret_flags, &ts);
+        0,
+        ctx ? NULL : &engine->ctxt_handle,
+        &outbuf_desc, &ret_flags, NULL);
 
     UM_LOG(VERB, "handshake result: 0x%lX/%s", rc, win32_error(rc));
+    if (rc < 0) {
+        UM_LOG(VERB, "handshake result: 0x%lX/%s", rc, win32_error(rc));
+    }
 
     engine->status = rc;
     tlsuv__free(engine->protocols);
     engine->protocols = NULL;
 
-    if (inbuf.BufferType == SECBUFFER_EXTRA) {
-        UM_LOG(VERB, "extra data in handshake buffer: %lu bytes", inbuf.cbBuffer);
+    if (inbuf[1].BufferType == SECBUFFER_EXTRA) {
+        UM_LOG(VERB, "extra data in handshake buffer: %lu bytes", inbuf[1].cbBuffer);
+        size_t consumed = engine->inbound_len - inbuf[1].cbBuffer;
+        memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
+        engine->inbound_len -= consumed;
     } else {
         engine->inbound_len = 0;
     }
@@ -225,14 +231,16 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
             break;
     }
 
-    if (outbuf.pvBuffer && outbuf.cbBuffer > 0) {
+    if (outbuf[0].pvBuffer && outbuf[0].cbBuffer > 0) {
         if (engine->write_fn) {
-            ssize_t written = engine->write_fn(engine->io, outbuf.pvBuffer, outbuf.cbBuffer);
-            if (written < outbuf.cbBuffer) {
+            ssize_t written = engine->write_fn(engine->io, outbuf[0].pvBuffer, outbuf[0].cbBuffer);
+            UM_LOG(VERB, "HS wrote %zd", written);
+            if (written < outbuf[0].cbBuffer) {
                 UM_LOG(ERR, "failed to write handshake data: %zd", written);
                 engine->handshake_st = TLS_HS_ERROR;
             }
         }
+        FreeContextBuffer(outbuf[0].pvBuffer);
     }
     return engine->handshake_st;
 }
@@ -357,7 +365,7 @@ static int engine_flush(struct win32crypto_engine_s *engine) {
         if (rc > 0) {
             p += rc;
             written += rc;
-            UM_LOG(INFO, "wrote %zd bytes of outbound data", rc);
+            UM_LOG(VERB, "wrote %zd bytes of outbound data", rc);
             continue;
         }
 
@@ -367,19 +375,19 @@ static int engine_flush(struct win32crypto_engine_s *engine) {
 
     if (written == engine->outbound_len) {
         engine->outbound_len = 0;
-        UM_LOG(INFO, "flushed %zu bytes of outbound data", written);
+        UM_LOG(VERB, "flushed %zu bytes of outbound data", written);
         return 0;
     }
 
     if (written > 0) {
-        UM_LOG(ERR, "partial write: %zu of %zu bytes, error: %s", written, engine->outbound_len, win32_error(err));
+        UM_LOG(VERB, "partial write: %zu of %zu bytes, error: %s", written, engine->outbound_len, win32_error(err));
         memmove(engine->outbound, engine->outbound + written, engine->outbound_len - written);
         engine->outbound_len -= written;
         return 0;
     }
 
     if (err == WSAEWOULDBLOCK || err == WSAEINTR) {
-        UM_LOG(INFO, "write would block or interrupted, retrying later");
+        UM_LOG(VERB, "write would block or interrupted, retrying later");
         return TLS_AGAIN;
     }
     return TLS_ERR;
@@ -520,6 +528,10 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
     return TLS_OK;
 }
 
+static void engine_reset (tlsuv_engine_t self) {
+    struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
+}
+
 static const char* engine_strerror(tlsuv_engine_t self) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
     return win32_error(engine->status);
@@ -549,7 +561,7 @@ struct win32crypto_engine_s *new_win32engine(
     engine->handshake_st = TLS_HS_BEFORE;
     engine->hostname = hostname ? tlsuv__strdup(hostname) : NULL;
 
-    DWORD flags = SCH_CRED_NO_DEFAULT_CREDS;
+    DWORD flags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_MEMORY_STORE_CERT ;
     if ((ca == NULL || ca == INVALID_HANDLE_VALUE) && cert_verify_f == NULL) {
         flags |= SCH_CRED_AUTO_CRED_VALIDATION;
     } else {
@@ -558,11 +570,6 @@ struct win32crypto_engine_s *new_win32engine(
         engine->verify_ctx = verify_ctx;
         flags |= SCH_CRED_MANUAL_CRED_VALIDATION;
     }
-
-    NCRYPT_KEY_HANDLE kh = 0;
-    DWORD ks = sizeof(kh);
-    if (own_cert)
-        CertGetCertificateContextProperty(own_cert, CERT_NCRYPT_KEY_HANDLE_PROP_ID, &kh, &ks);
 
     PCCERT_CONTEXT certs[1] = { own_cert, };
     SCHANNEL_CRED credentials = {
@@ -579,6 +586,6 @@ struct win32crypto_engine_s *new_win32engine(
                               &credentials, NULL, NULL,
                               &engine->cred_handle,
                               NULL);
-    UM_LOG(INFO, "rc = 0x%lX/%s", rc, win32_error(rc));
+    UM_LOG(VERB, "rc = 0x%lX/%s", rc, win32_error(rc));
     return engine;
 }

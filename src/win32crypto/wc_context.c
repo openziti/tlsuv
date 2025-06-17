@@ -46,8 +46,10 @@ int configure_win32crypto() {
 const char* win32_error(DWORD code) {
     static char msg[1024];
 
-    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                   NULL, code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)msg, sizeof(msg), NULL);
+  FormatMessageA(
+      FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK,
+                   NULL, code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                   (LPSTR)msg, sizeof(msg), NULL);
     return msg;
 }
 
@@ -226,7 +228,17 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
     wchar_t prov_name[128] = {};
     NCryptGetProperty(pk->provider, NCRYPT_NAME_PROPERTY, (PVOID)prov_name, sizeof(prov_name), &len, 0);
 
-    PCCERT_CONTEXT pcc = CertEnumCertificatesInStore(crt->store, NULL);
+    CryptExportPublicKeyInfo(pk->key, 0, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, NULL, &len);
+    CERT_PUBLIC_KEY_INFO *pub_info = tlsuv__malloc(len);
+    CryptExportPublicKeyInfo(pk->key, 0, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, pub_info, &len);
+
+    PCCERT_CONTEXT pcc = CertFindCertificateInStore(crt->store, X509_ASN_ENCODING, 0, CERT_FIND_PUBLIC_KEY, pub_info, NULL);
+    tlsuv__free(pub_info);
+
+    if (pcc == NULL) {
+        UM_LOG(ERR, "cert/key mismatch");
+        return -1;
+    }
 
     wchar_t *key_name = NULL;
     SECURITY_STATUS rc = NCryptGetProperty(pk->key, NCRYPT_NAME_PROPERTY, (PVOID)NULL, 0, &len, 0);
@@ -301,9 +313,9 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
     }
     tlsuv__free(key_name);
 
-    pcc = CertEnumCertificatesInStore(crt->store, pcc);
+    pcc = CertEnumCertificatesInStore(crt->store, NULL);
     while (pcc) {
-        CertAddCertificateContextToStore(c->own_store, pcc, CERT_STORE_ADD_ALWAYS, NULL);
+        CertAddCertificateContextToStore(c->own_store, pcc, CERT_STORE_ADD_USE_EXISTING, NULL);
         pcc = CertEnumCertificatesInStore(crt->store, pcc);
     }
 
