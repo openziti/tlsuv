@@ -54,12 +54,15 @@ enum hash_algo {
 #include <winsock2.h>
 typedef SOCKET tlsuv_sock_t;
 #else
+#include <stdint.h>
 typedef int tlsuv_sock_t;
 #endif
 
 #if !defined(_SSIZE_T_) && !defined(_SSIZE_T_DEFINED)
 typedef intptr_t ssize_t;
-# define SSIZE_MAX INTPTR_MAX
+# if !defined SSIZE_MAX
+#  define SSIZE_MAX INTPTR_MAX
+# endif
 # define _SSIZE_T_
 # define _SSIZE_T_DEFINED
 #endif
