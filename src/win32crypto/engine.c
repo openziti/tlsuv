@@ -206,7 +206,7 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         size_t consumed = engine->inbound_len - inbuf[1].cbBuffer;
         memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
         engine->inbound_len -= consumed;
-    } else {
+    } else if (rc != SEC_E_INCOMPLETE_MESSAGE) {
         engine->inbound_len = 0;
     }
 
@@ -466,7 +466,7 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
     bool eof = false;
     do {
         ssize_t read = engine->read_fn(engine->io, engine->inbound + engine->inbound_len,
-                                       sizeof(engine->inbound) - engine->outbound_len);
+                            sizeof(engine->inbound) - engine->inbound_len);
         if (read > 0) {
             engine->inbound_len += read;
             UM_LOG(VERB, "read %zd bytes of TLS data", read);
@@ -511,7 +511,8 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
         } else if (rc == SEC_E_INCOMPLETE_MESSAGE) {
             break;
         } else if (rc == SEC_I_CONTEXT_EXPIRED) {
-            size_t consumed = bufs[0].cbBuffer + bufs[1].cbBuffer + bufs[2].cbBuffer;
+            size_t consumed = engine->inbound_len -
+                (bufs[3].BufferType == SECBUFFER_EXTRA ? bufs[3].cbBuffer : 0);
             assert(consumed <= engine->inbound_len);
             memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
             engine->inbound_len -= consumed;
