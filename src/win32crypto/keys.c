@@ -550,7 +550,6 @@ int win32crypto_load_keychain_key(tlsuv_private_key_t *pk, const char *id) {
     }
 
     UM_LOG(ERR, "failed to find key[%s] in any provider", id);
-    NCryptFreeObject(ph);
     return -1;
 }
 
