@@ -74,7 +74,18 @@ static void tls_free_ctx (tls_context *ctx) {
 static const char* tls_lib_version() {
     static char version[256];
     if (*version == 0) {
-        snprintf(version, sizeof(version), "win32 schannel: TODO");
+        NCRYPT_PROV_HANDLE ph = 0;
+        DWORD ncrypt_ver = 0;
+        DWORD l;
+        if (NCryptOpenStorageProvider(&ph, MS_PLATFORM_KEY_STORAGE_PROVIDER, 0) == ERROR_SUCCESS &&
+            NCryptGetProperty(ph, NCRYPT_VERSION_PROPERTY, (PVOID)&ncrypt_ver, sizeof(ncrypt_ver), &l, 0) == ERROR_SUCCESS) {
+            NCryptFreeObject(ph);
+        }
+        BOOLEAN fips = FALSE;
+        BCryptGetFipsAlgorithmMode(&fips);
+
+        snprintf(version, sizeof(version), "win32crypto(CNG): ncrypt[%d.%d] %s",
+                 HIWORD(ncrypt_ver), LOWORD(ncrypt_ver), fips ? "FIPS" : "");
     }
     return version;
 }
