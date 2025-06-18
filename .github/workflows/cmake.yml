@@ -43,6 +43,9 @@ jobs:
           - image: windows
             tls: mbedtls
             target: x64-windows-static-md
+          - image: windows
+            tls: win32crypto
+            target: x64-windows-static-md
 
     steps:
     - name: Install tools
