@@ -126,6 +126,17 @@ iemZJfIkLzyuwra/o7WkK+hK
     }
 
     WHEN("load EC key") {
+        const char *pem = R"(-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIMWGag/hK7RXuDol/9YckdFTlJlDDHCxUgBzNYx2QX7BoAoGCCqGSM49
+AwEHoUQDQgAEM3anktl6pp67K2hi0h0eLsYSjJ32ySZUxQqPfj0Ww6g3hlYbfPfJ
+wUCYxPvYv6zrPXOi81bMLKDK555IaxEjBQ==
+-----END EC PRIVATE KEY-----
+)";
+        REQUIRE(0 == ctx->load_key(&key, pem, strlen(pem)));
+        check_key(key);
+    }
+
+    WHEN("load EC[PKCS8] key") {
         const char *pem = R"(-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgxYZqD+ErtFe4OiX/
 1hyR0VOUmUMMcLFSAHM1jHZBfsGhRANCAAQzdqeS2XqmnrsraGLSHR4uxhKMnfbJ

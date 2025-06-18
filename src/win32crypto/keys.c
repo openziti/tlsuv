@@ -26,6 +26,12 @@
 #define PK_HEADER  "-----BEGIN PRIVATE KEY-----\n"
 #define PK_FOOTER "-----END PRIVATE KEY-----\n"
 
+#define EC_PK_HEADER  "-----BEGIN EC PRIVATE KEY-----\n"
+#define EC_PK_FOOTER "-----END EC PRIVATE KEY-----\n"
+
+#define RSA_PK_HEADER  "-----BEGIN RSA PRIVATE KEY-----\n"
+#define RSA_PK_FOOTER "-----END RSA PRIVATE KEY-----\n"
+
 #define PUB_HEADER  "-----BEGIN PUBLIC KEY-----\n"
 #define PUB_FOOTER "-----END PUBLIC KEY-----\n"
 
@@ -65,7 +71,7 @@ extern int win32crypto_generate_key(tlsuv_private_key_t *key) {
     return *key ? 0 : -1;
 }
 
-static NCRYPT_KEY_HANDLE load_rsa_key(NCRYPT_PROV_HANDLE prov, const BYTE *der, size_t der_len) {
+static SECURITY_STATUS load_rsa_key(NCRYPT_PROV_HANDLE prov, NCRYPT_KEY_HANDLE *kh, const BYTE *der, size_t der_len) {
     NTSTATUS r;
     BCRYPT_RSAKEY_BLOB *key_blob;
     DWORD info;
@@ -74,36 +80,35 @@ static NCRYPT_KEY_HANDLE load_rsa_key(NCRYPT_PROV_HANDLE prov, const BYTE *der, 
                                   CRYPT_DECODE_ALLOC_FLAG, &DECODE_PARAMS,
                                   &key_blob, &info);
     if (!rc) {
-        UM_LOG(ERR, "failed to parse RSA KEY info: %s", win32_error(GetLastError()));
-        return 0;
+        r = (SECURITY_STATUS)GetLastError();
+        LOG_ERROR(ERR, r, "failed to parse RSA KEY info");
+        return r;
     }
-
-    NCRYPT_KEY_HANDLE kh = 0;
 
     r = NCryptImportKey(prov, 0, BCRYPT_RSAPRIVATE_BLOB, NULL,
-                        &kh, (void*)key_blob, info, NCRYPT_DO_NOT_FINALIZE_FLAG);
+                        kh, (void*)key_blob, info, NCRYPT_DO_NOT_FINALIZE_FLAG);
 
-    if (!BCRYPT_SUCCESS(r))
-    {
-        UM_LOG(ERR, "failed to import RSA key: %s", win32_error(r));
+    if (!BCRYPT_SUCCESS(r)) {
+        LOG_ERROR(ERR, r, "failed to import RSA key");
     }
-    return kh;
+    return r;
 }
-static NCRYPT_KEY_HANDLE load_ecc_key(NCRYPT_PROV_HANDLE prov, const BYTE *der, size_t der_len) {
+
+static SECURITY_STATUS load_ecc_key(NCRYPT_PROV_HANDLE prov, NCRYPT_KEY_HANDLE *kh, const BYTE *der, size_t der_len) {
     NCRYPT_KEY_HANDLE keyH = 0;
-    NTSTATUS rc = 0;
+    SECURITY_STATUS rc = 0;
     struct {
         CRYPT_ECC_PRIVATE_KEY_INFO eck;
         BYTE buf[1024];
     } ecc_info = {};
     ULONG len = sizeof(ecc_info);
 
-    rc = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+    if (!CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
                              X509_ECC_PRIVATE_KEY, der, der_len,
-                             0, &DECODE_PARAMS, &ecc_info, &len);
-    if (!rc) {
-        UM_LOG(ERR, "failed to parse EC KEY info: %s", win32_error(GetLastError()));
-        return 0;
+                             0, &DECODE_PARAMS, &ecc_info, &len)) {
+        rc = (SECURITY_STATUS)GetLastError();
+        LOG_ERROR(ERR, rc, "failed to parse EC KEY info");
+        return rc;
     }
 
     struct {
@@ -138,10 +143,12 @@ static NCRYPT_KEY_HANDLE load_ecc_key(NCRYPT_PROV_HANDLE prov, const BYTE *der, 
         prov, 0, BCRYPT_ECCPRIVATE_BLOB, NULL, &keyH,
         (PBYTE) &ecc_blob, sizeof(ecc_blob.ec_blob) + 3 * ecc_blob.ec_blob.cbKey, NCRYPT_DO_NOT_FINALIZE_FLAG);
 
-    if (rc != 0) {
-        UM_LOG(ERR, "failed to import ecc key pair: %s", win32_error(rc));
+    if (rc != ERROR_SUCCESS) {
+        LOG_ERROR(ERR, rc, "failed to import ecc key pair");
+    } else {
+        *kh = keyH;
     }
-    return keyH;
+    return rc;
 }
 
 extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size_t data_len) {
@@ -162,17 +169,18 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
                                   CRYPT_STRING_BASE64HEADER, der, &der_len,
                                   &skip, NULL);
     } else {
-        UM_LOG(ERR, "failed to decode PEM data");
+        LOG_LAST_ERROR(ERR, "failed to decode PEM data");
         return -1;
     }
 
     NCRYPT_PROV_HANDLE ph = 0;
     NCRYPT_KEY_HANDLE kh = 0;
+    SECURITY_STATUS status = ERROR_SUCCESS;
     NCryptOpenStorageProvider(&ph, MS_KEY_STORAGE_PROVIDER, 0);
 
     const char *header = data + skip;
     if (strncmp(header, PK_HEADER, sizeof(PK_HEADER) -1) == 0) {
-        SECURITY_STATUS status = NCryptImportKey(
+        status = NCryptImportKey(
             ph, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, NULL,
             &kh, der, der_len,
             NCRYPT_SILENT_FLAG | NCRYPT_DO_NOT_FINALIZE_FLAG);
@@ -180,33 +188,19 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
             goto finish;
         }
         UM_LOG(ERR, "failed to parse private key info: %s", win32_error(status));
+    } else if (strncmp(header, EC_PK_HEADER, sizeof(EC_PK_HEADER) - 1) == 0) {
+        status = load_ecc_key(ph, &kh, der, der_len);
+    } else if (strncmp(header, RSA_PK_HEADER, sizeof(RSA_PK_HEADER) - 1) == 0 ) {
+        status = load_rsa_key(ph, &kh, der, der_len);
+    } else {
+        status = SEC_E_INVALID_PARAMETER;
     }
 
-    DWORD str_info = sizeof(pk_info);
-    rc = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-                             PKCS_PRIVATE_KEY_INFO, der, der_len,
-                             CRYPT_DECODE_NOCOPY_FLAG, &DECODE_PARAMS,
-                             &pk_info, &str_info);
-    if (!rc) {
-        UM_LOG(ERR, "failed to parse private key info: %s", win32_error(GetLastError()));
-        tlsuv__free(der);
-        return -1;
-    }
-
-    if (strcmp(pk_info.info.Algorithm.pszObjId, szOID_ECC_PUBLIC_KEY) == 0) {
-        char *algo = NULL;
-        DWORD algo_len = 0;
-        CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, X509_OBJECT_IDENTIFIER,
-                            pk_info.info.Algorithm.Parameters.pbData,
-                            pk_info.info.Algorithm.Parameters.cbData,
-                            CRYPT_DECODE_ALLOC_FLAG, NULL,
-                            &algo, &algo_len);
-        kh = load_ecc_key(ph, pk_info.info.PrivateKey.pbData, pk_info.info.PrivateKey.cbData);
-    } else if (strcmp(pk_info.info.Algorithm.pszObjId, szOID_RSA_RSA) == 0) {
-        kh = load_rsa_key(ph, pk_info.info.PrivateKey.pbData, pk_info.info.PrivateKey.cbData);
-    }
 finish:
     tlsuv__free(der);
+    if (status != ERROR_SUCCESS) {
+        UM_LOG(ERR, "failed to parse private key info: %s", win32_error(status));
+    }
     if (kh != 0) {
         // make key exportable in case we need to re-import it for mutual auth
         DWORD export_policy = NCRYPT_ALLOW_EXPORT_FLAG | NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG;
