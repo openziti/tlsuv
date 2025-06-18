@@ -108,7 +108,7 @@ struct mbedtls_engine {
 static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** protos, int len);
 static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certificate_t cert);
 
-tlsuv_engine_t new_mbedtls_engine(void *ctx, const char *host);
+tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host);
 
 static void mbedtls_set_io(tlsuv_engine_t, io_ctx , io_read , io_write );
 static void mbedtls_set_fd(tlsuv_engine_t, uv_os_fd_t );
@@ -393,7 +393,7 @@ static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uin
     return 0;
 }
 
-tlsuv_engine_t new_mbedtls_engine(void *ctx, const char *host) {
+tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host) {
     struct mbedtls_context *context = ctx;
 
     struct mbedtls_engine *mbed_eng = tlsuv__calloc(1, sizeof(struct mbedtls_engine));
