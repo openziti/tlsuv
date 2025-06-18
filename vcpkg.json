@@ -11,8 +11,15 @@
       "dependencies": [
         {
           "name": "tlsuv",
+          "platform": "!windows & !mingw",
           "default-features": false,
           "features": [ "openssl" ]
+        },
+        {
+          "name": "tlsuv",
+          "platform": "windows | mingw",
+          "$comment": "use windows native crypto",
+          "default-features": false
         }
       ]
     },
