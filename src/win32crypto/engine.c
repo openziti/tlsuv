@@ -340,7 +340,9 @@ static int engine_close(tlsuv_engine_t self) {
         ISC_REQ_STREAM | ISC_REQ_CONFIDENTIALITY,
         0, 0, NULL, 0,
         &engine->ctxt_handle, &outbuf_desc, &flags, NULL);
-    UM_LOG(ERR, "close result: 0x%lX flags: 0x%lX", rc, flags);
+    if (rc != ERROR_SUCCESS) {
+        LOG_ERROR(ERR, rc, "close result flags[0x%lX]", flags);
+    }
     if (rc == SEC_E_OK || rc == SEC_I_CONTINUE_NEEDED) {
         if (outbuf.cbBuffer > 0 && engine->write_fn) {
             ssize_t written = engine->write_fn(engine->io, outbuf.pvBuffer, outbuf.cbBuffer);

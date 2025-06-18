@@ -91,8 +91,7 @@ static int cert_verify(const struct tlsuv_certificate_s *cert, enum hash_algo md
 
     win32_cert_t *c = (win32_cert_t *) cert;
 
-    PCCERT_CONTEXT cert_ctx = c->cert ? CertDuplicateCertificateContext(c->cert)
-                                  : CertEnumCertificatesInStore(c->store, NULL);
+    PCCERT_CONTEXT cert_ctx = c->cert;
     if (!cert_ctx) {
         UM_LOG(ERR, "No certificates found in store");
         rc = -1;
@@ -150,7 +149,6 @@ if (!BCRYPT_SUCCESS(res)) {  \
 
     if (hash_algo) BCryptCloseAlgorithmProvider(hash_algo, 0);
     if (hash) BCryptDestroyHash(hash);
-    if (cert_ctx) CertFreeCertificateContext(cert_ctx);
     if (key) BCryptDestroyKey(key);
 
     return rc;
@@ -173,8 +171,6 @@ static int get_expiration(const struct tlsuv_certificate_s *cert,  struct tm *tm
     tm->tm_hour = sys_time.wHour;
     tm->tm_min = sys_time.wMinute;
     tm->tm_sec = sys_time.wSecond;
-
-    CertFreeCertificateContext(cert_ctx);
 
     return 0;
 }
