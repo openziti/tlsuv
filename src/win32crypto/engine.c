@@ -184,7 +184,7 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
 
     PCtxtHandle ctx = engine->handshake_st == TLS_HS_BEFORE ? NULL : &engine->ctxt_handle;
 
-    UM_LOG(ERR, "processing %d bytes", inbuf[0].cbBuffer);
+    UM_LOG(TRACE, "processing %d bytes", inbuf[0].cbBuffer);
     SECURITY_STATUS rc = InitializeSecurityContextA(
         &engine->cred_handle, ctx, ctx ? NULL : engine->hostname,
         req_flags, 0, 0,

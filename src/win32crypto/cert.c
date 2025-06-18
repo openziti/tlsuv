@@ -100,8 +100,7 @@ static int cert_verify(const struct tlsuv_certificate_s *cert, enum hash_algo md
     }
     CERT_PUBLIC_KEY_INFO *pk = &cert_ctx->pCertInfo->SubjectPublicKeyInfo;
     if (!CryptImportPublicKeyInfoEx2(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-            pk, 0, NULL, &key
-            )) {
+                                     pk, 0, NULL, &key)) {
         LOG_LAST_ERROR(ERR, "Failed to import public key");
         rc = -1;
         goto done;
@@ -137,9 +136,13 @@ if (!BCRYPT_SUCCESS(res)) {  \
     CHECK(BCryptHashData(hash, (PUCHAR)data, datalen, 0));
     CHECK(BCryptFinishHash(hash, hash_bin, hash_bin_len, 0));
 
-    NTSTATUS verified = BCryptVerifySignature(key, NULL, hash_bin, hash_bin_len, (PUCHAR) sig, siglen, 0);
+    BCRYPT_PKCS1_PADDING_INFO pad = { hash_algo_id };
+    DWORD flags = strcmp(pk->Algorithm.pszObjId, szOID_RSA_RSA) == 0 ? NCRYPT_PAD_PKCS1_FLAG : 0;
+
+    NTSTATUS verified = BCryptVerifySignature(key, flags ? &pad : NULL,
+        hash_bin, hash_bin_len, (PUCHAR) sig, siglen, flags);
     if (!BCRYPT_SUCCESS(verified)) {
-        UM_LOG(ERR, "Signature verification failed: 0x%X", verified);
+        LOG_ERROR(ERR, verified, "Signature verification failed");
         rc = -1;
     }
 
