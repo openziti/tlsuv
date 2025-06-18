@@ -33,6 +33,7 @@ static void test_log_f(int lvl, const char *file, unsigned int line, const char*
 
     fprintf(stderr, "[%6ld.%03ld]%5s %s:%d %s\n", elapsed/1000, elapsed % 1000,
             err_labels[lvl], file, line, msg);
+    fflush(stderr);
 }
 
 tlsuv_log_func test_log = test_log_f;
@@ -41,6 +42,12 @@ tlsuv_log_func test_log = test_log_f;
 #define str(s) #s
 
 int main( int argc, char* argv[] ) {
+#ifdef _WIN32
+    SetConsoleOutputCP(65001);
+    WSADATA WSAData;
+    int err = WSAStartup(MAKEWORD(2, 0), &WSAData);
+#endif
+
 #if defined(HSM_CONFIG)
     uv_os_setenv("SOFTHSM2_CONF", xstr(HSM_CONFIG));
 #endif

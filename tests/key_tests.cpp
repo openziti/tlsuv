@@ -69,8 +69,7 @@ static void check_key(tlsuv_private_key_t key) {
     const char *data = "this is an important message";
     size_t datalen = strlen(data);
 
-    char sig[256];
-    memset(sig, 0, sizeof(sig));
+    char sig[256] = {};
     size_t siglen = sizeof(sig);
 
     CHECK(-1 == pub->verify(pub, hash_SHA256, data, datalen, sig, siglen));
@@ -128,10 +127,21 @@ iemZJfIkLzyuwra/o7WkK+hK
 
     WHEN("load EC key") {
         const char *pem = R"(-----BEGIN EC PRIVATE KEY-----
-MHcCAQEEIDkQFm34yO6vjVPw71v+O8l4r7TelfL8jLnakR8IbARvoAoGCCqGSM49
-AwEHoUQDQgAEozzayHZuK1VKSJdnSlQtMWF0iLIkqGxbxWCL6/QlGAATbNSkcW8b
-lAkOwU8XOpspVUfYbwPSVSoS2NXn1rE7iA==
+MHcCAQEEIMWGag/hK7RXuDol/9YckdFTlJlDDHCxUgBzNYx2QX7BoAoGCCqGSM49
+AwEHoUQDQgAEM3anktl6pp67K2hi0h0eLsYSjJ32ySZUxQqPfj0Ww6g3hlYbfPfJ
+wUCYxPvYv6zrPXOi81bMLKDK555IaxEjBQ==
 -----END EC PRIVATE KEY-----
+)";
+        REQUIRE(0 == ctx->load_key(&key, pem, strlen(pem)));
+        check_key(key);
+    }
+
+    WHEN("load EC[PKCS8] key") {
+        const char *pem = R"(-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgxYZqD+ErtFe4OiX/
+1hyR0VOUmUMMcLFSAHM1jHZBfsGhRANCAAQzdqeS2XqmnrsraGLSHR4uxhKMnfbJ
+JlTFCo9+PRbDqDeGVht898nBQJjE+9i/rOs9c6LzVswsoMrnnkhrESMF
+-----END PRIVATE KEY-----
 )";
         REQUIRE(0 == ctx->load_key(&key, pem, strlen(pem)));
         check_key(key);
@@ -323,8 +333,7 @@ TEST_CASE("keychain", "[key]") {
         uv_random(nullptr, nullptr, data, sizeof(data), 0, nullptr);
         size_t datalen = sizeof(data);
 
-        char sig[512];
-        memset(sig, 0, sizeof(sig));
+        char sig[512] = {};
         size_t siglen = sizeof(sig);
 
         WHEN("it can sign data") {
@@ -365,15 +374,21 @@ TEST_CASE("keychain", "[key]") {
 }
 
 TEST_CASE("keychain-manual", "[.]") {
+    auto test_name = getenv("TEST_KEYCHAIN_KEY");
+    if (!test_name) {
+        SKIP("keychain key not specified");
+        return;
+    }
     auto tls = default_tls_context(nullptr, 0);
     if (tls->load_keychain_key == nullptr) {
         tls->free_ctx(tls);
         SKIP("keychain not supported");
+        return;
     }
 
     uv_timeval64_t now;
     uv_gettimeofday(&now);
-    auto name = std::string(getenv("TEST_KEYCHAIN_KEY"));
+    auto name = std::string(test_name);
 
     GIVEN("existing private key") {
         fprintf(stderr, "using name: %s\n", name.c_str());

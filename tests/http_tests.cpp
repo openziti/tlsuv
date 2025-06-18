@@ -1226,11 +1226,6 @@ TEST_CASE("url parse auth", "[http]") {
 
 TEST_CASE("partial bundle", "[http]") {
 
-#if defined(TEST_mbedtls)
-    SKIP("mbedTLS always allows partial chains");
-    return;
-#endif
-
     auto url = "https://one.one.one.one";
     auto req = "/dns-query?name=google.com&type=AAAA";
     // cloudflare intermediate cert
@@ -1253,11 +1248,18 @@ sQIwJonMaAFi54mrfhfoFNZEfuNMSQ6/bIBiNLiyoX46FohQvKeIoJ99cx7sUkFN
 7uJW
 -----END CERTIFICATE-----)";
 
+    auto tls = default_tls_context(ca, strlen(ca));
+    if (tls->allow_partial_chain == nullptr) {
+        tls->free_ctx(tls);
+        SKIP("engine always allows partial chains");
+        return;
+    }
+
+
     auto loop = uv_loop_new();
     tlsuv_http_t clt{};
     tlsuv_http_init(loop, &clt, url);
     tlsuv_http_header(&clt, "accept", "application/dns-json");
-    auto tls = default_tls_context(ca, strlen(ca));
     tlsuv_http_set_ssl(&clt, tls);
 
 

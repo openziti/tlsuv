@@ -38,11 +38,17 @@ jobs:
             tls: openssl
             target: x64-windows-static-md
           - image: windows
+            tls: mbedtls
+            target: x64-windows-static-md
+          - image: windows
+            tls: win32crypto
+            target: x64-windows-static-md
+          - image: windows
             tls: openssl
             target: x64-mingw-static
           - image: windows
-            tls: mbedtls
-            target: x64-windows-static-md
+            tls: win32crypto
+            target: x64-mingw-static
 
     steps:
     - name: Install tools

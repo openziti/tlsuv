@@ -15,8 +15,6 @@
 #ifndef TLSUV_H
 #define TLSUV_H
 
-#include <uv.h>
-
 #include "connector.h"
 #include "tls_engine.h"
 #include "queue.h"

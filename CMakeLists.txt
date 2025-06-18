@@ -29,8 +29,14 @@ if(tlsuv_DEVELOPER_MODE)
 endif ()
 option(TLSUV_HTTP "enable HTTP/websocket support" ON)
 
-set(supported_tls_libs openssl mbedtls)
-set(TLSUV_TLSLIB "openssl" CACHE STRING "TLS implementation library (openssl|mbedtls)")
+if(WIN32)
+    set(default_crypto "win32crypto")
+else ()
+    set(default_crypto "openssl")
+endif ()
+
+set(supported_tls_libs openssl mbedtls win32crypto)
+set(TLSUV_TLSLIB ${default_crypto} CACHE STRING "TLS implementation library ${supported_tls_libs}")
 
 if(NOT TLSUV_TLSLIB IN_LIST supported_tls_libs)
     message(FATAL_ERROR "`${TLSUV_TLSLIB}' TLS library is not supported")
@@ -124,6 +130,14 @@ target_compile_definitions(tlsuv PRIVATE
         USE_$<UPPER_CASE:${TLSUV_TLSLIB}>
         TLS_IMPL=${TLSUV_TLSLIB}
 )
+if(WIN32)
+    target_compile_definitions(tlsuv PRIVATE
+            _WIN32_WINNT=0x0A00
+            _CRT_SECURE_NO_WARNINGS
+            _CRT_NONSTDC_NO_DEPRECATE
+            _WINSOCK_DEPRECATED_NO_WARNINGS
+    )
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(tlsuv PRIVATE _POSIX_C_SOURCE=200112 _GNU_SOURCE)

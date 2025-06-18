@@ -17,11 +17,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <uv.h>
-
-#if _WIN32
-#pragma comment (lib, "crypt32.lib")
-#endif
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,6 +46,27 @@ enum hash_algo {
     hash_SHA512
 };
 
+#ifdef _WIN32
+
+#ifndef _WIN32_WINNT
+# define _WIN32_WINNT   0x0a00
+#endif
+#include <winsock2.h>
+typedef SOCKET tlsuv_sock_t;
+#else
+#include <stdint.h>
+typedef int tlsuv_sock_t;
+#endif
+
+#if !defined(_SSIZE_T_) && !defined(_SSIZE_T_DEFINED)
+typedef intptr_t ssize_t;
+# if !defined SSIZE_MAX
+#  define SSIZE_MAX INTPTR_MAX
+# endif
+# define _SSIZE_T_
+# define _SSIZE_T_DEFINED
+#endif
+
 typedef struct tlsuv_engine_s *tlsuv_engine_t;
 
 typedef void* io_ctx;
@@ -72,7 +89,7 @@ struct tlsuv_engine_s {
      * @param self engine
      * @param fd file descriptor
      */
-    void (*set_io_fd)(tlsuv_engine_t self, uv_os_fd_t fd);
+    void (*set_io_fd)(tlsuv_engine_t self, tlsuv_sock_t fd);
 
     /**
      * set requested ALPN protocols
@@ -181,7 +198,7 @@ struct tlsuv_certificate_s {
 
 struct tls_context_s {
     /* creates new TLS engine for a host */
-    tlsuv_engine_t (*new_engine)(void *ctx, const char *host);
+    tlsuv_engine_t (*new_engine)(tls_context *ctx, const char *host);
 
     void (*free_ctx)(tls_context *ctx);
 

@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
         printf("connected\n");
     }
 
-    engine->set_io_fd(engine, (uv_os_fd_t)sock);
+    engine->set_io_fd(engine, (tlsuv_sock_t )sock);
 
     // do handshake
     do {
