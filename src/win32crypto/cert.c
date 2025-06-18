@@ -60,6 +60,7 @@ static int cert_to_pem(const struct tlsuv_certificate_s *cert, int full, char **
         if (CryptBinaryToStringA(cert_ctx->pbCertEncoded, cert_ctx->cbCertEncoded, flags, p, &len)) {
             p += len;
         } else {
+            CertFreeCertificateContext(cert_ctx);
             LOG_LAST_ERROR(ERR, "Failed to convert certificate to PEM");
             tlsuv__free(pem_buf);
             return -1;
@@ -117,7 +118,8 @@ static int cert_verify(const struct tlsuv_certificate_s *cert, enum hash_algo md
             break;
         default:
             UM_LOG(ERR, "Unsupported hash algorithm");
-            return -1;
+            rc = -1;
+            goto done;
     }
 
 #define CHECK(op) do { \

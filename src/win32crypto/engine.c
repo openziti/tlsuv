@@ -175,15 +175,13 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         }
     }
 
-    char in[32000];
     if (engine->protocols) {
         memcpy(inbuf[0].pvBuffer, engine->protocols, engine->protocols_len);
         inbuf[0].BufferType = SECBUFFER_APPLICATION_PROTOCOLS;
         inbuf[0].cbBuffer = engine->protocols_len;
     } else if (engine->inbound_len > 0) {
-        memcpy(in, engine->inbound, engine->inbound_len);
         inbuf[0].BufferType = SECBUFFER_TOKEN;
-        inbuf[0].pvBuffer = in;
+        inbuf[0].pvBuffer = engine->inbound;
         inbuf[0].cbBuffer = engine->inbound_len;
     }
 
