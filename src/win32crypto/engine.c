@@ -131,6 +131,11 @@ static SECURITY_STATUS verify_server_cert(struct win32crypto_engine_s *engine)
 
 static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
+
+    if (engine->handshake_st == TLS_HS_COMPLETE ||
+        engine->handshake_st == TLS_HS_ERROR)
+        return engine->handshake_st;
+
     u_long req_flags =
             ISC_REQ_USE_SUPPLIED_CREDS |
             ISC_REQ_ALLOCATE_MEMORY |
