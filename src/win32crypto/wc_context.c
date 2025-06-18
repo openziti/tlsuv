@@ -187,12 +187,20 @@ static int load_cert_internal(HCERTSTORE *storep, PCCERT_CONTEXT *crt, const cha
         first = false;
         tlsuv__free(cert_bin);
     }
-    *storep = store;
 
     if (pem != buf) {
         tlsuv__free((void*)pem);
     }
 
+    if (first) { // could not find any certs
+        UM_LOG(ERR, "did not find any certs");
+        CertCloseStore(store, 0);
+        *storep = INVALID_HANDLE_VALUE;
+        if (crt) *crt = NULL;
+        return -1;
+    }
+
+    *storep = store;
     return 0;
 }
 
