@@ -138,14 +138,13 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
 
     u_long req_flags =
             ISC_REQ_USE_SUPPLIED_CREDS |
-            ISC_REQ_ALLOCATE_MEMORY |
             ISC_REQ_CONFIDENTIALITY |
             ISC_REQ_REPLAY_DETECT |
             ISC_REQ_SEQUENCE_DETECT |
             ISC_REQ_STREAM;
     u_long ret_flags = 0;
     SecBuffer outbuf[3] = {
-        { .BufferType = SECBUFFER_TOKEN, },
+        { .BufferType = SECBUFFER_TOKEN, .pvBuffer = engine->outbound, .cbBuffer = sizeof(engine->outbound) },
         { .BufferType = SECBUFFER_EMPTY },
         { .BufferType = SECBUFFER_EMPTY },
     };
@@ -236,16 +235,15 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
             break;
     }
 
-    if (outbuf[0].pvBuffer && outbuf[0].cbBuffer > 0) {
-        if (engine->write_fn) {
-            ssize_t written = engine->write_fn(engine->io, outbuf[0].pvBuffer, outbuf[0].cbBuffer);
-            UM_LOG(VERB, "HS wrote %zd", written);
-            if (written < outbuf[0].cbBuffer) {
-                UM_LOG(ERR, "failed to write handshake data: %zd", written);
-                engine->handshake_st = TLS_HS_ERROR;
-            }
+    if (outbuf[0].cbBuffer > 0) {
+        assert (engine->write_fn);
+
+        ssize_t written = engine->write_fn(engine->io, outbuf[0].pvBuffer, outbuf[0].cbBuffer);
+        UM_LOG(VERB, "HS wrote %zd", written);
+        if (written < outbuf[0].cbBuffer) {
+            UM_LOG(ERR, "failed to write handshake data: %zd", written);
+            engine->handshake_st = TLS_HS_ERROR;
         }
-        FreeContextBuffer(outbuf[0].pvBuffer);
     }
     return engine->handshake_st;
 }
