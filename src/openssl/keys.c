@@ -18,10 +18,10 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
-
-#include <tlsuv/tlsuv.h>
-#include <assert.h>
 #include <openssl/param_build.h>
+
+#include <assert.h>
+#include <stdbool.h>
 
 #include "../p11.h"
 #include "../um_debug.h"
@@ -98,7 +98,6 @@ static int p11_ec_idx = 0;
 static int p11_rsa_idx = 0;
 static int kc_ec_idx = 0;
 static int kc_rsa_idx = 0;
-static uv_once_t init_once;
 
 static void key_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                            int idx, long argl, void *argp) {
@@ -117,6 +116,11 @@ static void key_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
 }
 
 static void init(void) {
+    static bool initialized = false;
+
+    if(initialized) return;
+
+    initialized = true;
     p11_ec_idx = EC_KEY_get_ex_new_index(0, "tlsuv-ec-pkcs11", NULL, NULL, key_ex_free);
     p11_rsa_idx = RSA_get_ex_new_index(0, "tlsuv-rsa-pkcs11", NULL, NULL, key_ex_free);
 
@@ -133,14 +137,14 @@ static void init(void) {
 }
 
 static void set_ec_ext_impl(EC_KEY *ec, int idx, void *ext_key) {
-    uv_once(&init_once, init);
+    init();
 
     EC_KEY_set_method(ec, ext_ec_method);
     EC_KEY_set_ex_data(ec, idx, ext_key);
 }
 
 static void set_rsa_p11_impl(RSA *rsa, p11_key_ctx *p11_key) {
-    uv_once(&init_once, init);
+    init();
 
     RSA_set_method(rsa, ext_rsa_method);
     RSA_set_ex_data(rsa, p11_rsa_idx, p11_key);
@@ -460,7 +464,7 @@ error:
 
 
 int gen_pkcs11_key(tlsuv_private_key_t *key, const char *pkcs11driver, const char *slot, const char *pin, const char *label) {
-    uv_once(&init_once, init);
+    init();
 
     p11_context *p11 = tlsuv__calloc(1, sizeof(*p11));
     p11_key_ctx *p11_key = NULL;
@@ -502,7 +506,8 @@ int gen_pkcs11_key(tlsuv_private_key_t *key, const char *pkcs11driver, const cha
 }
 
 int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
-    uv_once(&init_once, init);
+    init();
+
     const keychain_t *keychain = tlsuv_keychain();
     assert(keychain);
 
@@ -607,7 +612,7 @@ error:
 }
 
 int gen_keychain_key(tlsuv_private_key_t *key, const char *name) {
-    uv_once(&init_once, init);
+    init();
 
     EVP_PKEY *pkey = NULL;
 
@@ -633,7 +638,7 @@ int gen_keychain_key(tlsuv_private_key_t *key, const char *name) {
 }
 
 int load_keychain_key(tlsuv_private_key_t *key, const char *name) {
-    uv_once(&init_once, init);
+    init();
 
     EVP_PKEY *pkey = NULL;
 
@@ -660,7 +665,7 @@ int load_keychain_key(tlsuv_private_key_t *key, const char *name) {
 }
 
 int load_pkcs11_key(tlsuv_private_key_t *key, const char *lib, const char *slot, const char *pin, const char *id, const char *label) {
-    uv_once(&init_once, init);
+    init();
 
     p11_context *p11 = tlsuv__calloc(1, sizeof(*p11));
     p11_key_ctx *p11_key = NULL;
@@ -895,7 +900,7 @@ static int cert_verify(const struct tlsuv_certificate_s * cert, enum hash_algo m
 
 static int cert_exp(const struct tlsuv_certificate_s * cert, struct tm *time) {
     if (time == NULL || cert == NULL) {
-        return UV_EINVAL;
+        return -1;
     }
     
     X509_STORE *store = ((struct cert_s*)cert)->cert;
