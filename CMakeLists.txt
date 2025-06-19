@@ -131,24 +131,25 @@ target_compile_definitions(tlsuv PRIVATE
         TLS_IMPL=${TLSUV_TLSLIB}
 )
 if(WIN32)
-    target_compile_definitions(tlsuv PRIVATE
-            _WIN32_WINNT=0x0A00
-            _CRT_SECURE_NO_WARNINGS
-            _CRT_NONSTDC_NO_DEPRECATE
-            _WINSOCK_DEPRECATED_NO_WARNINGS
+    target_compile_definitions(tlsuv
+            PRIVATE _WIN32_WINNT=0x0A00
+            PRIVATE WINVER=0x0A00
+            PRIVATE WIN32_LEAN_AND_MEAN
+            PRIVATE _CRT_SECURE_NO_WARNINGS
+            PRIVATE _CRT_NONSTDC_NO_DEPRECATE
+            PRIVATE _WINSOCK_DEPRECATED_NO_WARNINGS
     )
+    if (MSVC)
+        target_compile_options(tlsuv
+                PRIVATE /wd4100 # disable "unreferenced formal parameter" warning
+        )
+    endif (MSVC)
+
+    target_link_libraries(tlsuv PUBLIC crypt32 ncrypt)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(tlsuv PRIVATE _POSIX_C_SOURCE=200112 _GNU_SOURCE)
-elseif (WIN32)
-    target_compile_definitions(tlsuv
-            PRIVATE WIN32_LEAN_AND_MEAN
-            PRIVATE WINVER=0x0A00
-            PRIVATE _WIN32_WINNT=0x0A00
-            PRIVATE _CRT_SECURE_NO_WARNINGS
-    )
-    target_link_libraries(tlsuv PUBLIC crypt32 ncrypt)
 endif()
 
 target_link_libraries(tlsuv

@@ -342,8 +342,11 @@ static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
     } else {
         // try loading default CA stores
 #if _WIN32
-        X509_STORE *ca = load_system_certs();
-        SSL_CTX_set0_verify_cert_store(ctx, ca);
+        // try to use windows trust store provider
+        if (!SSL_CTX_load_verify_store(ctx, "org.openssl.winstore:")) {
+            X509_STORE *sys_ca = load_system_certs();
+            SSL_CTX_set0_verify_cert_store(ctx, sys_ca);
+        }
 #elif defined(ANDROID) || defined(__ANDROID__)
         X509_STORE *ca = SSL_CTX_get_cert_store(ctx);
         X509_LOOKUP *lu = X509_STORE_add_lookup(ca, old_hash_lookup());
