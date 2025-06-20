@@ -585,6 +585,12 @@ struct win32crypto_engine_s *new_win32engine(
     engine->handshake_st = TLS_HS_BEFORE;
     engine->hostname = hostname ? tlsuv__strdup(hostname) : NULL;
 
+    char subj[256] = {};
+    if (own_cert) {
+        CertNameToStrA(X509_ASN_ENCODING, &own_cert->pCertInfo->Subject, CERT_NAME_ATTR_TYPE, subj, sizeof(subj));
+    }
+    UM_LOG(INFO, "creating client engine host[%s] subject[%s]", engine->hostname, subj);
+
     engine->ca = ca;
     DWORD flags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_MEMORY_STORE_CERT ;
     if ((ca == NULL || ca == INVALID_HANDLE_VALUE) && cert_verify_f == NULL) {
@@ -614,6 +620,8 @@ struct win32crypto_engine_s *new_win32engine(
                               &credentials, NULL, NULL,
                               &engine->cred_handle,
                               NULL);
-    LOG_ERROR(VERB, rc, "AcquireCredentialsHandleA result");
+    if (rc != ERROR_SUCCESS) {
+        LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result");
+    }
     return engine;
 }

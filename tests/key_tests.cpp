@@ -125,6 +125,38 @@ iemZJfIkLzyuwra/o7WkK+hK
         check_key(key);
     }
 
+    WHEN("RSA traditional")
+    {
+        const char *rsa = R"(-----BEGIN RSA PRIVATE KEY-----
+MIIEpQIBAAKCAQEAr8ChivhwrUoqHK6ggyjug2RBKsIBu7y66spGNq5i6w0TeiC5
+YP5THsWRdq+ji2Ypsamn8BjYwUnfY9Ni6ippVEQC8E6AzKp0ctY6vJS5xgGvLnXp
+yf8badNBWtLg+QKWXvAWOF0JnzwKYWOec3moklEmz+TfYoCk9KBrrbTs13104VMM
+zGGHr+TxOmTt+gRPV2wJ/fzD71ZSjaOeUfom8uMjvBnj36ZA2IP+4B4z6HR3gHGS
+xmPwur0ooPH8t7bHaM1hjrsYGD8zwfRmFdXMscbNLMQvrixBAr2aGGxsc8/pnFbX
+wTvALivogGP+8SsDL9QsCIkafRMO1f3/9nGhzQIDAQABAoIBAAflgAYwlbSkTFv7
+DAFKNymZbGS8w3US38dGUAOYPLk7+ATPKeN95P0RALFKmjuPmy523xgf/N2PkXul
+YJoBG1GBRJK7xQVmrP8IeV2fntdfnBmA8nOt5Fmrt5GnP85R8f2K5hJH7dnlCcAo
+u9Kk4/CYOFLAmtMABC+6JUEwZWOXvDOky2YJeeNwFeHdFaBGt3gc0t3FUmiB8ltS
+sSu8wQcKk2FeEFFNir7NdCAOpg0mWyUOCT2yriSozbtGAuoSltfx8u4qgvLAcmzc
+dbwQjtAIDIvd3XLF8F2mwHc2zUAWATETPyPOyuPUl8Ep932n6ijv+nFeA5zKftgA
+ErZt14kCgYEA3KXDhVFzLD1N+1ZfjrbaOp9inSoDhfISxerpk/yqk+29NWmlpNy8
+vEsxjSyT48ikKS+kOQ7457XmBMORrzbrLOMF2fV5qbIP0YL7JTz/I0uuQ/Zmlnyz
+73wwNAPZXgQVRTlRB2GI1qkTb0Xt1Z2Hvx+Bi7fQJSni2cBmm42J2RkCgYEAy+lr
+eK4jAqicv71yzyCi/Tq8GRDeGwYSC1hU/7g5mDGGzESnH/jlVO5Uga4VLFpS6Hfv
+hc9DlAHDUqY4zW/nC35/somC7A+9pE1xGdFA7khTlD1H3ctj4lRvH+nxFvmckA/a
+MLvToMVH3+vwicSAzkOLbi1gVmXOTiQR32DAANUCgYEA17VejklwdUGBqUNprBXr
+BwCm4csfIqXj4IWl0L1k7bWwEjW0cJY0FUjVqpR4CGowwusGe5m9kJltxB6FoGvq
+Qjm3kLvBMzsW59ZLPL6DF7h3J44OAPTs3CXm4hMZQCZxvPkp1DNwGZu1mkUdHIcj
+HJ/qf/M1k/98/TBxn4UhzJECgYEAmvgv3EyDgQ7B6hrBuVa1aDyOHYKrOeB4MDUW
+jC3nX5osNuvqE6tmJxDmGpRBtS6EGfaki45EbqSUXCjFvKPR9PNTe010uZEQ8GCG
+lzdn4HAJTPzxtEdSBv1iYt+5gVt8uCPEEAt/P40PHcfDTACSX7AHtFk6AQ9oJgzV
+pG10Hm0CgYEAraf8UVhqcXRcFydoa3uWVesXWQtFv6SwxHOmdUZzvT4dsIqa/t4b
+FzO5cyy4Kkl44BaMVOzq34wmoWmdFRkH+QTmBjZQTrOHOcF1Bg+1kZCoC6k7v+9k
+xXZg4bmeG+pKDj27FtV550iez1viN5pqTWYvpyp06zdi2KiaxM7mUVo=
+-----END RSA PRIVATE KEY-----)";
+        REQUIRE(0 == ctx->load_key(&key, rsa, strlen(rsa)));
+        check_key(key);
+    }
     WHEN("load EC key") {
         const char *pem = R"(-----BEGIN EC PRIVATE KEY-----
 MHcCAQEEIMWGag/hK7RXuDol/9YckdFTlJlDDHCxUgBzNYx2QX7BoAoGCCqGSM49

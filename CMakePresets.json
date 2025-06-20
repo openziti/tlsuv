@@ -84,6 +84,12 @@
       "hidden": true
     },
     {
+      "name": "ci-win32",
+      "inherits": ["flags-windows", "ci-std", "vs-2022"],
+      "architecture": "Win32",
+      "hidden": true
+    },
+    {
       "name": "ci-win-mingw",
       "inherits": ["ci-std", "ninja"],
       "cacheVariables": {
@@ -117,6 +123,13 @@
       "inherits": ["ci-build", "ci-win64", "dev-mode", "vcpkg"],
       "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
+      }
+    },
+    {
+      "name": "x86-windows-static-md",
+      "inherits": ["ci-build", "ci-win32", "dev-mode", "vcpkg"],
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x86-windows-static-md"
       }
     },
     {
