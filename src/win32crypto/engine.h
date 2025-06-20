@@ -29,8 +29,6 @@ struct win32crypto_engine_s {
     // requested protocols
     char *protocols;
     size_t protocols_len;
-    // negotiated protocol
-    char *alpn;
 
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx);
     void *verify_ctx;
@@ -38,6 +36,8 @@ struct win32crypto_engine_s {
     CredHandle cred_handle;
     CtxtHandle ctxt_handle;
     SecPkgContext_StreamSizes sizes;
+    // negotiated protocol
+    SecPkgContext_ApplicationProtocol alpn;
 
     SECURITY_STATUS status;
     tls_handshake_state handshake_st;

@@ -33,9 +33,10 @@ static void engine_free(tlsuv_engine_t e) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)e;
     tlsuv__free(engine->hostname);
     tlsuv__free(engine->protocols);
-    tlsuv__free(engine->alpn);
-    DeleteSecurityContext(&engine->ctxt_handle);
-    FreeCredentialsHandle(&engine->cred_handle);
+    if (SecIsValidHandle(&engine->ctxt_handle))
+        DeleteSecurityContext(&engine->ctxt_handle);
+    if (SecIsValidHandle(&engine->cred_handle))
+        FreeCredentialsHandle(&engine->cred_handle);
     tlsuv__free(engine);
 }
 
@@ -174,7 +175,7 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         }
     }
 
-    if (engine->protocols) {
+    if (engine->handshake_st == TLS_HS_BEFORE && engine->protocols) {
         memcpy(inbuf[0].pvBuffer, engine->protocols, engine->protocols_len);
         inbuf[0].BufferType = SECBUFFER_APPLICATION_PROTOCOLS;
         inbuf[0].cbBuffer = engine->protocols_len;
@@ -200,8 +201,6 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
     }
 
     engine->status = rc;
-    tlsuv__free(engine->protocols);
-    engine->protocols = NULL;
 
     if (inbuf[1].BufferType == SECBUFFER_EXTRA) {
         UM_LOG(VERB, "extra data in handshake buffer: %lu bytes", inbuf[1].cbBuffer);
@@ -290,23 +289,24 @@ static void engine_set_protocols(tlsuv_engine_t self, const char **protocols, in
 static const char* engine_get_protocol(tlsuv_engine_t self) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
 
-    if (engine->alpn) {
-        return engine->alpn;
+    if (engine->protocols == NULL) {
+        return "";
     }
 
-    SecPkgContext_ApplicationProtocol alpn = {0};
-    if (QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_APPLICATION_PROTOCOL, &alpn) != SEC_E_OK) {
+    if (engine->alpn.ProtoNegoStatus == SecApplicationProtocolNegotiationStatus_Success) {
+        return engine->alpn.ProtocolId;
+    }
+
+    if (QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_APPLICATION_PROTOCOL, &engine->alpn) != SEC_E_OK) {
         LOG_LAST_ERROR(ERR, "failed to get ALPN");
         return NULL;
     }
 
-    if (alpn.ProtoNegoStatus == SecApplicationProtocolNegotiationStatus_Success) {
-        engine->alpn = tlsuv__malloc(alpn.ProtocolIdSize + 1);
-        memcpy(engine->alpn, alpn.ProtocolId, alpn.ProtocolIdSize);
-        engine->alpn[alpn.ProtocolIdSize] = '\0';
+    if (engine->alpn.ProtoNegoStatus != SecApplicationProtocolNegotiationStatus_None) {
+        return engine->alpn.ProtocolId;
     }
 
-    return engine->alpn;
+    return "";
 }
 
 static int engine_close(tlsuv_engine_t self) {
@@ -521,7 +521,7 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
             engine->inbound_len -= consumed;
             eof = true;
         } else {
-            LOG_ERROR(ERR, rc, "failed to decrypt message: 0x%lX/%s");
+            LOG_ERROR(ERR, rc, "failed to decrypt message");
             return TLS_ERR;
         }
 
@@ -536,6 +536,24 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
 
 static void engine_reset (tlsuv_engine_t self) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
+
+    memset(engine->inbound, 0, sizeof(engine->inbound));
+    memset(engine->outbound, 0, sizeof(engine->outbound));
+    memset(engine->decoded, 0, sizeof(engine->decoded));
+    engine->inbound_len = 0;
+    engine->outbound_len = 0;
+    engine->decoded_len = 0;
+
+    engine->status = 0;
+    engine->handshake_st = TLS_HS_BEFORE;
+    memset(&engine->sizes, 0, sizeof(engine->sizes));
+    memset(&engine->alpn, 0, sizeof(engine->alpn));
+
+    if (SecIsValidHandle(&engine->ctxt_handle))
+        DeleteSecurityContext(&engine->ctxt_handle);
+
+    SecInvalidateHandle(&engine->ctxt_handle);
+
 }
 
 static const char* engine_strerror(tlsuv_engine_t self) {
@@ -553,7 +571,7 @@ static struct tlsuv_engine_s api = {
     .write = engine_write,
     .read = engine_read,
     .strerror = engine_strerror,
-    .reset = NULL,
+    .reset = engine_reset,
     .free = engine_free,
 };
 
