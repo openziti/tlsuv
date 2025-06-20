@@ -37,18 +37,6 @@
 
 static struct win32crypto_private_key_s* new_private_key(NCRYPT_PROV_HANDLE ph, NCRYPT_KEY_HANDLE kh);
 
-static CRYPT_DECODE_PARA DECODE_PARAMS = {
-    .cbSize = sizeof(CRYPT_DECODE_PARA),
-    .pfnAlloc = tlsuv__malloc,
-    .pfnFree = tlsuv__free,
-};
-
-static CRYPT_ENCODE_PARA ENCODE_PARAMS = {
-        .cbSize = sizeof(ENCODE_PARAMS),
-        .pfnAlloc = tlsuv__malloc,
-        .pfnFree = tlsuv__free,
-};
-
 extern int win32crypto_generate_key(tlsuv_private_key_t *key) {
     NCRYPT_PROV_HANDLE ph = 0;
     NCRYPT_KEY_HANDLE kh = 0;
@@ -73,20 +61,31 @@ extern int win32crypto_generate_key(tlsuv_private_key_t *key) {
 
 static SECURITY_STATUS load_rsa_key(NCRYPT_PROV_HANDLE prov, NCRYPT_KEY_HANDLE *kh, const BYTE *der, size_t der_len) {
     NTSTATUS r;
-    BCRYPT_RSAKEY_BLOB *key_blob;
-    DWORD info;
-    bool rc = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-                                  CNG_RSA_PRIVATE_KEY_BLOB, der, der_len,
-                                  CRYPT_DECODE_ALLOC_FLAG, &DECODE_PARAMS,
-                                  &key_blob, &info);
-    if (!rc) {
+    BCRYPT_RSAKEY_BLOB *key_blob = 0;
+    DWORD len;
+    if (!CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                            CNG_RSA_PRIVATE_KEY_BLOB, der, der_len,
+                            CRYPT_DECODE_NOCOPY_FLAG, NULL,
+                            NULL, &len)) {
         r = (SECURITY_STATUS)GetLastError();
         LOG_ERROR(ERR, r, "failed to parse RSA KEY info");
         return r;
     }
 
+    key_blob = tlsuv__malloc(len);
+    if (!CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                            CNG_RSA_PRIVATE_KEY_BLOB, der, der_len,
+                            CRYPT_DECODE_NOCOPY_FLAG, NULL,
+                            key_blob, &len)) {
+        r = (SECURITY_STATUS)GetLastError();
+        LOG_ERROR(ERR, r, "failed to parse RSA KEY info");
+        tlsuv__free(key_blob);
+        return r;
+    }
+
     r = NCryptImportKey(prov, 0, BCRYPT_RSAPRIVATE_BLOB, NULL,
-                        kh, (void*)key_blob, info, NCRYPT_DO_NOT_FINALIZE_FLAG);
+                        kh, (void*)key_blob, len, NCRYPT_DO_NOT_FINALIZE_FLAG);
+    tlsuv__free(key_blob);
 
     if (!BCRYPT_SUCCESS(r)) {
         LOG_ERROR(ERR, r, "failed to import RSA key");
@@ -97,17 +96,23 @@ static SECURITY_STATUS load_rsa_key(NCRYPT_PROV_HANDLE prov, NCRYPT_KEY_HANDLE *
 static SECURITY_STATUS load_ecc_key(NCRYPT_PROV_HANDLE prov, NCRYPT_KEY_HANDLE *kh, const BYTE *der, size_t der_len) {
     NCRYPT_KEY_HANDLE keyH = 0;
     SECURITY_STATUS rc = 0;
-    struct {
-        CRYPT_ECC_PRIVATE_KEY_INFO eck;
-        BYTE buf[1024];
-    } ecc_info = {};
-    ULONG len = sizeof(ecc_info);
 
+    ULONG len = 0;
     if (!CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
                              X509_ECC_PRIVATE_KEY, der, der_len,
-                             0, &DECODE_PARAMS, &ecc_info, &len)) {
+                             CRYPT_DECODE_NOCOPY_FLAG, NULL, NULL, &len)) {
         rc = (SECURITY_STATUS)GetLastError();
         LOG_ERROR(ERR, rc, "failed to parse EC KEY info");
+        return rc;
+    }
+
+    CRYPT_ECC_PRIVATE_KEY_INFO *eck = tlsuv__malloc(len);
+    if (!CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                             X509_ECC_PRIVATE_KEY, der, der_len,
+                             CRYPT_DECODE_NOCOPY_FLAG, NULL, eck, &len)) {
+        rc = (SECURITY_STATUS)GetLastError();
+        LOG_ERROR(ERR, rc, "failed to parse EC KEY info");
+        tlsuv__free(eck);
         return rc;
     }
 
@@ -117,27 +122,26 @@ static SECURITY_STATUS load_ecc_key(NCRYPT_PROV_HANDLE prov, NCRYPT_KEY_HANDLE *
     } ecc_blob = {};
     memset(&ecc_blob, 0, sizeof(ecc_blob));
 
-    LPCWSTR algoId = NULL;
-    if ((ecc_info.eck.szCurveOid && strcmp(ecc_info.eck.szCurveOid, szOID_ECC_CURVE_P256) == 0) ||
-        ecc_info.eck.PrivateKey.cbData == 32) {
+    if ((eck->szCurveOid && strcmp(eck->szCurveOid, szOID_ECC_CURVE_P256) == 0) ||
+        eck->PrivateKey.cbData == 32) {
         ecc_blob.ec_blob.dwMagic = BCRYPT_ECDSA_PRIVATE_P256_MAGIC;
-        algoId = BCRYPT_ECDSA_P256_ALGORITHM;
-    } else if (strcmp(ecc_info.eck.szCurveOid, szOID_ECC_CURVE_P384) == 0) {
+    } else if (strcmp(eck->szCurveOid, szOID_ECC_CURVE_P384) == 0) {
         ecc_blob.ec_blob.dwMagic = BCRYPT_ECDSA_PRIVATE_P384_MAGIC;
-        algoId = BCRYPT_ECDSA_P384_ALGORITHM;
-    } else if (strcmp(ecc_info.eck.szCurveOid, szOID_ECC_CURVE_P521) == 0) {
+    } else if (strcmp(eck->szCurveOid, szOID_ECC_CURVE_P521) == 0) {
         ecc_blob.ec_blob.dwMagic = BCRYPT_ECDSA_PRIVATE_P521_MAGIC;
-        algoId = BCRYPT_ECDSA_P521_ALGORITHM;
     } else {
-        UM_LOG(ERR, "Unsupported ECC curve: %s", ecc_info.eck.szCurveOid);
+        UM_LOG(ERR, "Unsupported ECC curve: %s", eck->szCurveOid);
+        tlsuv__free(eck);
         return 0;
     }
 
-    ecc_blob.ec_blob.cbKey = ecc_info.eck.PrivateKey.cbData;
+    ecc_blob.ec_blob.cbKey = eck->PrivateKey.cbData;
     // construct ECC import blob X[cbData]|Y[cbData]|d[cbData]
-    memcpy(ecc_blob.key_data, ecc_info.eck.PublicKey.pbData + 1, ecc_info.eck.PrivateKey.cbData * 2);
-    memcpy(ecc_blob.key_data + 2 * ecc_info.eck.PrivateKey.cbData,
-        ecc_info.eck.PrivateKey.pbData, ecc_info.eck.PrivateKey.cbData);
+    memcpy(ecc_blob.key_data, eck->PublicKey.pbData + 1, eck->PrivateKey.cbData * 2);
+    memcpy(ecc_blob.key_data + 2 * eck->PrivateKey.cbData,
+        eck->PrivateKey.pbData, eck->PrivateKey.cbData);
+
+    tlsuv__free(eck);
 
     rc = NCryptImportKey(
         prov, 0, BCRYPT_ECCPRIVATE_BLOB, NULL, &keyH,
