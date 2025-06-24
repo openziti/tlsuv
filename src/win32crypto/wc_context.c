@@ -59,6 +59,15 @@ tls_context * new_win32crypto_ctx(const char* ca, size_t ca_len) {
     if (ca && ca_len > 0) {
         ctx->api.set_ca_bundle((tls_context *) ctx, ca, ca_len);
     }
+
+    NCRYPT_PROV_HANDLE ph = 0;
+    if (NCryptOpenStorageProvider(&ph, MS_PLATFORM_KEY_STORAGE_PROVIDER, 0) != ERROR_SUCCESS) {
+        ctx->api.generate_keychain_key = NULL;
+        ctx->api.load_keychain_key = NULL;
+        ctx->api.remove_keychain_key = NULL;
+    }
+    NCryptFreeObject(ph);
+
     return (tls_context*)ctx;
 }
 
@@ -253,7 +262,10 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
     }
     DWORD len;
     wchar_t prov_name[128] = {};
-    NCryptGetProperty(pk->provider, NCRYPT_NAME_PROPERTY, (PVOID)prov_name, sizeof(prov_name), &len, 0);
+    SECURITY_STATUS rc = NCryptGetProperty(pk->provider, NCRYPT_NAME_PROPERTY, (PVOID)prov_name, sizeof(prov_name), &len, 0);
+    if (rc != ERROR_SUCCESS) {
+        LOG_ERROR(ERR, rc, "failed to get provider from key");
+    }
 
     CryptExportPublicKeyInfo(pk->key, 0, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, NULL, &len);
     CERT_PUBLIC_KEY_INFO *pub_info = tlsuv__malloc(len);
@@ -268,7 +280,7 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
     }
 
     wchar_t *key_name = NULL;
-    SECURITY_STATUS rc = NCryptGetProperty(pk->key, NCRYPT_NAME_PROPERTY, (PVOID)NULL, 0, &len, 0);
+    rc = NCryptGetProperty(pk->key, NCRYPT_NAME_PROPERTY, (PVOID)NULL, 0, &len, 0);
     if (BCRYPT_SUCCESS(rc)) {
         key_name = tlsuv__malloc(len);
         NCryptGetProperty(pk->key, NCRYPT_NAME_PROPERTY, (PVOID)key_name, len, &len, 0);
@@ -317,8 +329,9 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
                              &imported,
                              key_blob, key_blob_len, 0);
         tlsuv__free(key_blob);
-        if (rc < 0) {
+        if (rc != ERROR_SUCCESS) {
             LOG_ERROR(ERR, rc, "import key error");
+            return -1;
         }
 
     } else {

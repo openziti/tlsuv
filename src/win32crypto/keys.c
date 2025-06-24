@@ -22,6 +22,7 @@
 #include <tlsuv/tls_engine.h>
 #include <stdbool.h>
 #include <ncrypt.h>
+#include "engine.h"
 
 #define PK_HEADER  "-----BEGIN PRIVATE KEY-----\n"
 #define PK_FOOTER "-----END PRIVATE KEY-----\n"
@@ -43,15 +44,16 @@ extern int win32crypto_generate_key(tlsuv_private_key_t *key) {
     *key = NULL;
 
     DWORD export_flags = NCRYPT_ALLOW_EXPORT_FLAG | NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG;
+    SECURITY_STATUS rc;
     if (
-        BCRYPT_SUCCESS(NCryptOpenStorageProvider(&ph, MS_KEY_STORAGE_PROVIDER, 0)) &&
-        BCRYPT_SUCCESS(NCryptCreatePersistedKey(ph, &kh, BCRYPT_ECDSA_P256_ALGORITHM, NULL, 0, 0)) &&
-        BCRYPT_SUCCESS(NCryptSetProperty(kh, NCRYPT_EXPORT_POLICY_PROPERTY, (BYTE*)&export_flags, sizeof(export_flags), 0)) &&
-        BCRYPT_SUCCESS(NCryptFinalizeKey(kh, 0))
+        (rc = NCryptOpenStorageProvider(&ph, MS_KEY_STORAGE_PROVIDER, 0)) == ERROR_SUCCESS &&
+        (rc = NCryptCreatePersistedKey(ph, &kh, BCRYPT_ECDSA_P256_ALGORITHM, NULL, 0, 0)) == ERROR_SUCCESS &&
+        (rc = NCryptSetProperty(kh, NCRYPT_EXPORT_POLICY_PROPERTY, (BYTE*)&export_flags, sizeof(export_flags), 0)) == ERROR_SUCCESS &&
+        (rc = NCryptFinalizeKey(kh, 0)) == ERROR_SUCCESS
     ) {
         *key = (tlsuv_private_key_t) new_private_key(ph, kh);
     } else {
-        UM_LOG(WARN, "failed to generate key: %s", win32_error(GetLastError()));
+        LOG_ERROR(WARN, rc, "failed to generate key");
         NCryptDeleteKey(kh, 0);
         NCryptFreeObject(ph);
     }
@@ -493,7 +495,7 @@ static NCRYPT_PROV_HANDLE get_provider() {
 
 static wchar_t* key_name(const char *id) {
     wchar_t *key_name = tlsuv__calloc(strlen(id) + 1, sizeof(wchar_t));
-    swprintf(key_name, strlen(id) + 1, L"%s", id);
+    swprintf(key_name, strlen(id) + 1, L"%hs", id);
     return key_name;
 }
 
@@ -531,6 +533,7 @@ int win32crypto_gen_keychain_key(tlsuv_private_key_t *pk, const char *id) {
 int win32crypto_load_keychain_key(tlsuv_private_key_t *pk, const char *id) {
     NCRYPT_PROV_HANDLE ph = 0;
     NCRYPT_KEY_HANDLE kh = 0;
+
     wchar_t* name = key_name(id);
     for (int i = 0; i < sizeof(providers)/sizeof(providers[0]); i++) {
         SECURITY_STATUS rc = NCryptOpenStorageProvider(&ph, providers[i], 0);
@@ -539,8 +542,10 @@ int win32crypto_load_keychain_key(tlsuv_private_key_t *pk, const char *id) {
         rc = NCryptOpenKey(ph, &kh, name, 0, 0);
         if (rc == ERROR_SUCCESS) break;
 
+        kh = 0;
         NCryptFreeObject(ph);
     }
+
     tlsuv__free(name);
     if (kh) {
         *pk = (tlsuv_private_key_t)new_private_key(ph, kh);
