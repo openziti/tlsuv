@@ -331,6 +331,7 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
         tlsuv__free(key_blob);
         if (rc != ERROR_SUCCESS) {
             LOG_ERROR(ERR, rc, "import key error");
+            return -1;
         }
 
     } else {
