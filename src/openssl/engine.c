@@ -902,7 +902,7 @@ tls_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout) {
     }
 
     if (err != SSL_ERROR_NONE) {
-        eng->error = ERR_get_error();
+        eng->error = err;
         UM_LOG(ERR, "openssl read: %s", tls_error(eng->error));
         return TLS_ERR;
     }
