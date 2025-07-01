@@ -20,18 +20,14 @@
 #include "../um_debug.h"
 
 #include <tlsuv/tls_engine.h>
-#include <stdbool.h>
 #include <ncrypt.h>
-#include "engine.h"
 
 #define PK_HEADER  "-----BEGIN PRIVATE KEY-----\n"
 #define PK_FOOTER "-----END PRIVATE KEY-----\n"
 
 #define EC_PK_HEADER  "-----BEGIN EC PRIVATE KEY-----\n"
-#define EC_PK_FOOTER "-----END EC PRIVATE KEY-----\n"
 
 #define RSA_PK_HEADER  "-----BEGIN RSA PRIVATE KEY-----\n"
-#define RSA_PK_FOOTER "-----END RSA PRIVATE KEY-----\n"
 
 #define PUB_HEADER  "-----BEGIN PUBLIC KEY-----\n"
 #define PUB_FOOTER "-----END PUBLIC KEY-----\n"
@@ -66,7 +62,7 @@ static SECURITY_STATUS load_rsa_key(NCRYPT_PROV_HANDLE prov, NCRYPT_KEY_HANDLE *
     BCRYPT_RSAKEY_BLOB *key_blob = 0;
     DWORD len;
     if (!CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-                            CNG_RSA_PRIVATE_KEY_BLOB, der, der_len,
+                            CNG_RSA_PRIVATE_KEY_BLOB, der, (DWORD)der_len,
                             CRYPT_DECODE_NOCOPY_FLAG, NULL,
                             NULL, &len)) {
         r = (SECURITY_STATUS)GetLastError();
@@ -76,7 +72,7 @@ static SECURITY_STATUS load_rsa_key(NCRYPT_PROV_HANDLE prov, NCRYPT_KEY_HANDLE *
 
     key_blob = tlsuv__malloc(len);
     if (!CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-                            CNG_RSA_PRIVATE_KEY_BLOB, der, der_len,
+                            CNG_RSA_PRIVATE_KEY_BLOB, der, (DWORD)der_len,
                             CRYPT_DECODE_NOCOPY_FLAG, NULL,
                             key_blob, &len)) {
         r = (SECURITY_STATUS)GetLastError();
@@ -101,7 +97,7 @@ static SECURITY_STATUS load_ecc_key(NCRYPT_PROV_HANDLE prov, NCRYPT_KEY_HANDLE *
 
     ULONG len = 0;
     if (!CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-                             X509_ECC_PRIVATE_KEY, der, der_len,
+                             X509_ECC_PRIVATE_KEY, der, (DWORD)der_len,
                              CRYPT_DECODE_NOCOPY_FLAG, NULL, NULL, &len)) {
         rc = (SECURITY_STATUS)GetLastError();
         LOG_ERROR(ERR, rc, "failed to parse EC KEY info");
@@ -110,7 +106,7 @@ static SECURITY_STATUS load_ecc_key(NCRYPT_PROV_HANDLE prov, NCRYPT_KEY_HANDLE *
 
     CRYPT_ECC_PRIVATE_KEY_INFO *eck = tlsuv__malloc(len);
     if (!CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-                             X509_ECC_PRIVATE_KEY, der, der_len,
+                             X509_ECC_PRIVATE_KEY, der, (DWORD)der_len,
                              CRYPT_DECODE_NOCOPY_FLAG, NULL, eck, &len)) {
         rc = (SECURITY_STATUS)GetLastError();
         LOG_ERROR(ERR, rc, "failed to parse EC KEY info");
@@ -161,17 +157,12 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
     ULONG der_len;
     DWORD skip;
     BYTE *der = NULL;
-    bool rc;
-    union {
-        CRYPT_PRIVATE_KEY_INFO info;
-        char buf[1024];
-    } pk_info = {};
 
-    if (CryptStringToBinaryA(data, data_len,
+    if (CryptStringToBinaryA(data, (DWORD)data_len,
                              CRYPT_STRING_BASE64HEADER, NULL, &der_len,
                              &skip, NULL)) {
         der = tlsuv__malloc(der_len);
-        rc = CryptStringToBinaryA(data, data_len,
+        CryptStringToBinaryA(data, (DWORD)data_len,
                                   CRYPT_STRING_BASE64HEADER, der, &der_len,
                                   &skip, NULL);
     } else {
@@ -227,12 +218,8 @@ static int priv_key_pem(struct tlsuv_private_key_s *key, char **pem, size_t *pem
     if (priv_key->key == 0) {
         return -1; // Key not initialized
     }
-    NCRYPT_KEY_HANDLE kh = priv_key->key;
 
     ULONG len = 0;
-    CRYPT_PRIVATE_KEY_INFO pk_info = {};
-    const char *param_oid = NULL;
-
     LPCWSTR type = NCRYPT_PKCS8_PRIVATE_KEY_BLOB;
     DWORD rc = NCryptExportKey(priv_key->key, 0, type, NULL, NULL, 0, &len, 0);
     if (rc != ERROR_SUCCESS) {
@@ -259,7 +246,7 @@ static int priv_key_pem(struct tlsuv_private_key_s *key, char **pem, size_t *pem
     return 0;
 }
 
-static void pub_free(tlsuv_public_key_t *k) {
+static void pub_free(tlsuv_public_key_t k) {
     struct win32crypto_public_key_s *pub = (struct win32crypto_public_key_s*)k;
     if (pub) {
         BCryptDestroyKey(pub->key);
@@ -327,7 +314,7 @@ if (!BCRYPT_SUCCESS(res)) {  \
     ULONG count;
     CHECK(BCryptGetProperty(hash_algo, BCRYPT_HASH_LENGTH, (PUCHAR) &hash_bin_len, sizeof(hash_bin_len), &count, 0));
     CHECK(BCryptCreateHash(hash_algo, &hash, NULL, 0, NULL, 0, 0));
-    CHECK(BCryptHashData(hash, (PUCHAR)data, datalen, 0));
+    CHECK(BCryptHashData(hash, (PUCHAR)data, (ULONG)datalen, 0));
     CHECK(BCryptFinishHash(hash, hash_bin, hash_bin_len, 0));
 
     BCRYPT_PKCS1_PADDING_INFO pad = {
@@ -336,7 +323,8 @@ if (!BCRYPT_SUCCESS(res)) {  \
     DWORD flags = strcmp(pub->info->Algorithm.pszObjId, szOID_RSA_RSA) == 0 ? NCRYPT_PAD_PKCS1_FLAG : 0;
 
     NTSTATUS verified = BCryptVerifySignature(pub->key, flags ? &pad : NULL,
-                                              hash_bin, hash_bin_len, (PUCHAR) sig, siglen, flags);
+                                              hash_bin, hash_bin_len,
+                                              (PUCHAR) sig, (ULONG)siglen, flags);
     if (!BCRYPT_SUCCESS(verified)) {
         UM_LOG(ERR, "Signature verification failed: 0x%X", verified);
         rc = -1;
@@ -414,13 +402,13 @@ goto done; \
     ULONG count;
     CHECK(BCryptGetProperty(hash_algo, BCRYPT_HASH_LENGTH, (PUCHAR) &hash_bin_len, sizeof(hash_bin_len), &count, 0));
     CHECK(BCryptCreateHash(hash_algo, &hash, NULL, 0, NULL, 0, 0));
-    CHECK(BCryptHashData(hash, (PUCHAR)data, datalen, 0));
+    CHECK(BCryptHashData(hash, (PUCHAR)data, (ULONG)datalen, 0));
     CHECK(BCryptFinishHash(hash, hash_bin, hash_bin_len, 0));
 
     wchar_t key_type[16] = {};
     DWORD kt_len;
-    NCryptGetProperty(pk->key, NCRYPT_ALGORITHM_GROUP_PROPERTY, key_type, sizeof(key_type), &kt_len, 0);
-    DWORD len = *siglen;
+    NCryptGetProperty(pk->key, NCRYPT_ALGORITHM_GROUP_PROPERTY, (PVOID)key_type, sizeof(key_type), &kt_len, 0);
+    DWORD len = (DWORD)(*siglen);
     BCRYPT_PKCS1_PADDING_INFO pad = {
         .pszAlgId = hash_algo_id
     };
@@ -476,7 +464,6 @@ static wchar_t *providers[] = {
 };
 
 static wchar_t *key_algos[] = {
-    NCRYPT_ECDSA_P521_ALGORITHM,
     NCRYPT_ECDSA_P384_ALGORITHM,
     NCRYPT_ECDSA_P256_ALGORITHM,
 };
@@ -516,6 +503,7 @@ int win32crypto_gen_keychain_key(tlsuv_private_key_t *pk, const char *id) {
         rc = NCryptFinalizeKey(kh, 0);
         if (rc == ERROR_SUCCESS) break;
 
+        NCryptDeleteKey(kh, NCRYPT_SILENT_FLAG);
         NCryptFreeObject(kh);
         kh = 0;
     }
@@ -540,7 +528,10 @@ int win32crypto_load_keychain_key(tlsuv_private_key_t *pk, const char *id) {
         if (rc != ERROR_SUCCESS) continue;
 
         rc = NCryptOpenKey(ph, &kh, name, 0, 0);
-        if (rc == ERROR_SUCCESS) break;
+        if (rc == ERROR_SUCCESS) {
+          UM_LOG(DEBG, "loaded key[%ls] from provider[%ls]", name, providers[i]);
+          break;
+        }
 
         kh = 0;
         NCryptFreeObject(ph);

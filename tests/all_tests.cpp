@@ -29,9 +29,9 @@ static const char *err_labels[] = {
 static void test_log_f(int lvl, const char *file, unsigned int line, const char* msg){
     uv_timeval64_t now;
     uv_gettimeofday(&now);
-    long elapsed = (now.tv_sec - start.tv_sec) * 1000 + (now.tv_usec - start.tv_usec) / 1000;
+    int64_t elapsed = (now.tv_sec - start.tv_sec) * 1000 + (now.tv_usec - start.tv_usec) / 1000;
 
-    fprintf(stderr, "[%6ld.%03ld]%5s %s:%d %s\n", elapsed/1000, elapsed % 1000,
+    fprintf(stderr, "[%6ld.%03ld]%5s %s:%d %s\n", (long)elapsed/1000, (long)elapsed % 1000,
             err_labels[lvl], file, line, msg);
     fflush(stderr);
 }
@@ -45,7 +45,7 @@ int main( int argc, char* argv[] ) {
 #ifdef _WIN32
     SetConsoleOutputCP(65001);
     WSADATA WSAData;
-    int err = WSAStartup(MAKEWORD(2, 0), &WSAData);
+    WSAStartup(MAKEWORD(2, 0), &WSAData);
 #endif
 
 #if defined(HSM_CONFIG)

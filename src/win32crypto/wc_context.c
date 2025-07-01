@@ -21,10 +21,12 @@
 #include "cert.h"
 #include "engine.h"
 #include "keys.h"
-#include <security.h>
 #include <wincrypt.h>
 
+#include <sddl.h>
 #include <stdbool.h>
+
+static void dump_key(NCRYPT_KEY_HANDLE kh, LPWSTR name);
 
 struct win32tls {
     tls_context api;
@@ -59,14 +61,6 @@ tls_context * new_win32crypto_ctx(const char* ca, size_t ca_len) {
     if (ca && ca_len > 0) {
         ctx->api.set_ca_bundle((tls_context *) ctx, ca, ca_len);
     }
-
-    NCRYPT_PROV_HANDLE ph = 0;
-    if (NCryptOpenStorageProvider(&ph, MS_PLATFORM_KEY_STORAGE_PROVIDER, 0) != ERROR_SUCCESS) {
-        ctx->api.generate_keychain_key = NULL;
-        ctx->api.load_keychain_key = NULL;
-        ctx->api.remove_keychain_key = NULL;
-    }
-    NCryptFreeObject(ph);
 
     return (tls_context*)ctx;
 }
@@ -224,7 +218,7 @@ static int load_cert(tlsuv_certificate_t *cert, const char *buf, size_t buf_len)
     return 0;
 }
 
-static int tls_set_cert_verify(
+static void tls_set_cert_verify(
     tls_context *ctx,
     int (*verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
     void *v_ctx) {
@@ -232,7 +226,6 @@ static int tls_set_cert_verify(
 
     c->cert_verify_f = verify_f;
     c->verify_ctx = v_ctx;
-    return 0;
 }
 
 static int set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len) {
@@ -288,7 +281,7 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
         // this probably means that key is not persisted
         // we need to store it in order to use it for mutual auth
         // step 1: stable key name
-        char kid[64] = {};
+        BYTE kid[64] = {};
         DWORD kid_len = sizeof(kid);
         if (!CertGetCertificateContextProperty(pcc, CERT_KEY_IDENTIFIER_PROP_ID, kid, &kid_len)) {
             LOG_LAST_ERROR(ERR, "failed to get key id from the certificate");
@@ -467,3 +460,77 @@ static tls_context win32tls_context_api = {
         .load_cert = load_cert,
         .generate_csr_to_pem = win32crypto_generate_csr,
 };
+
+static void dump_key(NCRYPT_KEY_HANDLE kh, LPWSTR name) {
+  char buf2[1024] = {};
+  DWORD len;
+  printf("=========================\n");
+  printf("key: %ls\n", name);
+
+  DWORD val;
+  len = sizeof(val);
+  NCryptGetProperty(kh, NCRYPT_EXPORT_POLICY_PROPERTY, (PVOID)&val, len,  &len, 0);
+  printf("export policy: 0x%lX\n", val);
+
+  NCryptGetProperty(kh, NCRYPT_KEY_USAGE_PROPERTY, (PVOID)&val, len,  &len, 0);
+  printf("key usage: 0x%lX\n", val);
+
+  NCryptGetProperty(kh, NCRYPT_KEY_TYPE_PROPERTY, (PVOID)&val, len,  &len, 0);
+  printf("key type: 0x%lX\n", val);
+
+  long flags = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+               DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION;
+  SECURITY_STATUS rc = NCryptGetProperty(kh, NCRYPT_SECURITY_DESCR_PROPERTY,
+                                         (PVOID)buf2, sizeof(buf2), &len,
+                                         flags);
+
+  if (rc == ERROR_SUCCESS) {
+    SECURITY_DESCRIPTOR *sd = (PSECURITY_DESCRIPTOR)buf2;
+
+    LPSTR owner = NULL, group = NULL;
+    ConvertSidToStringSidA(sd->Owner, &owner);
+    ConvertSidToStringSidA(sd->Group, &group);
+    printf ("owner[%s] group[%s]\n", owner, group);
+    LocalFree(owner);
+    LocalFree(group);
+    BOOL present =0, defaulted = 0;
+    PACL pacl;
+    GetSecurityDescriptorDacl(sd, &present, &pacl, &defaulted);
+
+    printf("present: %d/%d\n", present, defaulted);
+
+    for (int i = 0; present && i < pacl->AceCount; i++) {
+      void *ace;
+      GetAce(pacl, i, &ace);
+
+      PACE_HEADER ea = ace;
+
+      printf("ace[%d]: type[%d] flags[%d]\n", i, ea->AceType, ea->AceFlags);
+      if (ea->AceType == ACCESS_ALLOWED_ACE_TYPE) {
+        ACCESS_ALLOWED_ACE *aaa = ace;
+        char *sid = NULL;
+        ConvertSidToStringSidA(&aaa->SidStart, &sid);
+        printf("allowed mask[%lx] sid[%s]\n", aaa->Mask, sid);
+      }
+    }
+
+    GetSecurityDescriptorSacl(sd, &present, &pacl, &defaulted);
+    printf("sacl: %d/%d\n", present, defaulted);
+
+    for (int i = 0; present && i < pacl->AceCount; i++) {
+      void *ace;
+      GetAce(pacl, i, &ace);
+
+      PACE_HEADER ea = ace;
+
+      printf("ace[%d]: type[%d] flags[%d]\n", i, ea->AceType, ea->AceFlags);
+      if (ea->AceType == ACCESS_ALLOWED_ACE_TYPE) {
+        ACCESS_ALLOWED_ACE *aaa = ace;
+        char *sid = NULL;
+        ConvertSidToStringSidA(&aaa->SidStart, &sid);
+        printf("allowed mask[%lx] sid[%s]\n", aaa->Mask, sid);
+      }
+    }
+  }
+  printf("=========================\n");
+}

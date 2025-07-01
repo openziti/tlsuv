@@ -15,8 +15,6 @@
 #include <tlsuv/keychain.h>
 #include <util.h>
 
-#include <uv.h>
-
 #include <ncrypt.h>
 #include "../um_debug.h"
 #include "../alloc.h"
@@ -35,7 +33,7 @@ static const char* win32_error(DWORD code) {
     return msg;
 }
 
-static void do_init(void) {
+static int STDAPICALLTYPE do_init(PINIT_ONCE once, PVOID param, PVOID *ctx) {
     static const LPWSTR preferred[] = {
             MS_PLATFORM_CRYPTO_PROVIDER,
             MS_KEY_STORAGE_PROVIDER,
@@ -51,7 +49,7 @@ static void do_init(void) {
 
     if (rc != ERROR_SUCCESS) {
         UM_LOG(ERR, "failed to initialize Windows keychain: %s", win32_error(rc));
-        return;
+        return FALSE;
     }
 
     wchar_t name[1024];
@@ -63,11 +61,12 @@ static void do_init(void) {
 
     UM_LOG(INFO, "initialized keychain[%ls] %s hardware support",
            name, type & NCRYPT_IMPL_HARDWARE_FLAG ? "with" : "without");
+    return TRUE;
 }
 
 static void init() {
-    static uv_once_t once_init;
-    uv_once(&once_init, do_init);
+    static INIT_ONCE s_init = INIT_ONCE_STATIC_INIT;
+    InitOnceExecuteOnce(&s_init, do_init, NULL, NULL);
 }
 
 static wchar_t* name_to_wchar(const char *name) {
@@ -80,7 +79,6 @@ static wchar_t* name_to_wchar(const char *name) {
 static int gen_key(keychain_key_t *key, enum keychain_key_type type, const char *name){
     init();
     static wchar_t *algos[] = {
-            NCRYPT_ECDSA_P521_ALGORITHM,
             NCRYPT_ECDSA_P384_ALGORITHM,
             NCRYPT_ECDSA_P256_ALGORITHM,
     };
