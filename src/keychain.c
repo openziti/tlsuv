@@ -25,7 +25,7 @@ extern keychain_t* platform_keychain();
 static keychain_t *KEYCHAIN;
 static uv_once_t init_guard;
 
-static void init() {
+static void init(void) {
 #if defined(__APPLE__) || _WIN32
     tlsuv_set_keychain(platform_keychain());
 #endif

@@ -33,7 +33,7 @@ static const char* win32_error(DWORD code) {
     return msg;
 }
 
-static BOOL do_init(PINIT_ONCE once, PVOID param, PVOID *ctx) {
+static int STDAPICALLTYPE do_init(PINIT_ONCE once, PVOID param, PVOID *ctx) {
     static const LPWSTR preferred[] = {
             MS_PLATFORM_CRYPTO_PROVIDER,
             MS_KEY_STORAGE_PROVIDER,
