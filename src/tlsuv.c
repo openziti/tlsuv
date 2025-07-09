@@ -652,6 +652,14 @@ int tlsuv_stream_free(tlsuv_stream_t *clt) {
     return 0;
 }
 
+const char* tlsuv_stream_get_error(const tlsuv_stream_t *clt) {
+    if( clt && clt->tls_engine) {
+        return clt->tls_engine->strerror(clt->tls_engine);
+    }
+    return NULL;
+}
+
+
 int tlsuv_socket_set_blocking(uv_os_sock_t s, bool blocking) {
 
 #if defined(O_NONBLOCK)

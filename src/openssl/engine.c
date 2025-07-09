@@ -194,7 +194,7 @@ const char *tls_error(unsigned long code) {
 
 static const char *tls_eng_error(tlsuv_engine_t self) {
     struct openssl_engine *e = (struct openssl_engine *)self;
-    return tls_error(e->error);
+    return e->error ? ERR_reason_error_string(e->error) : NULL;
 }
 
 tls_context *new_openssl_ctx(const char *ca, size_t ca_len) {
@@ -798,17 +798,18 @@ tls_continue_hs(tlsuv_engine_t self) {
     int rc = SSL_do_handshake(eng->ssl);
 
     if (rc != 1) {
+        eng->error = ERR_peek_error();
         ERR_print_errors_cb(print_err_cb, NULL);
     }
 
     if (rc == 1) { // handshake completed
+        eng->error = 0;
         return TLS_HS_COMPLETE;
     }
 
     int err = SSL_get_error(eng->ssl, rc);
 
     if (rc == 0) { // handshake encountered an error and was shutdown
-        eng->error = ERR_get_error();
         UM_LOG(ERR, "openssl: handshake was terminated: %s", tls_error(eng->error));
         return TLS_HS_ERROR;
     }
@@ -816,7 +817,6 @@ tls_continue_hs(tlsuv_engine_t self) {
     if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
         return TLS_HS_CONTINUE;
     } else { // something else is wrong
-        eng->error = err;
         UM_LOG(ERR, "openssl: handshake was terminated: %s", tls_error(eng->error));
         return TLS_HS_ERROR;
     }
@@ -846,7 +846,7 @@ static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len) {
         size_t written = 0;
         int ret = SSL_write_ex(eng->ssl, (const unsigned char *) (data + wrote), data_len - wrote, &written);
         if (ret == 0) {
-            int err = SSL_get_error(eng->ssl, 0);
+            int err = SSL_get_error(eng->ssl, ret);
             if (err == SSL_ERROR_WANT_WRITE) {
                 if (wrote > 0) {
                     return (int)wrote;
@@ -854,7 +854,7 @@ static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len) {
                     return TLS_AGAIN;
                 }
             } else {
-                eng->error = err;
+                eng->error = ERR_peek_error();
                 UM_LOG(ERR, "openssl: write error: %s", tls_error(eng->error));
                 return -1;
             }
@@ -878,8 +878,9 @@ tls_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout) {
     while(maxout - total_out > 0) {
 
         size_t read_bytes;
-        if (!SSL_read_ex(eng->ssl, writep, maxout - total_out, &read_bytes)) {
-            err = SSL_get_error(eng->ssl, 0);
+        int rc;
+        if ((rc = SSL_read_ex(eng->ssl, writep, maxout - total_out, &read_bytes)) <= 0) {
+            err = SSL_get_error(eng->ssl, rc);
             break;
         }
 
@@ -902,7 +903,7 @@ tls_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout) {
     }
 
     if (err != SSL_ERROR_NONE) {
-        eng->error = err;
+        eng->error = ERR_peek_error();
         UM_LOG(ERR, "openssl read: %s", tls_error(eng->error));
         return TLS_ERR;
     }

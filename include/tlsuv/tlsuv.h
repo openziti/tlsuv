@@ -148,6 +148,8 @@ int tlsuv_stream_free(tlsuv_stream_t *clt);
 
 int tlsuv_stream_peername(const tlsuv_stream_t *clt, struct sockaddr *addr, int *namelen);
 
+const char* tlsuv_stream_get_error(const tlsuv_stream_t *clt);
+
 typedef struct tlsuv_write_s tlsuv_write_t;
 
 struct tlsuv_stream_s {
