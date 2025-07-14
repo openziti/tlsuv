@@ -556,9 +556,47 @@ ClE70UxGSsMjY8Evg0qSemyX/S63aziH1I9+m+3BUF+bg75zTmirgzIPt3B0mbD4Rx99DC6bE9n8
 Z8AgrJehwuXYVyJrG5Tc1vnlSUhUrK2812JyXA7tkWj/qzc=
 -----END CERTIFICATE-----
 )";
+    const char *cert_text = R"(        Version: 3 (0x2)
+        Serial Number: 309216 (0x4b7e0)
+        Signature Algorithm: sha256WithRSAEncryption
+        Issuer: C=US, ST=NC, L=Charlotte, O=NetFoundry, CN=Ziti Controller Intermediate CA/emailAddress=support@netfoundry.io
+        Validity
+            Not Before: Jul 31 17:25:35 2024 GMT
+            Not After : Jul 31 17:26:35 2025 GMT
+        Subject: CN=CafSvpHp0
+        Subject Public Key Info:
+            Public Key Algorithm: id-ecPublicKey
+                Public-Key: (256 bit)
+                pub:
+                    04:f7:65:65:32:b2:6f:f5:87:70:df:76:93:09:e7:
+                    c9:b7:03:07:80:32:af:98:3a:89:26:41:f8:49:3c:
+                    cc:ff:ee:54:24:32:ed:48:5e:73:ed:37:ed:54:56:
+                    76:ad:9b:cb:68:33:c3:d6:bb:38:26:95:9d:8a:c7:
+                    00:49:87:64:f7
+                ASN1 OID: prime256v1
+                NIST CURVE: P-256
+        X509v3 extensions:
+            X509v3 Key Usage: critical
+                Digital Signature, Key Encipherment, Data Encipherment
+            X509v3 Extended Key Usage:
+                TLS Web Client Authentication
+            X509v3 Authority Key Identifier:
+                6B:7D:E4:C8:04:D6:E1:10:34:9A:03:95:47:9B:C9:32:7F:EF:F5:09
+)";
     auto tls = default_tls_context(nullptr, 0);
     tlsuv_certificate_t cert = nullptr;
     CHECK(tls->load_cert(&cert, pem, strlen(pem)) == 0);
+
+    if (cert->get_text) {
+        const char *text = cert->get_text(cert);
+        size_t textlen = 0;
+        CHECK(text != nullptr);
+        CHECK_THAT(text, Catch::Matchers::ContainsSubstring("Subject: CN=CafSvpHp0"));
+        CHECK_THAT(text, Catch::Matchers::ContainsSubstring(
+                "Issuer: C=US, ST=NC, L=Charlotte, O=NetFoundry, CN=Ziti Controller Intermediate CA/emailAddress=support@netfoundry.io"));
+        printf("Cert text:\n%s\n", text);
+    }
+
     cert->free(cert);
     tls->free_ctx(tls);
 }

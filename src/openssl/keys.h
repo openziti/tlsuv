@@ -21,6 +21,7 @@
 struct cert_s {
     TLSUV_CERT_API
     X509_STORE *cert;
+    char *text;
 };
 
 struct pub_key_s {
