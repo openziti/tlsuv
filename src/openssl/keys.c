@@ -864,7 +864,9 @@ static const char* cert_to_text(const struct tlsuv_certificate_s * cert) {
     X509 *x509 = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
 
     BIO *bio = BIO_new(BIO_s_mem());
-    X509_print_ex(bio, x509, 0, X509_FLAG_NO_HEADER | X509_FLAG_NO_SIGDUMP);
+    X509_print_ex(bio, x509, 0,
+                  X509_FLAG_NO_HEADER | X509_FLAG_NO_SIGDUMP |
+                  X509_FLAG_NO_SIGNAME | X509_FLAG_EXTENSIONS_ONLY_KID);
 
     int len = BIO_pending(bio);
     c->text = tlsuv__malloc(len + 1);
