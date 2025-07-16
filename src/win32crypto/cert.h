@@ -25,6 +25,7 @@ typedef struct win32_cert {
     struct tlsuv_certificate_s api;
     HCERTSTORE store;
     PCCERT_CONTEXT cert;
+    char *text;
 } win32_cert_t;
 
 extern win32_cert_t *win32_new_cert(PCCERT_CONTEXT, HCERTSTORE);
