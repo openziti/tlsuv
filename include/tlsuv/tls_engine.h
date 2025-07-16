@@ -166,6 +166,7 @@ typedef struct tlsuv_certificate_s *tlsuv_certificate_t;
     void (*free)(struct tlsuv_certificate_s * cert);                                \
     int (*to_pem)(const struct tlsuv_certificate_s * cert, int full, char **pem, size_t *pemlen);   \
     int (*get_expiration)(const struct tlsuv_certificate_s * cert, struct tm *);          \
+    const char* (*get_text)(const struct tlsuv_certificate_s * cert);                     \
     int (*verify)(const struct tlsuv_certificate_s * cert, enum hash_algo md,             \
                   const char *data, size_t datalen, const char *sig, size_t siglen);
 

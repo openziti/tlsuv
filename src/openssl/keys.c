@@ -35,6 +35,7 @@
     ( EVP_PKEY_KEY_PARAMETERS | OSSL_KEYMGMT_SELECT_PRIVATE_KEY )
 #endif
 
+static const char* cert_to_text(const struct tlsuv_certificate_s * cert);
 static int cert_to_pem(const struct tlsuv_certificate_s * c, int full, char **pem, size_t *pemlen);
 static void cert_free(tlsuv_certificate_t c);
 static int cert_verify(const struct tlsuv_certificate_s * c, enum hash_algo md, const char *data, size_t datalen, const char *sig, size_t siglen);
@@ -44,6 +45,7 @@ static struct cert_s cert_API = {
         .free = cert_free,
         .verify = cert_verify,
         .to_pem = cert_to_pem,
+        .get_text = cert_to_text,
         .get_expiration = cert_exp,
 };
 
@@ -853,12 +855,35 @@ static int privkey_store_cert(tlsuv_private_key_t pk, tlsuv_certificate_t cert) 
     return rc;
 }
 
+static const char* cert_to_text(const struct tlsuv_certificate_s * cert) {
+    struct cert_s *c = (struct cert_s *) cert;
+
+    if(c->text) return c->text;
+
+    STACK_OF(X509_OBJECT) *s = X509_STORE_get0_objects(c->cert);
+    X509 *x509 = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
+
+    BIO *bio = BIO_new(BIO_s_mem());
+    X509_print_ex(bio, x509, 0,
+                  X509_FLAG_NO_HEADER | X509_FLAG_NO_SIGDUMP |
+                  X509_FLAG_NO_SIGNAME | X509_FLAG_EXTENSIONS_ONLY_KID);
+
+    int len = BIO_pending(bio);
+    c->text = tlsuv__malloc(len + 1);
+    BIO_read(bio, c->text, len);
+    c->text[len] = '\0'; // ensure null-termination
+    BIO_free(bio);
+
+    return c->text;
+}
+
 static void cert_free(tlsuv_certificate_t cert) {
     struct cert_s *c = (struct cert_s *) cert;
     X509_STORE *s = c->cert;
     if (s != NULL) {
         X509_STORE_free(s);
     }
+    tlsuv__free(c->text);
     tlsuv__free(c);
 }
 

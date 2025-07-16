@@ -559,6 +559,15 @@ Z8AgrJehwuXYVyJrG5Tc1vnlSUhUrK2812JyXA7tkWj/qzc=
     auto tls = default_tls_context(nullptr, 0);
     tlsuv_certificate_t cert = nullptr;
     CHECK(tls->load_cert(&cert, pem, strlen(pem)) == 0);
+
+    if (cert->get_text) {
+        const char *text = cert->get_text(cert);
+        CHECK(text != nullptr);
+        CHECK_THAT(text, Catch::Matchers::ContainsSubstring("Subject: CN=CafSvpHp0"));
+        CHECK_THAT(text, Catch::Matchers::ContainsSubstring("ASN1 OID: prime256v1"));
+        printf("Cert text:\n%s\n", text);
+    }
+
     cert->free(cert);
     tls->free_ctx(tls);
 }
