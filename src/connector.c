@@ -20,7 +20,7 @@
 #include "util.h"
 #include "um_debug.h"
 #include "tlsuv/tlsuv.h"
-
+#include <tlsuv/http.h>
 
 #if _WIN32
 #include "win32_compat.h"
@@ -43,7 +43,6 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/poll.h>
-#include <tlsuv/http.h>
 
 #endif
 
