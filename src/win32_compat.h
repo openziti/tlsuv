@@ -18,7 +18,6 @@
 
 #if _WIN32
 
-#define tlsuv__strdup _strdup
 #define strcasecmp _stricmp
 #define strncasecmp _strnicmp
 
