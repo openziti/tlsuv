@@ -194,6 +194,7 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
         default:
             UM_LOG(ERR, "unexpected handshake status[%d]", status);
             close_connection(clt);
+            fail_all_requests(clt, UV_ECONNRESET, "unexpected TLS handshake status");
     }
 }
 
