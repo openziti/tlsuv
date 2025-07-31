@@ -373,8 +373,7 @@ static int http_status_cb(llhttp_t *parser, const char *status, size_t len) {
     if (r->client) {
         r->client->keepalive = !(parser->http_major == 1 && parser->http_minor == 0);
     }
-    r->resp.status = tlsuv__calloc(1, len+1);
-    strncpy(r->resp.status, status, len);
+    r->resp.status = tlsuv__strndup(status, len);
     return 0;
 }
 

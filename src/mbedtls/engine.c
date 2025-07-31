@@ -394,7 +394,7 @@ static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uin
 }
 
 tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host) {
-    struct mbedtls_context *context = ctx;
+    struct mbedtls_context *context = (struct mbedtls_context *) ctx;
 
     struct mbedtls_engine *mbed_eng = tlsuv__calloc(1, sizeof(struct mbedtls_engine));
     init_ssl_context(&mbed_eng->config, context->ca, context->ca_len);

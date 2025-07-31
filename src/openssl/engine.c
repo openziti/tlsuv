@@ -194,10 +194,12 @@ const char *tls_error(unsigned long code) {
 
 static const char *tls_eng_error(tlsuv_engine_t self) {
     struct openssl_engine *e = (struct openssl_engine *)self;
-    return e->error ? ERR_reason_error_string(e->error) : NULL;
+    const char *err = ERR_reason_error_string(e->error);
+    return err;
 }
 
 tls_context *new_openssl_ctx(const char *ca, size_t ca_len) {
+    OPENSSL_init_ssl(OPENSSL_INIT_SSL_DEFAULT, NULL);
 
     struct openssl_ctx *c = tlsuv__calloc(1, sizeof(struct openssl_ctx));
     c->api = openssl_context_api;
@@ -360,8 +362,6 @@ static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
 }
 
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len) {
-    SSL_library_init();
-
     const SSL_METHOD *method = TLS_client_method();
     SSL_CTX *ctx = SSL_CTX_new_ex(global_ctx, NULL, method);
     if (ctx == NULL) {

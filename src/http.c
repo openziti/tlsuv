@@ -185,7 +185,11 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
 
         case TLS_HS_ERROR: {
             const char *err = tls->engine->strerror(tls->engine);
-            UM_LOG(ERR, "handshake failed status[%d]: %s", status, tls->engine->strerror(tls->engine));
+            // if the TLS error is null, the connection was dropped by peer (most likely)
+            if (err == NULL) {
+                err = uv_strerror(UV_ECONNRESET);
+            }
+            UM_LOG(ERR, "handshake failed status[%d]: %s", status, err);
             close_connection(clt);
             fail_all_requests(clt, UV_ECONNABORTED, err);
             break;
@@ -194,6 +198,7 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
         default:
             UM_LOG(ERR, "unexpected handshake status[%d]", status);
             close_connection(clt);
+            fail_all_requests(clt, UV_ECONNRESET, "unexpected TLS handshake status");
     }
 }
 

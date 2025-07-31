@@ -461,6 +461,7 @@ TEST_CASE("client_cert_test","[http]") {
         CHECK(resp.resp_body_end_called);
         CHECK(resp.body == "you are 'CN=BadSSL Client Certificate,O=BadSSL,L=San Francisco,ST=California,C=US' by CN=BadSSL Client Root Certificate Authority,O=BadSSL,L=San Francisco,ST=California,C=US");
         c->free(c);
+        pk->free(pk);
         test.run();
     }
 
@@ -1306,7 +1307,7 @@ Aa9mObm9QjQc2wgD80D8EuiuPKuK1ftyeWSm4w5VsTuVP61gM2eKrLanXPDtWlIb
     uv_run(loop, UV_RUN_DEFAULT);
 
     // should get HTTP response here
-    INFO(uv_strerror(result.code) << result.msg);
+    INFO(result.code << " " << result.msg);
     CHECK(result.code == 200);
 
     tlsuv_http_close(&clt, nullptr);
