@@ -195,7 +195,6 @@ const char *tls_error(unsigned long code) {
 static const char *tls_eng_error(tlsuv_engine_t self) {
     struct openssl_engine *e = (struct openssl_engine *)self;
     const char *err = ERR_reason_error_string(e->error);
-    if (err == NULL) err = "no error";
     return err;
 }
 
