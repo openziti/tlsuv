@@ -38,6 +38,10 @@
 #endif
 #endif
 
+#if __APPLE__
+#include <Security/Security.h>
+#endif
+
 struct openssl_ctx {
     tls_context api;
     SSL_CTX *ctx;
@@ -334,10 +338,46 @@ static X509_LOOKUP_METHOD * old_hash_lookup(void) {
     return method;
 }
 
+#if __APPLE__
+static int apple_ca_verify(int pre_verify, X509_STORE_CTX *st) {
+
+    CFMutableArrayRef certs = CFArrayCreateMutable(kCFAllocatorDefault, 10, &kCFTypeArrayCallBacks);
+
+    STACK_OF(X509) *chain = X509_STORE_CTX_get1_chain(st);
+    for (int i = 0; i < sk_X509_num(chain); i++) {
+        X509 *x = sk_X509_value(chain, i);
+        uint8_t *der = NULL;
+        int der_len = i2d_X509(x, &der);
+        CFDataRef d = CFDataCreate(kCFAllocatorDefault, der, der_len);
+        OPENSSL_free(der);
+
+        SecCertificateRef c = SecCertificateCreateWithData(kCFAllocatorDefault, d);
+        CFArrayAppendValue(certs, c);
+        CFRelease(d);
+        CFRelease(c);
+    }
+    sk_X509_free(chain);
+
+    SecTrustRef trust;
+    SecPolicyRef policy = SecPolicyCreateBasicX509();
+
+    CFErrorRef err = NULL;
+    bool result =
+            SecTrustCreateWithCertificates(certs, policy, &trust) == errSecSuccess &&
+            SecTrustEvaluateWithError(trust, &err);
+    CFRelease(trust);
+    CFRelease(policy);
+    CFRelease(certs);
+
+    return result;
+}
+#endif
+
 static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
     struct openssl_ctx *c = (struct openssl_ctx *) tls;
     SSL_CTX *ctx = c->ctx;
 
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     if (ca != NULL) {
         X509_STORE *store = load_certs(ca, ca_len);
         SSL_CTX_set0_verify_cert_store(ctx, store);
@@ -349,6 +389,10 @@ static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
             X509_STORE *sys_ca = load_system_certs();
             SSL_CTX_set0_verify_cert_store(ctx, sys_ca);
         }
+#elif __APPLE__
+        // Apple deprecated all access to system CA roots store on macOS and iOS(was never available).
+        // use native Apple trust verification
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, apple_ca_verify);
 #elif defined(ANDROID) || defined(__ANDROID__)
         X509_STORE *ca = SSL_CTX_get_cert_store(ctx);
         X509_LOOKUP *lu = X509_STORE_add_lookup(ca, old_hash_lookup());
@@ -357,7 +401,6 @@ static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
         SSL_CTX_set_default_verify_paths(ctx);
 #endif
     }
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     return 0;
 }
 
