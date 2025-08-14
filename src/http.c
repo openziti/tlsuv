@@ -321,7 +321,7 @@ static void send_body(tlsuv_http_req_t *req) {
     while (req->req_body != NULL) {
         struct body_chunk_s *b = req->req_body;
         req->req_body = b->next;
-        UM_LOG(VERB, "sending body chunk %ld bytes", b->len);
+        UM_LOG(VERB, "sending body chunk %zd bytes", b->len);
         req->body_sent_size += b->len;
 
         if (req->req_chunked) {
@@ -349,7 +349,7 @@ static void send_body(tlsuv_http_req_t *req) {
             buf = uv_buf_init((char*)b->chunk, (unsigned int)b->len);
             uv_link_write((uv_link_t *) &clt->http_link, &buf, 1, NULL, req_write_body_cb, b);
             if (req->body_sent_size > req->req_body_size) {
-                UM_LOG(WARN, "Supplied data[%ld] is larger than provided Content-Length[%ld]",
+                UM_LOG(WARN, "Supplied data[%zd] is larger than provided Content-Length[%zd]",
                         req->body_sent_size, req->req_body_size);
             }
 
