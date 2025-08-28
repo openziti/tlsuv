@@ -49,6 +49,8 @@ typedef struct tcp_src_s {
  */
 int tcp_src_init(uv_loop_t *l, tcp_src_t *tl);
 
+void tcp_src_set_connector(tcp_src_t *ts, const tlsuv_connector_t *connector);
+
 int tcp_src_nodelay(tcp_src_t *ts, int val);
 
 int tcp_src_keepalive(tcp_src_t *ts, int on, unsigned int val);

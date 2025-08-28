@@ -448,7 +448,9 @@ static void on_ws_close(tlsuv_websocket_t *ws) {
 
     if (ws->src) {
         ws->src->cancel(ws->src);
-        tcp_src_free((tcp_src_t *) ws->src);
+        if (ws->src == (tlsuv_src_t *)&ws->default_src) {
+            tcp_src_free((tcp_src_t *) ws->src);
+        }
         ws->src = NULL;
     }
 
@@ -476,6 +478,14 @@ int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
 
 void tlsuv_websocket_set_tls(tlsuv_websocket_t *ws, tls_context *ctx) {
     ws->tls = ctx;
+}
+
+int tlsuv_websocket_set_connector(tlsuv_websocket_t *ws, const tlsuv_connector_t *connector) {
+    if (ws->src != (tlsuv_src_t *)&ws->default_src) {
+        return UV_EINVAL;
+    }
+    tcp_src_set_connector(&ws->default_src, connector);
+    return 0;
 }
 
 static void tls_hs_cb(tls_link_t *tls, int status) {
