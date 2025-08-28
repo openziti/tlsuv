@@ -66,6 +66,15 @@ int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_
 void tlsuv_websocket_set_tls(tlsuv_websocket_t *ws, tls_context *ctx);
 
 /**
+ * @brief set connector to use for connection.
+ * This is only effective if the websocket is using the default source.
+ * @param ws websocket
+ * @param connector connector to use
+ * @return 0 on success, or error code
+ */
+int tlsuv_websocket_set_connector(tlsuv_websocket_t *ws, const tlsuv_connector_t *connector);
+
+/**
  * @brief set additional headers for initial websocket request
  * @param ws websocket
  * @param name header name

@@ -26,7 +26,7 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     tl->loop = l;
     tl->link = tlsuv__calloc(1, sizeof(uv_link_source_t));
     tl->conn = NULL;
-    tl->connector = tlsuv_global_connector();
+    tl->connector = NULL;
     tl->connect = tcp_src_connect;
     tl->connect_cb = NULL;
     tl->release = tcp_src_release;
@@ -34,6 +34,10 @@ int tcp_src_init(uv_loop_t *l, tcp_src_t *tl) {
     tl->keepalive = 0;
     tl->nodelay = 0;
     return 0;
+}
+
+void tcp_src_set_connector(tcp_src_t *ts, const tlsuv_connector_t *connector) {
+    ts->connector = connector;
 }
 
 void tcp_src_free(tcp_src_t *ts) {
@@ -171,7 +175,8 @@ static int tcp_src_connect(tlsuv_src_t *sl, const char* host, const char *servic
             tcp->conn = NULL;
         }
     }
-    tcp->conn_req = tcp->connector->connect(tcp->loop, tcp->connector, host, service, on_connect, tcp);
+    const tlsuv_connector_t *conn = tcp->connector ? tcp->connector : tlsuv_global_connector();
+    tcp->conn_req = conn->connect(tcp->loop, conn, host, service, on_connect, tcp);
 
     return 0;
 }
@@ -181,7 +186,8 @@ static void tcp_src_cancel(tlsuv_src_t *sl) {
     uv_link_source_t *ts = (uv_link_source_t *) tl->link;
 
     if (tl->conn_req) {
-        tl->connector->cancel(tl->conn_req);
+        const tlsuv_connector_t *conn = tl->connector ? tl->connector : tlsuv_global_connector();
+        conn->cancel(tl->conn_req);
         tl->conn_req = NULL;
         tl->connect_cb((tlsuv_src_t *) tl, UV_ECANCELED, tl->connect_ctx);
     }
