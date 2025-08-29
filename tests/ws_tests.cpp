@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstring>
 #include <tlsuv/tlsuv.h>
 #include <tlsuv/websocket.h>
+#include <tlsuv/connector.h>
 #include <uv.h>
 
 static void test_timeout(uv_timer_t *t) {
@@ -151,5 +152,19 @@ TEST_CASE("websocket echo tests", "[websocket]") {
         CHECK(test.close_cb_called);
         REQUIRE(test.resp.size() == 2);
         CHECK_THAT(test.resp[1],Catch::Matchers::Matches("this is a test"));
+    }
+
+    WHEN("wss echo test with proxy") {
+        auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", "13128");
+        tlsuv_websocket_set_connector(clt, proxy);
+        int rc = tlsuv_websocket_connect(&r, clt, "wss://" WS_TEST_HOST, on_connect, on_ws_data);
+        lt.run();
+        CHECK(rc == 0);
+        CHECK(test.conn_status == 0);
+        CHECK(test.write_status == 0);
+        CHECK(test.close_cb_called);
+        REQUIRE(test.resp.size() == 2);
+        CHECK_THAT(test.resp[1],Catch::Matchers::Matches("this is a test"));
+        proxy->free((void*)proxy);
     }
 }
