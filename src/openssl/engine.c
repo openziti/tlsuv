@@ -191,9 +191,14 @@ static const char* tls_lib_version() {
 }
 
 const char *tls_error(unsigned long code) {
-    static char errbuf[1024];
-    ERR_error_string_n(code, errbuf, sizeof(errbuf));
-    return errbuf;
+    static char err_buf[32];
+    if (code == 0) return "no error";
+
+    const char *lib_err = ERR_lib_error_string(code);
+    if (lib_err) return lib_err;
+
+    snprintf(err_buf, sizeof(err_buf), "error[%lX]", code);
+    return err_buf;
 }
 
 static const char *tls_eng_error(tlsuv_engine_t self) {
@@ -897,7 +902,7 @@ static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len) {
                     return TLS_AGAIN;
                 }
             } else {
-                eng->error = ERR_peek_error();
+                eng->error = ERR_peek_last_error();
                 UM_LOG(ERR, "openssl: write error: %s", tls_error(eng->error));
                 return -1;
             }
@@ -937,18 +942,31 @@ tls_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout) {
     }
 
     *out_bytes = 0;
-    if (err == SSL_ERROR_WANT_READ) {
-        return TLS_AGAIN;
-    }
 
     if (SSL_get_shutdown(eng->ssl)) {
         return TLS_EOF;
     }
 
-    if (err != SSL_ERROR_NONE) {
-        eng->error = ERR_peek_error();
-        UM_LOG(ERR, "openssl read: %s", tls_error(eng->error));
-        return TLS_ERR;
+    unsigned long err_code = ERR_peek_last_error();
+    switch (err) {
+        case SSL_ERROR_NONE:
+            // should not be here
+            UM_LOG(WARN, "openssl read: SSL_ERROR_NONE with 0 bytes read");
+            return TLS_OK;
+        case SSL_ERROR_ZERO_RETURN:
+            return TLS_EOF;
+        case SSL_ERROR_WANT_WRITE:
+        case SSL_ERROR_WANT_READ:
+            return TLS_AGAIN;
+        case SSL_ERROR_SYSCALL:
+        case SSL_ERROR_SSL:
+            eng->error = err_code;
+            UM_LOG(WARN, "openssl read[%d]: %lX/%s", err, err_code, tls_error(err_code));
+
+            return TLS_ERR;
+        default:
+            UM_LOG(WARN, "openssl read: unexpected err[%d] code[%lX]", err, err_code);
+            break;
     }
     return TLS_OK;
 }
@@ -959,8 +977,8 @@ static int tls_close(tlsuv_engine_t self) {
 
     int rc = SSL_shutdown(eng->ssl);
     if (rc < 0) {
-        int err = SSL_get_error(eng->ssl, rc);
-        UM_LOG(WARN, "openssl shutdown: %s", tls_error(err));
+        unsigned long err_code = ERR_peek_last_error();
+        UM_LOG(WARN, "openssl shutdown: %lX/%s", err_code, tls_error(err_code));
     }
     return 0;
 }
