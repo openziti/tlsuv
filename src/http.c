@@ -628,6 +628,13 @@ void tlsuv_http_set_ssl(tlsuv_http_t *clt, tls_context *tls) {
     clt->tls = tls;
 }
 
+void tlsuv_http_set_connector(tlsuv_http_t *clt, const tlsuv_connector_t *connector) {
+    if (clt->own_src) {
+        tcp_src_t *src = (tcp_src_t *) clt->src;
+        src->connector = connector;
+    }
+}
+
 tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const char *path, tlsuv_http_resp_cb resp_cb, void *ctx) {
     tlsuv_http_req_t *r = tlsuv__calloc(1, sizeof(tlsuv_http_req_t));
     http_req_init(r, method, path);

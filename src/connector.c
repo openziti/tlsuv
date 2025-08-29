@@ -220,7 +220,7 @@ static void connect_work(uv_work_t *work) {
             continue;
         }
 
-        UM_LOG(TRACE, "connecting fd[%ld] to %s", (long)s, get_name(addr->ai_addr));
+        UM_LOG(TRACE, "fd[%ld] connecting to %s", (long)s, get_name(addr->ai_addr));
         rc = connect(s, addr->ai_addr, addr->ai_addrlen);
         err = get_error();
         if (rc == 0 || in_progress(err)) {
@@ -473,6 +473,7 @@ static void proxy_work_cb(uv_work_t *wr, int status) {
         r->err = status;
     }
 
+    UM_LOG(TRACE, "fd[%lu] is connected via HTTP proxy", (unsigned long)r->sock);
     if (r->cb) r->cb(r->sock, r->err, r->data);
     tlsuv__free(r->host);
     tlsuv__free(r->port);
@@ -489,6 +490,7 @@ static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
         tlsuv__free(r);
     } else {
         r->sock = fd;
+        UM_LOG(TRACE, "fd[%lu] starting HTTP proxy connect", (unsigned long)r->sock);
         uv_queue_work(r->work.loop, &r->work, proxy_work, proxy_work_cb);
     }
 }
