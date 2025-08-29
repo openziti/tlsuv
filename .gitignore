@@ -75,3 +75,5 @@ cmake-build-*/
 
 ### Visual Studio
 .vs
+/vcpkg_installed/
+/vcpkg/
