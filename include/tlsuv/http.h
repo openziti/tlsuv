@@ -247,6 +247,19 @@ int tlsuv_http_connect_timeout(tlsuv_http_t *clt, long millis);
 void tlsuv_http_set_ssl(tlsuv_http_t *clt, tls_context *tls);
 
 /**
+ * @brief Set a custom connector on the client.
+ *
+ * The connector will be used to establish connections for HTTP requests.
+ * This is useful for scenarios where custom transport is needed (e.g. proxy, Ziti).
+ * If a custom connector is set, the client will use the globally set connector.
+ * This function must be called before any requests are made.
+ *
+ * @param clt the client
+ * @param connector the connector to use
+ */
+void tlsuv_http_set_connector(tlsuv_http_t *clt, const tlsuv_connector_t *connector);
+
+/**
  * @brief Set header on the client.
  *
  * All requests execute by the client will get that request header. Pass `value==NULL` to unset the header.
