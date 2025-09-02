@@ -417,7 +417,7 @@ TEST_CASE("client_cert_test","[http]") {
                            "suia9q4M5f+68kzM4+0NU8HwwyzZEtmTBhktKHijExixdvjlMAZ8hAOsFifsevI0\n"
                            "02dUYvtxoHaeXh4jpYHVNnsIf/74uLagiPHtVf7+9UZV\n"
                        "-----END CERTIFICATE-----";
-    const char *key = "-----BEGIN PRIVATE KEY-----\n"
+        const char *key = "-----BEGIN PRIVATE KEY-----\n"
                       "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDHN18R6x5Oz+u6\n"
                       "SOXLoxIscz5GHR6cDcCLgyPax2XfXHdJs+h6fTy61WGM+aXEhR2SIwbj5997s34m\n"
                       "0MsbvkJrFmn0LHK1fuTLCihEEmxGdCGZA9xrwxFYAkEjP7D8v7cAWRMipYF/JP7V\n"
@@ -1495,3 +1495,32 @@ TEST_CASE("failed active request", "[http]") {
         CHECK(resp.called == 1);
     }
 }
+
+TEST_CASE("http_proxy_connector", "[http]") {
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    resp_capture resp(resp_body_cb);
+    tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
+    tlsuv_http_set_ssl(&clt, testServerTLS());
+
+    const tlsuv_connector_t *proxy_conn = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", "13128");
+    tlsuv_http_set_connector(&clt, proxy_conn);
+
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
+
+    test.run();
+
+    THEN("request should succeed via proxy") {
+        CHECK(resp.code == HTTP_STATUS_OK);
+        CHECK_THAT(resp.http_version, Equals("1.1"));
+        CHECK_THAT(resp.status, Equals("OK"));
+
+        CHECK_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
+    }
+
+    tlsuv_http_close(&clt, nullptr);
+    proxy_conn->free((tlsuv_connector_t*)proxy_conn);
+    test.run();
+}
+
