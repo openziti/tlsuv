@@ -534,7 +534,7 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
     return TLS_OK;
 }
 
-static void engine_reset (tlsuv_engine_t self) {
+static int engine_reset (tlsuv_engine_t self) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
 
     memset(engine->inbound, 0, sizeof(engine->inbound));
@@ -553,7 +553,7 @@ static void engine_reset (tlsuv_engine_t self) {
         DeleteSecurityContext(&engine->ctxt_handle);
 
     SecInvalidateHandle(&engine->ctxt_handle);
-
+    return 0;
 }
 
 static const char* engine_strerror(tlsuv_engine_t self) {
