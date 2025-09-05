@@ -260,7 +260,9 @@ static void link_close_cb(uv_link_t *l) {
 static void src_connect_cb(tlsuv_src_t *src, int status, void *ctx) {
     UM_LOG(VERB, "src connected status = %d", status);
     tlsuv_http_t *clt = ctx;
-    uv_timer_stop(clt->conn_timer);
+    if (clt->conn_timer != NULL) {
+        uv_timer_stop(clt->conn_timer);
+    }
     if (status == 0) {
         switch (clt->connected) {
             case Connecting:
@@ -650,7 +652,9 @@ tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const ch
     }
 
     STAILQ_INSERT_TAIL(&clt->requests, r, _next);
-    uv_timer_stop(clt->conn_timer);
+    if (clt->conn_timer != NULL) {
+        uv_timer_stop(clt->conn_timer);
+    }
     uv_ref((uv_handle_t *) &clt->proc);
     safe_continue(clt);
 
