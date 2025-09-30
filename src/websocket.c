@@ -14,6 +14,8 @@
 
 #include "tlsuv/websocket.h"
 
+#include <assert.h>
+
 #include "alloc.h"
 #include "http_req.h"
 #include "portable_endian.h"
@@ -22,6 +24,9 @@
 
 #include <string.h>
 #include <tlsuv/http.h>
+
+#include "util.h"
+#include "tlsuv/tlsuv.h"
 static const char *DEFAULT_PATH = "/";
 
 #define WS_FIN 0x80U
@@ -37,11 +42,8 @@ enum OpCode {
 };
 
 typedef struct ws_write_s {
-    uv_write_t *wr;
-    uv_write_cb cb;
-    uv_buf_t *bufs;
-    int nbufs;
-
+    uv_write_t r;
+    uv_write_t *uv_req;
 } ws_write_t;
 
 extern tls_context *get_default_tls(void);
@@ -55,6 +57,8 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len);
 static void tls_hs_cb(tls_link_t *tls, int status);
 
 static int ws_read_start(uv_link_t *l);
+static void ws_tr_write_cb(uv_write_t *req, int status);
+void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf);
 
 static const uv_link_methods_t ws_methods = {
         .close = uv_link_default_close,
@@ -101,12 +105,98 @@ int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_
 
 int tlsuv_websocket_init(uv_loop_t *loop, tlsuv_websocket_t *ws) {
     memset(ws, 0, sizeof(tlsuv_websocket_t));
-    tcp_src_init(loop, &ws->default_src);
-    return tlsuv_websocket_init_with_src(loop, ws, (tlsuv_src_t *) &ws->default_src);
+    return tlsuv_websocket_init_with_src(loop, ws, NULL);
 }
 
 void tlsuv_websocket_set_header(tlsuv_websocket_t *ws, const char *name, const char *value) {
     set_http_header(&ws->req->req_headers, name, value);
+}
+
+static void ws_tr_write_http_req(tlsuv_websocket_t *ws) {
+    uv_buf_t buf;
+    buf.base = tlsuv__malloc(8196);
+    buf.len = http_req_write(ws->req, buf.base, 8196);
+
+    UM_LOG(VERB, "starting WebSocket handshake(sending %zd bytes)[%.*s]", (size_t)buf.len, (int)buf.len, buf.base);
+
+    ws_write_t *ws_wreq = tlsuv__calloc(1, sizeof(ws_write_t));
+    ws_wreq->r.data = buf.base;
+
+    ws->tr_write((uv_write_t*)ws_wreq, ws->tr, &buf, 1, ws_tr_write_cb);
+}
+
+static void ws_tr_read_cb(uv_stream_t *t, ssize_t status, const uv_buf_t *b) {
+    tlsuv_websocket_t *ws = t->data;
+    ws_process_read(ws, status, b);
+}
+
+static void ws_alloc(uv_handle_t *s, size_t suggested_size, uv_buf_t *buf) {
+    buf->base = tlsuv__malloc(suggested_size);
+    buf->len = suggested_size;
+}
+
+static void on_tls_connect(uv_connect_t* req, int status){
+    tlsuv_websocket_t *ws = (tlsuv_websocket_t*)req->data;
+    if (status != 0) {
+        uv_connect_t *r = ws->conn_req;
+        ws->conn_req = NULL;
+        r->cb(r, status);
+    } else {
+        tlsuv_stream_read_start(ws->tr, ws_alloc, ws_tr_read_cb);
+        ws_tr_write_http_req(ws);
+    }
+
+    tlsuv__free(req);
+}
+
+static int tls_write_shim(uv_write_t *r, tlsuv_stream_t *s, uv_buf_t *b, int c, uv_write_cb cb) {
+    return tlsuv_stream_write(r, s, b, cb);
+}
+
+static void on_connect(uv_os_sock_t sock, int status, void *connect_ctx) {
+    uv_connect_t *req = (uv_connect_t *) connect_ctx;
+    tlsuv_websocket_t *ws = (tlsuv_websocket_t *) req->handle;
+
+    ws->connect_req = NULL;
+
+    if (status < 0) {
+        UM_LOG(ERR, "connection failed: %s", uv_strerror(status));
+        ws->conn_req = NULL;
+        req->cb(req, status);
+        return;
+    }
+
+    if (ws->tls != NULL) {
+        tlsuv_stream_t *s = tlsuv__calloc(1, sizeof(tlsuv_stream_t));
+        tlsuv_stream_init(ws->loop, s, ws->tls);
+        s->data = ws;
+        tlsuv_stream_set_hostname(s, ws->host);
+
+        uv_connect_t *conn_req = tlsuv__calloc(1, sizeof(*conn_req));
+        conn_req->data = ws;
+        tlsuv_stream_open(conn_req, s, sock, on_tls_connect);
+        ws->tr = s;
+        ws->tr_close = (void (*)(void *, uv_close_cb)) tlsuv_stream_close;
+        ws->tr_write = (int (*)(uv_write_t *, void *, uv_buf_t *, int, uv_write_cb)) tls_write_shim;
+    } else {
+        uv_tcp_t *tcp = tlsuv__calloc(1, sizeof(uv_tcp_t));
+        uv_tcp_init(ws->loop, tcp);
+
+        int rc = uv_tcp_open(tcp, sock);
+        if (rc == 0) {
+            tcp->data = ws;
+            ws->tr = tcp;
+            ws->tr_close = (void (*)(void *, uv_close_cb)) uv_close;
+            ws->tr_write = (int (*)(uv_write_t *, void *, uv_buf_t *, int, uv_write_cb)) uv_write;
+            uv_read_start((uv_stream_t*)tcp, ws_alloc, ws_tr_read_cb);
+            ws_tr_write_http_req(ws);
+        } else {
+            ws->conn_req = NULL;
+            req->cb(req, rc);
+            UM_LOG(ERR, "uv_tcp_open failed: %s", uv_strerror(rc));
+            uv_close((uv_handle_t*)tcp, (uv_close_cb)tlsuv__free);
+        }
+    }
 }
 
 int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char *url, uv_connect_cb conn_cb, uv_read_cb data_cb) {
@@ -160,10 +250,7 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
 
     req->handle = (uv_stream_t *) ws;
     req->cb = conn_cb;
-
-    if (ws->tls != NULL) {
-        tlsuv_tls_link_init(&ws->tls_link, ws->tls->new_engine(ws->tls, host), tls_hs_cb);
-    }
+    ws->conn_req = req;
 
     const char *path = DEFAULT_PATH;
     if (u.path != NULL) {
@@ -179,7 +266,15 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
     ws->host = host;
     ws->read_cb = data_cb;
     UM_LOG(DEBG, "connecting to '%s:%d'", host, port);
-    return ws->src->connect(ws->src, host, portstr, src_connect_cb, req);
+
+    if (ws->src) {
+        tlsuv_tls_link_init(&ws->tls_link, ws->tls->new_engine(ws->tls, host), tls_hs_cb);
+        return ws->src->connect(ws->src, host, portstr, src_connect_cb, req);
+    }
+
+    const tlsuv_connector_t *c = ws->connector ? ws->connector : tlsuv_global_connector();
+    ws->connect_req = c->connect(ws->loop, c, host, portstr, on_connect, req);
+    return 0;
 }
 
 int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf, uv_write_cb cb) {
@@ -187,6 +282,12 @@ int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf,
         cb(req, UV_ECONNRESET);
         return UV_ECONNRESET;
     }
+
+    UM_LOG(TRACE, "tlsuv_websocket_write(%zd bytes)", buf->len);
+    req->cb = cb;
+    req->handle = (uv_stream_t *) ws;
+    req->bufs = buf;
+    req->nbufs = 1;
 
     uv_buf_t bufs;
     int headerlen = 6;
@@ -226,12 +327,11 @@ int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf,
     bufs.base = frame;
 
     ws_write_t *ws_wreq = tlsuv__calloc(1, sizeof(ws_write_t));
-    ws_wreq->wr = req;
-    ws_wreq->bufs = tlsuv__malloc(sizeof(uv_buf_t));
-    ws_wreq->bufs[0] = bufs;
-    ws_wreq->nbufs = 1;
-    ws_wreq->cb = cb;
+    ws_wreq->uv_req = req;
 
+    if (ws->tr) {
+        return ws->tr_write((uv_write_t*)ws_wreq, ws->tr, &bufs, 1, ws_tr_write_cb);
+    }
     return uv_link_write(&ws->ws_link, &bufs, 1, NULL, ws_write_cb, ws_wreq);
 }
 
@@ -262,6 +362,24 @@ static void src_connect_cb(tlsuv_src_t *sl, int status, void *connect_ctx) {
     }
 }
 
+static void ws_tr_write_cb(uv_write_t *req, int status) {
+    UM_LOG(VERB, "ws_tr_write_cb status = %d", status);
+    ws_write_t *ws_wreq = (ws_write_t *) req;
+    uv_write_t *r = ws_wreq->uv_req;
+
+    tlsuv_websocket_t *ws = req->handle->data;
+
+    if (status < 0) {
+        ws->closed = true;
+    }
+
+    if (r) {
+        ws_wreq->uv_req = NULL;
+        r->cb(r, status);
+    }
+    tlsuv__free(ws_wreq->r.data);
+    tlsuv__free(ws_wreq);
+}
 static void ws_write_cb(uv_link_t *l, int nwrote, void *data) {
     ws_write_t *ws_wreq = data;
     UM_LOG(VERB, "write complete rc = %d", nwrote);
@@ -271,14 +389,11 @@ static void ws_write_cb(uv_link_t *l, int nwrote, void *data) {
         ws->closed = true;
     }
 
-    if (ws_wreq->wr) {
-        uv_write_t *wr = ws_wreq->wr;
-        ws_wreq->cb(wr, nwrote);
+    if (ws_wreq->uv_req) {
+        uv_write_t *wr = ws_wreq->uv_req;
+        wr->cb(wr, nwrote);
     }
-    for (int i=0; i < ws_wreq->nbufs; i++) {
-        tlsuv__free(ws_wreq->bufs[i].base);
-    }
-    tlsuv__free(ws_wreq->bufs);
+    tlsuv__free(ws_wreq->r.data);
     tlsuv__free(ws_wreq);
 }
 
@@ -294,15 +409,18 @@ int ws_read_start(uv_link_t *l) {
     UM_LOG(VERB, "starting WebSocket handshake(sending %zd bytes)[%.*s]", (size_t)buf.len, (int)buf.len, buf.base);
 
     ws_write_t *ws_wreq = tlsuv__calloc(1, sizeof(ws_write_t));
-    ws_wreq->bufs = tlsuv__malloc(sizeof(uv_buf_t));
-    ws_wreq->bufs[0] = buf;
-    ws_wreq->nbufs = 1;
+    ws_wreq->r.data = buf.base;
 
     return uv_link_propagate_write(l->parent, l, &buf, 1, NULL, ws_write_cb, ws_wreq);
 }
 
 void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
     tlsuv_websocket_t *ws = l->data;
+    ws_process_read(ws, nread, buf);
+}
+
+void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) {
+    UM_LOG(VERB, "ws_read_cb nread = %zd", nread);
     if (nread < 0) {
         ws->closed = true;
         // still connecting
@@ -421,11 +539,15 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
     }
 
     ws_write_t *ws_wreq = tlsuv__calloc(1, sizeof(ws_write_t));
-    ws_wreq->bufs = tlsuv__malloc(sizeof(uv_buf_t));
-    ws_wreq->bufs[0] = buf;
-    ws_wreq->nbufs = 1;
+    ws_wreq->r.data = buf.base;
 
-    uv_link_write(&ws->ws_link, &buf, 1, NULL, ws_write_cb, ws_wreq);
+    if (ws->src) {
+        uv_link_write(&ws->ws_link, &buf, 1, NULL, ws_write_cb, ws_wreq);
+    }
+
+    if (ws->tr) {
+        ws->tr_write((uv_write_t*)ws_wreq, ws->tr, &buf, 1, ws_tr_write_cb);
+    }
 }
 
 static void on_ws_close(tlsuv_websocket_t *ws) {
@@ -448,9 +570,6 @@ static void on_ws_close(tlsuv_websocket_t *ws) {
 
     if (ws->src) {
         ws->src->cancel(ws->src);
-        if (ws->src == (tlsuv_src_t *)&ws->default_src) {
-            tcp_src_free((tcp_src_t *) ws->src);
-        }
         ws->src = NULL;
     }
 
@@ -468,9 +587,23 @@ static void ws_close_cb(uv_link_t *l) {
 
 int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
     ws->close_cb = cb;
-    if (ws->ws_link.data != NULL) {
+
+    if (ws->connect_req) {
+        const tlsuv_connector_t *c = ws->connector ? ws->connector : tlsuv_global_connector();
+        tlsuv_connector_req cr = ws->connect_req;
+        ws->connect_req = NULL;
+        c->cancel(cr);
+    }
+
+    if (ws->src != NULL) {
         uv_link_close(&ws->ws_link, ws_close_cb);
-    } else {
+        return 0;
+
+    }
+
+    if (ws->tr != NULL) {
+        ws->tr_close(ws->tr, (uv_close_cb)free);
+        ws->tr = NULL;
         on_ws_close(ws);
     }
     return 0;
@@ -481,10 +614,12 @@ void tlsuv_websocket_set_tls(tlsuv_websocket_t *ws, tls_context *ctx) {
 }
 
 int tlsuv_websocket_set_connector(tlsuv_websocket_t *ws, const tlsuv_connector_t *connector) {
-    if (ws->src != (tlsuv_src_t *)&ws->default_src) {
+    if (ws->src) {
+        // source is doing connection
         return UV_EINVAL;
     }
-    tcp_src_set_connector(&ws->default_src, connector);
+
+    ws->connector = connector;
     return 0;
 }
 
