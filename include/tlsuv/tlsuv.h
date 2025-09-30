@@ -153,8 +153,11 @@ const char* tlsuv_stream_get_error(const tlsuv_stream_t *clt);
 typedef struct tlsuv_write_s tlsuv_write_t;
 
 struct tlsuv_stream_s {
-    uv_loop_t *loop;
-    void *data;
+    // make it (somewhat)compatible with uv_stream_t
+    UV_HANDLE_FIELDS
+#define UV_STREAM_PRIVATE_FIELDS
+    UV_STREAM_FIELDS
+#undef UV_STREAM_PRIVATE_FIELDS
 
     const tlsuv_connector_t *connector;
     tlsuv_connector_req connect_req;
@@ -167,9 +170,6 @@ struct tlsuv_stream_s {
 
     char *host;
     uv_connect_t *conn_req; //a place to stash a connection request
-    uv_close_cb close_cb;
-    uv_read_cb read_cb;
-    uv_alloc_cb alloc_cb;
 
     uv_os_sock_t sock;
     uv_poll_t watcher;
