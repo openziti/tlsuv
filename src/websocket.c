@@ -328,6 +328,7 @@ int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf,
 
     ws_write_t *ws_wreq = tlsuv__calloc(1, sizeof(ws_write_t));
     ws_wreq->uv_req = req;
+    ws_wreq->r.data = frame;
 
     if (ws->tr) {
         return ws->tr_write((uv_write_t*)ws_wreq, ws->tr, &bufs, 1, ws_tr_write_cb);
@@ -593,6 +594,7 @@ int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
         tlsuv_connector_req cr = ws->connect_req;
         ws->connect_req = NULL;
         c->cancel(cr);
+        on_ws_close(ws);
     }
 
     if (ws->src != NULL) {
