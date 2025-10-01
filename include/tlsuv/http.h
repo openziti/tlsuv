@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /**
- * @file um_http.h
+ * @file http.h
  * @brief HTTP client header file
  *
  * @see sample/um-curl.c

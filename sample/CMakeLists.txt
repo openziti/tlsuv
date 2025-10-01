@@ -8,28 +8,24 @@ target_compile_definitions(common PUBLIC $<$<BOOL:${TLSUV_HTTP}>:TLSUV_HTTP>)
 
 message(NOTICE "TLSUV_HTTP = ${TLSUV_HTTP}")
 
-add_executable(sample sample.c)
-target_link_libraries(sample PUBLIC tlsuv common)
-
-add_executable(engine_test engine_test.c)
-target_link_libraries(engine_test PUBLIC tlsuv common)
-
-add_executable(sample-cf sample-cf.c)
-target_link_libraries(sample-cf PUBLIC tlsuv common)
-
+set(samples
+        sample
+        engine_test
+        sample-cf
+)
 if (TLSUV_HTTP)
-    add_executable(um-curl um-curl.c)
+    list(APPEND samples
+            um-curl
+            repeat-fetch
+            ws-client
+            http-ping
+    )
+endif()
+
+foreach (s ${samples})
+    add_executable(${s} ${s}.c)
+    target_link_libraries(${s} PUBLIC tlsuv common)
     if (MSVC)
         target_link_libraries(um-curl PRIVATE unofficial::getopt-win32::getopt)
     endif()
-    target_link_libraries(um-curl PUBLIC tlsuv common)
-
-    add_executable(repeat-fetch repeat-fetch.c)
-    target_link_libraries(repeat-fetch PUBLIC tlsuv common)
-
-    add_executable(ws-client ws-client.c)
-    target_link_libraries(ws-client PUBLIC tlsuv common)
-
-    add_executable(http-ping http-ping.c)
-    target_link_libraries(http-ping PUBLIC tlsuv common)
-endif (TLSUV_HTTP)
+endforeach()
