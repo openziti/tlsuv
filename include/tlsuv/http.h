@@ -25,11 +25,13 @@
 #include <stdbool.h>
 #include "queue.h"
 #include "tls_engine.h"
-#include "tcp_src.h"
-#include "tls_link.h"
 
 #include <llhttp.h>
 #include <uv_link_t.h>
+
+#include "connector.h"
+#include "src_t.h"
+#include "tls_link.h"
 
 
 #ifdef __cplusplus
@@ -142,9 +144,15 @@ struct tlsuv_http_s {
 
     int connected;
     bool keepalive;
-    tlsuv_src_t *src;
-    bool own_src;
 
+    const tlsuv_connector_t *connector;
+    tlsuv_connector_req connect_req;
+
+    void *tr; // tlsuv_stream_t | uv_tcp_t
+    void (*tr_close)(void *, uv_close_cb);
+    int (*tr_write)(uv_write_t *, void *, uv_buf_t *, int, uv_write_cb);
+
+    tlsuv_src_t *src;
     uv_link_t http_link;
     tls_link_t tls_link;
 
@@ -257,7 +265,7 @@ void tlsuv_http_set_ssl(tlsuv_http_t *clt, tls_context *tls);
  * @param clt the client
  * @param connector the connector to use
  */
-void tlsuv_http_set_connector(tlsuv_http_t *clt, const tlsuv_connector_t *connector);
+int tlsuv_http_set_connector(tlsuv_http_t *clt, const tlsuv_connector_t *connector);
 
 /**
  * @brief Set a header on the client.
