@@ -140,6 +140,7 @@ static void on_internal_close(uv_handle_t *h) {
         clt->tls_engine->free(clt->tls_engine);
         clt->tls_engine = NULL;
     }
+    tlsuv__free(clt->host);
 
     if (clt->close_cb) {
         clt->close_cb((uv_handle_t *) clt);
