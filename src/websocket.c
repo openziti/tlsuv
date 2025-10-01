@@ -286,8 +286,6 @@ int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf,
     UM_LOG(TRACE, "tlsuv_websocket_write(%zd bytes)", buf->len);
     req->cb = cb;
     req->handle = (uv_stream_t *) ws;
-    req->bufs = buf;
-    req->nbufs = 1;
 
     uv_buf_t bufs;
     int headerlen = 6;
