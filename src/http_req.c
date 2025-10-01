@@ -94,6 +94,7 @@ ssize_t http_req_process(tlsuv_http_req_t *req, const char* buf, ssize_t len) {
 static void free_hdr(tlsuv_http_hdr *hdr) {
     tlsuv__free(hdr->name);
     tlsuv__free(hdr->value);
+    tlsuv__free(hdr);
 }
 
 void free_hdr_list(um_header_list *l) {
@@ -101,9 +102,7 @@ void free_hdr_list(um_header_list *l) {
     while (!LIST_EMPTY(l)) {
         h = LIST_FIRST(l);
         LIST_REMOVE(h, _next);
-
         free_hdr(h);
-        tlsuv__free(h);
     }
 }
 
@@ -276,45 +275,40 @@ l += a_size;\
 }
 
 void add_http_header(um_header_list *hl, const char* name, const char *value, size_t vallen) {
-    tlsuv_http_hdr *h;
-
-    h = tlsuv__malloc(sizeof(tlsuv_http_hdr));
+    tlsuv_http_hdr *h = tlsuv__malloc(sizeof(tlsuv_http_hdr));
     h->name = tlsuv__strdup(name);
-    LIST_INSERT_HEAD(hl, h, _next);
-
     h->value = tlsuv__strndup(value, vallen);
+    LIST_INSERT_HEAD(hl, h, _next);
+}
+
+void remove_http_header(um_header_list *hl, const char* name) {
+    if (LIST_EMPTY(hl)) return;
+
+    tlsuv_http_hdr *h = LIST_FIRST(hl);
+    while (h != NULL) {
+        tlsuv_http_hdr *n = LIST_NEXT(h, _next);
+        if (strcmp(h->name, name) == 0) {
+            LIST_REMOVE(h, _next);
+            free_hdr(h);
+        }
+        h = n;
+    }
 }
 
 void set_http_header(um_header_list *hl, const char* name, const char *value) {
-    tlsuv_http_hdr *h;
-    LIST_FOREACH(h, hl, _next) {
-        if (strcasecmp(h->name, name) == 0) {
-            break;
-        }
-    }
 
     if (value == NULL) {
-        if (h != NULL) {
-            LIST_REMOVE(h, _next);
-            tlsuv__free(h->value);
-            tlsuv__free(h->name);
-            tlsuv__free(h);
-        }
+        remove_http_header(hl, name);
         return;
     }
 
-    if (h == NULL) {
-        h = tlsuv__malloc(sizeof(tlsuv_http_hdr));
-        h->name = tlsuv__strdup(name);
-        LIST_INSERT_HEAD(hl, h, _next);
-    } else {
-        tlsuv__free(h->value);
-    }
-
+    tlsuv_http_hdr *h = tlsuv__malloc(sizeof(tlsuv_http_hdr));
+    h->name = tlsuv__strdup(name);
     h->value = tlsuv__strdup(value);
+    LIST_INSERT_HEAD(hl, h, _next);
 }
 
-const char*tlsuv_http_resp_header(tlsuv_http_resp_t *resp, const char *name) {
+const char* tlsuv_http_resp_header(tlsuv_http_resp_t *resp, const char *name) {
     tlsuv_http_hdr *h;
     LIST_FOREACH(h, &resp->headers, _next) {
         if (strcasecmp(h->name, name) == 0) {

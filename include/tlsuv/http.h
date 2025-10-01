@@ -260,9 +260,11 @@ void tlsuv_http_set_ssl(tlsuv_http_t *clt, tls_context *tls);
 void tlsuv_http_set_connector(tlsuv_http_t *clt, const tlsuv_connector_t *connector);
 
 /**
- * @brief Set header on the client.
+ * @brief Set a header on the client.
  *
- * All requests execute by the client will get that request header. Pass `value==NULL` to unset the header.
+ * All requests executed by the client will get that request header.
+ * Calling it multiple times with the same name will add another header with the same name.
+ * Pass `value==NULL` to unset all values for the given name.
  * @param clt
  * @param name name of the header
  * @param value value

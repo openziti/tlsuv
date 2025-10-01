@@ -117,7 +117,7 @@ TEST_CASE("websocket fail tests", "[websocket]") {
     }
 }
 
-#define WS_TEST_HOST "echo.websocket.events"
+#define WS_TEST_HOST "echo.websocket.org"
 
 TEST_CASE("websocket echo tests", "[websocket]") {
     UvLoopTest lt;
@@ -133,6 +133,7 @@ TEST_CASE("websocket echo tests", "[websocket]") {
     r.data = &test;
 
     WHEN("ws echo test") {
+        SKIP("non-TLS connection is not supported by echo.websocket.org");
         int rc = tlsuv_websocket_connect(&r, clt, "ws://" WS_TEST_HOST, on_connect, on_ws_data);
         lt.run();
         CHECK(rc == 0);
