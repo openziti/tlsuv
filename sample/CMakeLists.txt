@@ -2,11 +2,14 @@ if (MSVC)
     find_package(unofficial-getopt-win32 REQUIRED)
 endif()
 
-add_library(common OBJECT common.c)
-target_link_libraries(common PUBLIC tlsuv)
-target_compile_definitions(common PUBLIC $<$<BOOL:${TLSUV_HTTP}>:TLSUV_HTTP>)
-
 message(NOTICE "TLSUV_HTTP = ${TLSUV_HTTP}")
+
+add_library(common OBJECT common.c)
+target_compile_definitions(common PUBLIC $<$<BOOL:${TLSUV_HTTP}>:TLSUV_HTTP>)
+target_link_libraries(common PUBLIC tlsuv)
+if (MSVC)
+    target_link_libraries(common PRIVATE unofficial::getopt-win32::getopt)
+endif()
 
 set(samples
         sample
@@ -25,7 +28,4 @@ endif()
 foreach (s ${samples})
     add_executable(${s} ${s}.c)
     target_link_libraries(${s} PUBLIC tlsuv common)
-    if (MSVC)
-        target_link_libraries(um-curl PRIVATE unofficial::getopt-win32::getopt)
-    endif()
 endforeach()
