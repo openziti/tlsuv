@@ -30,20 +30,23 @@ typedef struct tlsuv_websocket_s tlsuv_websocket_t;
 struct tlsuv_websocket_s {
     UV_HANDLE_FIELDS
 
-    uv_read_cb read_cb;
-
-    tlsuv_http_req_t *req;
-
     char *host;
-
+    tls_context *tls;
     uv_connect_t *conn_req;
 
-    tlsuv_src_t *src;
-    tcp_src_t default_src;
+    const tlsuv_connector_t *connector;
+    tlsuv_connector_req connect_req;
 
+    uv_read_cb read_cb;
+    tlsuv_http_req_t *req;
+
+    void *tr; // tlsuv_stream_t | uv_tcp_t
+    void (*tr_close)(void *, uv_close_cb);
+    int (*tr_write)(uv_write_t *, void *, uv_buf_t *, int, uv_write_cb);
+
+    tlsuv_src_t *src;
     uv_link_t ws_link;
     tls_link_t tls_link;
-    tls_context *tls;
 
     bool closed;
 };
