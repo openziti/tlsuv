@@ -174,7 +174,7 @@ static void on_connect(uv_os_sock_t sock, int status, void *connect_ctx) {
 
         uv_connect_t *conn_req = tlsuv__calloc(1, sizeof(*conn_req));
         conn_req->data = ws;
-        tlsuv_stream_open(conn_req, s, sock, on_tls_connect);
+        tlsuv_stream_open(conn_req, s, (uv_os_fd_t)sock, on_tls_connect);
         ws->tr = s;
         ws->tr_close = (void (*)(void *, uv_close_cb)) tlsuv_stream_close;
         ws->tr_write = (int (*)(uv_write_t *, void *, uv_buf_t *, int, uv_write_cb)) tls_write_shim;
