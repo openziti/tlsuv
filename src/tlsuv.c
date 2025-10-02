@@ -42,6 +42,8 @@
 #define TLSUV_VERS "<unknown>"
 #endif
 
+#define TLS_LOG(lvl, fmt, ...) UM_LOG(lvl, "tls[%s]" fmt, clt->host, ##__VA_ARGS__)
+
 static void on_clt_io(uv_poll_t *, int, int);
 static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
 static void check_read(uv_idle_t *idle);
@@ -149,7 +151,7 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
     clt->close_cb = close_cb;
 
     if (clt->connect_req) {
-        UM_LOG(VERB, "cancel before connector cb");
+        TLS_LOG(VERB, "cancel before connector cb");
         const void *cr = clt->connect_req;
         clt->connector->cancel(cr);
         clt->connect_req = NULL;
@@ -241,7 +243,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     }
 
     if (status != 0) {
-        UM_LOG(ERR, "failed connect: %d/%s", status, uv_strerror(status));
+        TLS_LOG(ERR, "failed connect: %d/%s", status, uv_strerror(status));
         clt->conn_req = NULL;
         uv_poll_stop(&clt->watcher);
         req->cb(req, status);
@@ -261,7 +263,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
 
     if (rc == TLS_HS_ERROR) {
         const char *error = clt->tls_engine->strerror(clt->tls_engine);
-        UM_LOG(ERR, "TLS handshake failed: %s", error);
+        TLS_LOG(ERR, "TLS handshake failed: %s", error);
         clt->conn_req = NULL;
         uv_poll_stop(&clt->watcher);
         req->cb(req, UV_ECONNABORTED);
@@ -269,7 +271,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     }
 
     if (rc == TLS_HS_COMPLETE) {
-        UM_LOG(DEBG, "handshake completed");
+        TLS_LOG(DEBG, "handshake completed");
         clt->conn_req = NULL;
         start_io(clt);
         req->cb(req, 0);
@@ -286,7 +288,7 @@ static ssize_t write_req(tlsuv_stream_t *clt, uv_buf_t *buf) {
     }
 
     if (rc == TLS_ERR) {
-        UM_LOG(WARN, "tls connection error: %s", clt->tls_engine->strerror(clt->tls_engine));
+        TLS_LOG(WARN, "tls connection error: %s", clt->tls_engine->strerror(clt->tls_engine));
         return UV_ECONNABORTED;
     }
 
@@ -343,7 +345,7 @@ static void process_outbound(tlsuv_stream_t *clt) {
 
     // write failed so fail all queued requests
     if (ret < 0) {
-        UM_LOG(WARN, "failed to write: %d/%s", (int)ret, uv_strerror(ret));
+        TLS_LOG(WARN, "failed to write: %d/%s", (int)ret, uv_strerror(ret));
         while (!TAILQ_EMPTY(&clt->queue)) {
             req = TAILQ_FIRST(&clt->queue);
             TAILQ_REMOVE(&clt->queue, req, _next);
@@ -412,19 +414,19 @@ static void process_inbound(tlsuv_stream_t *clt) {
             break;
         }
     }
-    UM_LOG(TRACE, "finished reading after %d iterations", 16 - attempts);
+    TLS_LOG(TRACE, "finished reading after %d iterations", 16 - attempts);
 }
 
 static void on_clt_io(uv_poll_t *p, int status, int events) {
     tlsuv_stream_t *clt = container_of(p, tlsuv_stream_t, watcher);
     if (clt->conn_req) {
-        UM_LOG(VERB, "processing connect: events=%d status=%d", events, status);
+        TLS_LOG(VERB, "processing connect: events=%d status=%d", events, status);
         process_connect(clt, status);
         return;
     }
 
     if (status != 0) {
-        UM_LOG(WARN, "IO failed: %d/%s", status, uv_strerror(status));
+        TLS_LOG(WARN, "IO failed: %d/%s", status, uv_strerror(status));
         if (clt->read_cb) {
             uv_buf_t buf;
             clt->alloc_cb((uv_handle_t *) clt, 32 * 1024, &buf);
@@ -514,7 +516,7 @@ static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
 
     // app closed stream before it connected
     if (clt->close_cb) {
-        UM_LOG(VERB, "closed before connect: %d/%s", status, uv_strerror(status));
+        TLS_LOG(VERB, "closed before connect: %d/%s", status, uv_strerror(status));
         if (!uv_is_closing((uv_handle_t *)&clt->watcher))
             on_internal_close((uv_handle_t *) &clt->watcher);
         return;
