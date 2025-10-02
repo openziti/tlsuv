@@ -26,7 +26,8 @@
 #include "tlsuv/tlsuv.h"
 
 #define DEFAULT_IDLE_TIMEOUT 0
-#define CLT_LOG(lvl, fmt, ...) UM_LOG(lvl, "clt[%s:%s]: " fmt, c->host, c->port, ##__VA_ARGS__)
+#define CLT_LOG(lvl, fmt, ...) UM_LOG(lvl, "http[%s:%s%s]: " fmt, \
+    c->host, c->port, c->prefix ? c->prefix : "", ##__VA_ARGS__)
 
 extern tls_context *get_default_tls(void);
 
@@ -87,7 +88,7 @@ static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
     if (nread < 0) {
         if (c->active) {
             const char *err = uv_strerror((int)nread);
-            UM_LOG(ERR, "connection error before active request could complete %zd (%s)", nread, err);
+            CLT_LOG(ERR, "connection error before active request could complete %zd (%s)", nread, err);
             fail_active_request(c, (int)nread, err);
         }
 
@@ -96,7 +97,7 @@ static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
         if (c->active != NULL) {
             tlsuv_http_req_t *ar = c->active;
             if (http_req_process(ar, buf->base, nread) < 0) {
-                UM_LOG(WARN, "failed to parse HTTP response");
+                CLT_LOG(WARN, "failed to parse HTTP response");
                 fail_active_request(c, UV_EINVAL, "failed to parse HTTP response");
                 close_connection(c);
             }
@@ -119,7 +120,7 @@ static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
                 }
             }
          } else {
-            UM_LOG(ERR, "received %zd bytes without active request", nread);
+            CLT_LOG(ERR, "received %zd bytes without active request", nread);
         }
     }
 
@@ -191,13 +192,13 @@ static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
 }
 
 static void on_tls_handshake(tls_link_t *tls, int status) {
-    tlsuv_http_t *clt = tls->data;
+    tlsuv_http_t *c = tls->data;
 
     switch (status) {
         case TLS_HS_COMPLETE:
-            clt->connected = Connected;
-            UM_LOG(TRACE, "handshake completed with alpn[%s]", clt->engine->get_alpn(clt->engine));
-            safe_continue(clt);
+            c->connected = Connected;
+            CLT_LOG(TRACE, "handshakce completed with alpn[%s]", c->engine->get_alpn(c->engine));
+            safe_continue(c);
             break;
 
         case TLS_HS_ERROR: {
@@ -206,59 +207,59 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
             if (err == NULL) {
                 err = uv_strerror(UV_ECONNRESET);
             }
-            UM_LOG(ERR, "handshake failed status[%d]: %s", status, err);
-            close_connection(clt);
-            fail_all_requests(clt, UV_ECONNABORTED, err);
+            CLT_LOG(ERR, "handshake failed status[%d]: %s", status, err);
+            close_connection(c);
+            fail_all_requests(c, UV_ECONNABORTED, err);
             break;
         }
 
         default:
-            UM_LOG(ERR, "unexpected handshake status[%d]", status);
-            close_connection(clt);
-            fail_all_requests(clt, UV_ECONNRESET, "unexpected TLS handshake status");
+            CLT_LOG(ERR, "unexpected handshake status[%d]", status);
+            close_connection(c);
+            fail_all_requests(c, UV_ECONNRESET, "unexpected TLS handshake status");
     }
 }
 
-static void make_links(tlsuv_http_t *clt, uv_link_t *conn_src) {
-    uv_link_init(&clt->http_link, &http_methods);
-    clt->http_link.data = clt;
+static void make_links(tlsuv_http_t *c, uv_link_t *conn_src) {
+    uv_link_init(&c->http_link, &http_methods);
+    c->http_link.data = c;
 
-    if (clt->ssl) {
-        if (clt->tls == NULL) {
-            clt->tls = get_default_tls();
-            UM_LOG(VERB, "using TLS[%s]", clt->tls->version());
+    if (c->ssl) {
+        if (c->tls == NULL) {
+            c->tls = get_default_tls();
+            CLT_LOG(VERB, "using TLS[%s]", c->tls->version());
         }
 
-        if (clt->host_change) {
-            if (clt->engine) {
-                clt->engine->free(clt->engine);
+        if (c->host_change) {
+            if (c->engine) {
+                c->engine->free(c->engine);
             }
-            clt->engine = NULL;
-            clt->host_change = false;
+            c->engine = NULL;
+            c->host_change = false;
         }
 
-        if (!clt->engine) {
-            clt->engine = clt->tls->new_engine(clt->tls, clt->host);
-            clt->engine->set_protocols(clt->engine, supported_alpn, supported_apln_num);
+        if (!c->engine) {
+            c->engine = c->tls->new_engine(c->tls, c->host);
+            c->engine->set_protocols(c->engine, supported_alpn, supported_apln_num);
         }
 
-        tlsuv_tls_link_free(&clt->tls_link);
-        tlsuv_tls_link_init(&clt->tls_link, clt->engine, on_tls_handshake);
-        clt->tls_link.data = clt;
+        tlsuv_tls_link_free(&c->tls_link);
+        tlsuv_tls_link_init(&c->tls_link, c->engine, on_tls_handshake);
+        c->tls_link.data = c;
 
-        uv_link_chain(conn_src, (uv_link_t *) &clt->tls_link);
-        uv_link_chain((uv_link_t *) &clt->tls_link, &clt->http_link);
-        clt->connected = Handshaking;
+        uv_link_chain(conn_src, (uv_link_t *) &c->tls_link);
+        uv_link_chain((uv_link_t *) &c->tls_link, &c->http_link);
+        c->connected = Handshaking;
     }
     else {
-        uv_link_chain(conn_src, &clt->http_link);
+        uv_link_chain(conn_src, &c->http_link);
     }
 
-    uv_link_read_start(&clt->http_link);
+    uv_link_read_start(&c->http_link);
 
-    if (!clt->ssl) {
-        clt->connected = Connected;
-        safe_continue(clt);
+    if (!c->ssl) {
+        c->connected = Connected;
+        safe_continue(c);
     }
 }
 
@@ -344,38 +345,38 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
     }
     return;
 on_error:
-    UM_LOG(ERR, "connection failed: %s", uv_strerror(status));
+    CLT_LOG(ERR, "connection failed: %s", uv_strerror(status));
     c->connected = Disconnected;
     fail_all_requests(c, status, uv_strerror(status));
     safe_continue(c);
 }
 
 static void src_connect_cb(tlsuv_src_t *src, int status, void *ctx) {
-    UM_LOG(VERB, "src connected status = %d", status);
-    tlsuv_http_t *clt = ctx;
-    if (clt->conn_timer != NULL) {
-        uv_timer_stop(clt->conn_timer);
+    tlsuv_http_t *c = ctx;
+    CLT_LOG(VERB, "src connected status = %d", status);
+    if (c->conn_timer != NULL) {
+        uv_timer_stop(c->conn_timer);
     }
     if (status == 0) {
-        switch (clt->connected) {
+        switch (c->connected) {
             case Connecting:
-                make_links(clt, (uv_link_t *) src->link);
+                make_links(c, (uv_link_t *) src->link);
                 break;
 
             case Disconnected:
-                UM_LOG(WARN, "src connected after timeout: state = %d", clt->connected);
-                clt->src->cancel(clt->src);
+                CLT_LOG(WARN, "src connected after timeout: state = %d", c->connected);
+                c->src->cancel(c->src);
                 break;
 
             default:
-                UM_LOG(ERR, "src connected for client in state[%d]", clt->connected);
+                CLT_LOG(ERR, "src connected for client in state[%d]", c->connected);
         }
     } 
     else {
-        UM_LOG(DEBG, "failed to connect: %d(%s)", status, uv_strerror(status));
-        clt->connected = Disconnected;
-        fail_all_requests(clt, status, uv_strerror(status));
-        safe_continue(clt);
+        CLT_LOG(DEBG, "failed to connect: %d(%s)", status, uv_strerror(status));
+        c->connected = Disconnected;
+        fail_all_requests(c, status, uv_strerror(status));
+        safe_continue(c);
     }
 }
 
@@ -513,6 +514,7 @@ static void send_body(tlsuv_http_req_t *req) {
 }
 
 static void close_connection(tlsuv_http_t *c) {
+    CLT_LOG(VERB, "closing connection");
     if (c->conn_timer) {
         uv_timer_stop(c->conn_timer);
     }

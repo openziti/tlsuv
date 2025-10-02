@@ -142,6 +142,8 @@ static void on_tls_connect(uv_connect_t* req, int status){
         ws->conn_req = NULL;
         r->cb(r, status);
     } else {
+        assert(ws->tr);
+        assert(ws->tr_write);
         tlsuv_stream_read_start(ws->tr, ws_alloc, ws_tr_read_cb);
         ws_tr_write_http_req(ws);
     }
