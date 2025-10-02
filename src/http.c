@@ -74,7 +74,9 @@ static void tr_alloc_cb(uv_handle_t *s, size_t suggested_size, uv_buf_t *buf) {
 
 static void tr_read_cb(uv_stream_t *s, ssize_t nread, const uv_buf_t *buf) {
     tlsuv_http_t *clt = (tlsuv_http_t *) s->data;
-    clt_read_cb(clt, nread, buf);
+    if (clt != NULL) {
+        clt_read_cb(clt, nread, buf);
+    }
 }
 
 static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
@@ -127,9 +129,9 @@ static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
 }
 
 static void clear_req_body(tlsuv_http_req_t *req, int code) {
-    struct body_chunk_s *chunk = req->req_body, *next;
+    struct body_chunk_s *chunk = req->req_body;
     while(chunk) {
-        next = chunk->next;
+        struct body_chunk_s *next = chunk->next;
         if (chunk->cb) {
             chunk->cb(req, chunk->chunk, code);
         }
@@ -168,9 +170,8 @@ static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
 
     fail_active_request(c, code, msg);
 
-    tlsuv_http_req_t *r;
     while (!STAILQ_EMPTY(&queue)) {
-        r = STAILQ_FIRST(&queue);
+        tlsuv_http_req_t *r = STAILQ_FIRST(&queue);
         STAILQ_REMOVE_HEAD(&queue, _next);
         if (r->resp_cb != NULL) {
             r->resp.code = code;
@@ -273,8 +274,8 @@ static void link_close_cb(uv_link_t *l) {
     }
 }
 
-static int tls_write_shim(uv_write_t *r, void *s, uv_buf_t *b, int n, uv_write_cb cb) {
-    return tlsuv_stream_write(r, s, b, cb);
+static int tls_write_shim(uv_write_t *r, uv_handle_t *s, uv_buf_t *b, int n, uv_write_cb cb) {
+    return tlsuv_stream_write(r, (tlsuv_stream_t*)s, b, cb);
 }
 
 static void on_tls_connect(uv_connect_t *req, int status) {
@@ -293,8 +294,8 @@ static void on_tls_connect(uv_connect_t *req, int status) {
         return;
     }
 
-    c->tr = s;
-    c->tr_close = (void (*)(void *, uv_close_cb)) tlsuv_stream_close;
+    c->tr = (uv_handle_t*)s;
+    c->tr_close = (void (*)(uv_handle_t *, uv_close_cb)) tlsuv_stream_close;
     c->tr_write = tls_write_shim;
     tlsuv_stream_read_start(s, tr_alloc_cb, tr_read_cb);
     c->connected = Connected;
@@ -311,7 +312,7 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
         tlsuv_stream_t *s = tlsuv__calloc(1, sizeof(tlsuv_stream_t));
         tlsuv_stream_init(c->proc.loop, s, c->tls ? c->tls : get_default_tls());
         s->data = c;
-        c->tr = s;
+        c->tr = (uv_handle_t*)s;
         tlsuv_stream_set_hostname(s, c->host);
 
         uv_connect_t *cr = tlsuv__calloc(1, sizeof(*cr));
@@ -334,9 +335,9 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
         }
 
         tcp->data = c;
-        c->tr = tcp;
-        c->tr_close = (void (*)(void *, uv_close_cb)) uv_close;
-        c->tr_write = (int (*)(uv_write_t *, void *, uv_buf_t *, int, uv_write_cb)) uv_write;
+        c->tr = (uv_handle_t*)tcp;
+        c->tr_close = uv_close;
+        c->tr_write = (int (*)(uv_write_t *, uv_handle_t *, uv_buf_t *, int, uv_write_cb)) uv_write;
         uv_read_start((uv_stream_t*)tcp, tr_alloc_cb, tr_read_cb);
         c->connected = Connected;
         safe_continue(c);
@@ -397,6 +398,7 @@ static void src_connect_timeout(uv_timer_t *t) {
     }
 
     if (clt->tr) {
+        clt->tr->data = NULL;
         clt->tr_close(clt->tr, (uv_close_cb) tlsuv__free);
         clt->tr = NULL;
     }
@@ -496,7 +498,7 @@ static void send_body(tlsuv_http_req_t *req) {
             }
         }
         else {
-            buf = uv_buf_init((char*)b->chunk, (unsigned int)b->len);
+            buf = uv_buf_init(b->chunk, (unsigned int)b->len);
             clt_write(c, &buf, req_write_body_cb, b);
             if (req->body_sent_size > req->req_body_size) {
                 CLT_LOG(WARN, "Supplied data[%zd] is larger than provided Content-Length[%zd]",
@@ -515,22 +517,22 @@ static void close_connection(tlsuv_http_t *c) {
         uv_timer_stop(c->conn_timer);
     }
 
-    switch (c->connected) {
-        case Handshaking:
-        case Connected:
-            CLT_LOG(VERB, "closing connection");
-            if (c->src) {
-                uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
-            } else {
-                c->tr_close(c->tr, (uv_close_cb) tlsuv__free);
-                c->tr = NULL;
-                safe_continue(c);
-            }
-
-        case Connecting:
-            c->connected = Disconnected;
-            break;
+    if (c->connect_req) {
+        const tlsuv_connector_t *connector = c->connector ? c->connector : tlsuv_global_connector();
+        connector->cancel(c->connect_req);
+        c->connect_req = NULL;
     }
+
+    if (c->tr) {
+        c->tr->data = NULL;
+        c->tr_close(c->tr, (uv_close_cb) tlsuv__free);
+        c->tr = NULL;
+    }
+
+    if (c->src) {
+        uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
+    }
+    c->connected = Disconnected;
 }
 
 static void idle_timeout(uv_timer_t *t) {
@@ -1011,7 +1013,7 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
             p--;
         }
 #else
-        p--; //on non-windows, always backup to pickup the leading slash
+        p--; //on non-windows, always backup to pick up the leading slash
 #endif
         url->path = p;
         url->path_len = strlen(p);

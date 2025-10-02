@@ -80,7 +80,7 @@ typedef enum http_request_state {
 } http_request_state;
 
 /**
- * @brief HTTP responce object passed into #um_http_resp_cb.
+ * @brief HTTP response object passed into #um_http_resp_cb.
  */
 struct tlsuv_http_resp_s {
     tlsuv_http_req_t *req;
@@ -148,9 +148,9 @@ struct tlsuv_http_s {
     const tlsuv_connector_t *connector;
     tlsuv_connector_req connect_req;
 
-    void *tr; // tlsuv_stream_t | uv_tcp_t
-    void (*tr_close)(void *, uv_close_cb);
-    int (*tr_write)(uv_write_t *, void *, uv_buf_t *, int, uv_write_cb);
+    uv_handle_t *tr; // tlsuv_stream_t | uv_tcp_t
+    void (*tr_close)(uv_handle_t *, uv_close_cb);
+    int (*tr_write)(uv_write_t *, uv_handle_t *, uv_buf_t *, int, uv_write_cb);
 
     tlsuv_src_t *src;
     uv_link_t http_link;
@@ -177,8 +177,12 @@ typedef struct tlsuv_http_pair {
  * Initialize HTTP client
  * @param l libuv loop to execute
  * @param clt client struct
- * @param url url to initialize client with. Only scheme, host, port(optional), path(@see tlsuv_http_set_path_prefix) are used.
+ * @param url url to initialize client with. Only scheme, host, port(optional),
+ *        path( [tlsuv_http_set_path_prefix] ) are used.
  * @return 0 or error code
+ *
+ * @see tlsuv_http_set_path_prefix
+ * @see tlsuv_http_set_url
  */
 int tlsuv_http_init(uv_loop_t *l, tlsuv_http_t *clt, const char *url);
 
@@ -189,10 +193,13 @@ int tlsuv_http_init(uv_loop_t *l, tlsuv_http_t *clt, const char *url);
  * 
  * @param l libuv loop to execute
  * @param clt client struct
- * @param url url to initialize client with. Only scheme, host, port(optional), path(@see tlsuv_http_set_path_prefix) are used.
+ * @param url url to initialize client with. Only scheme, host, port(optional), path(optional) are used.
  * @param src source link to be used in place of TCP
  * 
  * @return 0 or error code
+ *
+ * @see tlsuv_http_set_path_prefix
+ * @see tlsuv_http_set_url
  */
 int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, tlsuv_src_t *src);
 
@@ -282,12 +289,13 @@ void tlsuv_http_header(tlsuv_http_t *clt, const char *name, const char *value);
 /**
  * close client and release all resources associate with it
  * @param clt
+ * @param close_cb callback called after client is closed and all resources released. May be NULL.
  * @return 0 or error code
  */
 int tlsuv_http_close(tlsuv_http_t *clt, tlsuv_http_close_cb close_cb);
 
 /**
- * Create HTTP request with givan client and queue it for execution.
+ * Create HTTP request with given client and queue it for execution.
  * Request lifecycle is managed by the client.
  * @param clt HTTP client
  * @param method HTTP method
@@ -308,12 +316,13 @@ tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const ch
 int tlsuv_http_req_header(tlsuv_http_req_t *req, const char *name, const char *value);
 
 /**
- * Write request body. Could be called multiple times. @see tlsuv_http_req_end
+ * Write request body. Could be called multiple times.
  * @param req
  * @param body
  * @param bodylen
  * @param cb
  * @return
+ * @see tlsuv_http_req_end
  */
 int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen, tlsuv_http_body_cb cb);
 
@@ -397,12 +406,12 @@ struct tlsuv_url_s {
 };
 
 /**
- * Zero-copy URL parser. [url] fields point to the parsed [urlstr].
+ * Zero-copy URL parser. [url] fields point to the parsed [str].
  * @param url parsed URL structure
- * @param urlstr URL in string form
+ * @param str URL in string form
  * @return 0 on success, -1 on failure
  */
-int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr);
+int tlsuv_parse_url(struct tlsuv_url_s *url, const char *str);
 
 #ifdef __cplusplus
 }
