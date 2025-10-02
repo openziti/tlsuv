@@ -80,7 +80,6 @@ endif ()
 if (TLSUV_HTTP)
     list(APPEND tlsuv_sources
             src/http.c
-            src/tcp_src.c
             src/websocket.c
             src/http_req.c
             src/tls_link.c

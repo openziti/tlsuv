@@ -136,10 +136,7 @@ static void on_internal_close(uv_handle_t *h) {
     // fail all pending requests
     fail_pending_reqs(clt, UV_ECANCELED);
 
-    if (clt->tls_engine) {
-        clt->tls_engine->free(clt->tls_engine);
-        clt->tls_engine = NULL;
-    }
+    tlsuv_stream_free(clt);
 
     if (clt->close_cb) {
         clt->close_cb((uv_handle_t *) clt);
