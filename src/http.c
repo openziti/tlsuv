@@ -533,6 +533,7 @@ static void close_connection(tlsuv_http_t *c) {
         uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
     }
     c->connected = Disconnected;
+    safe_continue(c);
 }
 
 static void idle_timeout(uv_timer_t *t) {
