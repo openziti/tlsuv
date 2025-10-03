@@ -199,11 +199,10 @@ static void on_connect_poll(uv_poll_t *p, int status, int events) {
     }
     UM_LOG(TRACE, "poll fd[%ld] status=%d events=%d", (long)sock, status, events);
 
-    if (status == 0) {
-        int err = 0;
-        getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&err, &(socklen_t){sizeof(err)});
-        status = err_to_uv(err);
-    }
+    // check socket error status
+    int err = 0;
+    getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&err, &(socklen_t){sizeof(err)});
+    status = err_to_uv(err);
 
     if (status < 0) {
         UM_LOG(TRACE, "poll error on fd[%ld]: %s", (long)sock, uv_strerror(status));
