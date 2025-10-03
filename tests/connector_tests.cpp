@@ -77,19 +77,21 @@ TEST_CASE_METHOD(UvLoopTest, "default connector", "[connector]") {
     run(UNTIL(result.called));
 
     REQUIRE(result.err == 0);
-    sockaddr_storage peer = {0};
+    sockaddr_in6 peer = {0};
     socklen_t peerlen = sizeof(peer);
     REQUIRE(getpeername(result.sock, (sockaddr*)&peer, &peerlen) == 0);
 
-    if (peer.ss_family == AF_INET) {
+    if (peer.sin6_family == AF_INET) {
+        char dest[256];
+        uv_ip4_name((sockaddr_in*)&peer, dest, sizeof(dest));
+        INFO("connected to address: " << dest << ":" << ntohs(((sockaddr_in*)&peer)->sin_port));
         REQUIRE(((sockaddr_in*)&peer)->sin_port == htons(7443));
-    } else if (peer.ss_family == AF_INET6) {
-        REQUIRE(((sockaddr_in6*)&peer)->sin6_port == htons(7443));
+    } else if (peer.sin6_family == AF_INET6) {
+        char dest[256];
+        uv_ip6_name(&peer, dest, sizeof(dest));
+        INFO("connected to address: " << dest << ":" << ntohs(peer.sin6_port));
+        REQUIRE(peer.sin6_port == htons(7443));
     }
-
-    char dest[256];
-    uv_ip_name((sockaddr*)&peer, dest, sizeof(dest));
-    fprintf(stderr, "dest = %s\n", dest);
 
 #if _WIN32
     closesocket
@@ -123,7 +125,7 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connector", "[connector]") {
 
     run(UNTIL(result.called));
 
-    fprintf(stderr, "err = %d sock = %d\n", result.err, result.sock);
+    INFO("err = " << result.err << " sock = " << result.sock);
     REQUIRE(result.err == 0);
     sockaddr_in peer = {0};
     socklen_t peerlen = sizeof(peer);
@@ -154,14 +156,14 @@ TEST_CASE("base64 encode", "[connector]") {
         char *b = b64;
         size_t outlen = sizeof(b64);
         CHECK(tlsuv_base64_encode((const uint8_t *)msg, i, &b, &outlen) == 0);
+        INFO("base64 encode: " << std::string(b64, outlen));
         CHECK(strlen(b) == outlen);
-        fprintf(stderr, "%.*s\n", (int)outlen, b64);
     }
 
     char *out = NULL;
     size_t outlen = 0;
     CHECK(tlsuv_base64_encode((const uint8_t *)msg, len, &out, &outlen) == 0);
-    fprintf(stderr, "len[%zd] %s\n", outlen, out);
+    INFO("len[" << outlen <<"] " << out);
     CHECK(strlen(out) == outlen);
     free(out);
 
