@@ -157,16 +157,6 @@ static const char *get_name(const struct sockaddr *addr) {
     return "<unknown>";
 }
 
-static const char *get_error_msg(int err) {
-#if _WIN32
-    static char msg[256];
-    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, err, 0, msg, sizeof(msg), NULL);
-    return msg;
-#else
-    return strerror(err);
-#endif
-}
-
 static int err_to_uv(int err) {
 #if _WIN32
     switch(err) {
@@ -201,10 +191,10 @@ static void on_poll_close(uv_handle_t *h) {
 static void on_connect_poll(uv_poll_t *p, int status, int events) {
     struct conn_req_s *cr = p->data;
     uv_os_sock_t sock;
-    if (uv_fileno(p, (uv_os_fd_t*)&sock) != 0) {
+    if (uv_fileno((uv_handle_t*)p, (uv_os_fd_t*)&sock) != 0) {
         UM_LOG(ERR, "poll fileno error");
         cr->error = UV_EINVAL;
-        uv_close(p, on_poll_close);
+        uv_close((uv_handle_t*)p, on_poll_close);
         return;
     }
     UM_LOG(TRACE, "poll fd[%ld] status=%d events=%d", (long)sock, status, events);
@@ -267,7 +257,7 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
 
     struct addrinfo *addr = addrlist;
     int count = 0;
-    int err;
+    int err = 0;
     while (addr && count < max_connect_socks) {
         uv_os_sock_t s = tlsuv_socket(addr, 0);
         if (s == INVALID_SOCKET) {
