@@ -69,6 +69,9 @@ build
 ## CI cache
 .ci.cache/
 
+# clangd cache
+.cache/clangd/
+
 ### JetBrains
 .idea/
 cmake-build-*/
