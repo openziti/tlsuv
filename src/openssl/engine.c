@@ -637,6 +637,9 @@ static void set_io(tlsuv_engine_t self, io_ctx io, io_read rdf, io_write wrtf) {
     struct openssl_engine *e = (struct openssl_engine *) self;
     assert(e->bio == NULL);
 
+#ifdef SSL_OP_ENABLE_KTLS
+    SSL_clear_options(e->ssl, SSL_OP_ENABLE_KTLS);
+#endif
     e->bio = BIO_new(BIO_s_engine());
     BIO_set_data(e->bio, e);
     BIO_set_init(e->bio, true);
@@ -1168,6 +1171,10 @@ static long engine_bio_ctrl(BIO *b, int cmd, long larg, void *pargs) {
         case BIO_CTRL_PUSH: // 6
         case BIO_CTRL_POP: // 7
         case BIO_CTRL_DGRAM_SET_NEXT_TIMEOUT: // 45
+
+        // Kernel TLS offload not supported by custom BIO
+        case BIO_CTRL_GET_KTLS_SEND: // 73
+        case BIO_CTRL_GET_KTLS_RECV: // 76
             ret = 0;
             break;
         default:
