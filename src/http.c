@@ -295,6 +295,7 @@ static void on_tls_connect(uv_connect_t *req, int status) {
         return;
     }
 
+    CLT_LOG(VERB, "TLS handshake completed");
     c->tr = (uv_handle_t*)s;
     c->tr_close = (void (*)(uv_handle_t *, uv_close_cb)) tlsuv_stream_close;
     c->tr_write = tls_write_shim;
@@ -319,8 +320,10 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
         uv_connect_t *cr = tlsuv__calloc(1, sizeof(*cr));
         cr->data = c;
         tlsuv_stream_set_protocols(s, supported_apln_num, supported_alpn);
+        CLT_LOG(VERB, "starting TLS handshake");
         status = tlsuv_stream_open(cr, s, (uv_os_fd_t)sock, on_tls_connect);
         if (status != 0) {
+            CLT_LOG(WARN, "failed to start TLS on socket: %s", uv_strerror(status));
             tlsuv__free(cr);
             tlsuv_stream_free(s);
             tlsuv__free(s);
@@ -381,29 +384,32 @@ static void src_connect_cb(tlsuv_src_t *src, int status, void *ctx) {
 }
 
 static void src_connect_timeout(uv_timer_t *t) {
-    tlsuv_http_t *clt = t->data;
+    tlsuv_http_t *c = t->data;
+    CLT_LOG(WARN, "connection timed out");
 
-    if (clt->src) {
-        src_connect_cb(clt->src, UV_ETIMEDOUT, clt);
-        clt->src->cancel(clt->src);
+    if (c->src) {
+        src_connect_cb(c->src, UV_ETIMEDOUT, c);
+        c->src->cancel(c->src);
         return;
     }
 
-    clt->connected = Disconnected;
-    fail_all_requests(clt, UV_ETIMEDOUT, uv_strerror(UV_ETIMEDOUT));
+    c->connected = Disconnected;
+    fail_all_requests(c, UV_ETIMEDOUT, uv_strerror(UV_ETIMEDOUT));
 
-    if (clt->connect_req) {
-        const tlsuv_connector_t *c = clt->connector ? clt->connector : tlsuv_global_connector();
-        c->cancel(clt->connect_req);
-        clt->connect_req = NULL;
+    if (c->connect_req) {
+        const tlsuv_connector_t *connector = c->connector ? c->connector : tlsuv_global_connector();
+        connector->cancel(c->connect_req);
+        c->connect_req = NULL;
     }
 
-    if (clt->tr) {
-        clt->tr->data = NULL;
-        clt->tr_close(clt->tr, (uv_close_cb) tlsuv__free);
-        clt->tr = NULL;
+    if (c->tr) {
+        uv_handle_t *tr = c->tr;
+        c->tr = NULL;
+
+        tr->data = NULL;
+        c->tr_close(tr, (uv_close_cb) tlsuv__free);
     }
-    safe_continue(clt);
+    safe_continue(c);
 }
 
 static void req_write_cb(int status, void *arg) {
@@ -568,7 +574,7 @@ static void process_requests(uv_async_t *ar) {
 
     if (c->connected == Disconnected) {
         c->connected = Connecting;
-        CLT_LOG(VERB, "client not connected, starting connect sequence");
+        CLT_LOG(VERB, "client not connected, starting connect sequence timeout[%ld]", c->connect_timeout);
         if (c->connect_timeout > 0) {
             uv_timer_start(c->conn_timer, src_connect_timeout, c->connect_timeout, 0);
         }
