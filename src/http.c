@@ -289,7 +289,9 @@ static void on_tls_connect(uv_connect_t *req, int status) {
         CLT_LOG(ERR, "failed to open TLS on socket: %s", uv_strerror(status));
         c->connected = Disconnected;
         c->tr = NULL;
-        tlsuv_stream_close(s, (uv_close_cb) tlsuv__free);
+        if (status != UV_ECANCELED) { // close was alrady called
+            tlsuv_stream_close(s, (uv_close_cb) tlsuv__free);
+        }
         fail_all_requests(c, status, uv_strerror(status));
         safe_continue(c);
         return;
