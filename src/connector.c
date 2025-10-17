@@ -287,8 +287,8 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
     }
     cr->count = count;
 
+    uv_freeaddrinfo(addrlist);
     if (count == 0) {
-        uv_freeaddrinfo(addrlist);
         if (cr->cb) cr->cb(INVALID_SOCKET, err, cr->ctx);
         free_conn_req(cr);
         return;
