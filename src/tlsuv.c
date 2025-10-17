@@ -146,6 +146,17 @@ static void on_internal_close(uv_handle_t *h) {
 }
 
 int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
+    // if uv_poll has not been set up (before connect completed)
+    // create a throwaway handle to defer close_cb
+    if (uv_handle_get_type((uv_handle_t*)&clt->watcher) == UV_UNKNOWN_HANDLE) {
+        uv_idle_init(clt->loop, (uv_idle_t*)&clt->watcher);
+    }
+
+    if (uv_is_closing((uv_handle_t*)&clt->watcher)) {
+        TLS_LOG(WARN, "already closing");
+        return UV_EALREADY;
+    }
+
     clt->read_cb = NULL;
     clt->alloc_cb = NULL;
     clt->close_cb = close_cb;
@@ -165,9 +176,6 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
     if (clt->watcher.type == UV_POLL) {
         uv_poll_stop(&clt->watcher);
         closesocket(clt->sock);
-    } else {
-        // if uv_poll has not been set up create a throwaway handle to defer close_cb
-        uv_idle_init(clt->loop, (uv_idle_t*)&clt->watcher);
     }
     uv_close((uv_handle_t *) &clt->watcher, on_internal_close);
 
@@ -455,6 +463,8 @@ int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_fd_t fd, uv_
         return UV_EALREADY;
     }
 
+    assert(uv_handle_get_type((uv_handle_t*)&clt->watcher) == UV_UNKNOWN_HANDLE);
+
     clt->conn_req = req;
     req->type = UV_CONNECT;
     req->cb = cb;
@@ -517,9 +527,12 @@ static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
     // app closed stream before it connected
     if (clt->close_cb) {
         TLS_LOG(VERB, "closed before connect: %d/%s", status, uv_strerror(status));
-        if (!uv_is_closing((uv_handle_t *)&clt->watcher))
-            on_internal_close((uv_handle_t *) &clt->watcher);
-        return;
+        if (uv_handle_get_type((uv_handle_t *)&clt->watcher) == UV_UNKNOWN_HANDLE) {
+            uv_idle_init(clt->loop, (uv_idle_t*)&clt->watcher);
+        }
+        if (!uv_is_closing((uv_handle_t*)&clt->watcher)) {
+            uv_close((uv_handle_t*)&clt->watcher, on_internal_close);
+        }
     }
 }
 
