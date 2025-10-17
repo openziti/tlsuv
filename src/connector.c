@@ -289,7 +289,7 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
 
     uv_freeaddrinfo(addrlist);
     if (count == 0) {
-        if (cr->cb) cr->cb(INVALID_SOCKET, err, cr->ctx);
+        if (cr->cb) cr->cb(INVALID_SOCKET, err_to_uv(err), cr->ctx);
         free_conn_req(cr);
         return;
     }
