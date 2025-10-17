@@ -527,9 +527,12 @@ static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
     // app closed stream before it connected
     if (clt->close_cb) {
         TLS_LOG(VERB, "closed before connect: %d/%s", status, uv_strerror(status));
-        if (!uv_is_closing((uv_handle_t *)&clt->watcher))
-            on_internal_close((uv_handle_t *) &clt->watcher);
-        return;
+        if (uv_handle_get_type((uv_handle_t *)&clt->watcher) == UV_UNKNOWN_HANDLE) {
+            uv_idle_init(clt->loop, (uv_idle_t*)&clt->watcher);
+        }
+        if (!uv_is_closing((uv_handle_t*)&clt->watcher)) {
+            uv_close((uv_handle_t*)&clt->watcher, on_internal_close);
+        }
     }
 }
 
