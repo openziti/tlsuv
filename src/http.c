@@ -299,8 +299,6 @@ static void on_tls_connect(uv_connect_t *req, int status) {
 
     CLT_LOG(VERB, "TLS handshake completed");
     c->tr = (uv_handle_t*)s;
-    c->tr_close = (void (*)(uv_handle_t *, uv_close_cb)) tlsuv_stream_close;
-    c->tr_write = tls_write_shim;
     tlsuv_stream_read_start(s, tr_alloc_cb, tr_read_cb);
     c->connected = Connected;
     safe_continue(c);
@@ -317,6 +315,9 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
         tlsuv_stream_init(c->proc.loop, s, c->tls ? c->tls : get_default_tls());
         s->data = c;
         c->tr = (uv_handle_t*)s;
+        // set close callback now incase it is needed when the connection fails
+        c->tr_close = (void (*)(uv_handle_t *, uv_close_cb)) tlsuv_stream_close;
+        c->tr_write = tls_write_shim;
         tlsuv_stream_set_hostname(s, c->host);
 
         uv_connect_t *cr = tlsuv__calloc(1, sizeof(*cr));
