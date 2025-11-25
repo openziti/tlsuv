@@ -29,6 +29,54 @@
 
 #include "cert.h"
 
+static const char* hs_name(int c) {
+    switch (c) {
+        case 0: return "HelloRequest";
+        case 1: return "ClientHello";
+        case 2: return "ServerHello";
+        case 4: return "NEWSESSION_TICKET";
+        case 11: return "CERTIFICATE";
+        case 12: return "SERVER_KEY_EXCHANGE";
+        case 13: return "CERTIFICATE_REQUEST";
+        case 14: return "SERVER_DONE";
+        case 15: return "CERTIFICATE_VERIFY";
+        case 16: return "CLIENT_KEY_EXCHANGE";
+        case 20: return "FINISHED";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static inline void log_tls_message(struct win32crypto_engine_s *e, const char *marker, const char *msg, size_t msg_len) {
+    const u_char *m = (u_char*)msg;
+    while(m - (u_char*)msg < msg_len) {
+        u_char mt = *m++;
+        m += 2;
+        size_t rec_len = (*m++) << 8;
+        rec_len += *m++;
+        const char *t = "unknown";
+        switch (mt) {
+            case 20: t = "change_cipher"; break;
+            case 21: t = "alert"; break;
+            case 22: t = "handshake"; break;
+            case 23: t = "data"; break;
+            default:
+                UM_LOG(TRACE, "%s tls[%p] skipping record[%d] len[%zd]", marker, e, mt, rec_len);
+                m += rec_len;
+                continue;
+        }
+        const char *complete="";
+        if (m + rec_len > (u_char *)msg + msg_len) complete = " incomplete";
+        if (mt == 22) {
+            u_char hs = *m;
+            UM_LOG(TRACE, "%s tls[%p] %s[%d] len[%zd]%s %s", marker, e, t, mt, rec_len, complete, hs_name(hs));
+        } else {
+            UM_LOG(TRACE, "%s tls[%p] %s[%d] len[%zd]%s", marker, e, t, mt, rec_len, complete);
+        }
+        m += rec_len;
+    }
+}
+
 static void engine_free(tlsuv_engine_t e) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)e;
     tlsuv__free(engine->hostname);
@@ -130,12 +178,83 @@ static SECURITY_STATUS verify_server_cert(struct win32crypto_engine_s *engine)
     return  verified == 0 ? ERROR_SUCCESS : TRUST_E_FAIL;
 }
 
+static tls_handshake_state handshake_1(struct win32crypto_engine_s *engine) {
+    assert(engine);
+    assert(engine->write_fn);
+    assert(engine->handshake_st == TLS_HS_BEFORE);
+
+    u_long ret_flags = 0;
+    u_long req_flags =
+            ISC_REQ_USE_SUPPLIED_CREDS |
+            ISC_REQ_CONFIDENTIALITY |
+            ISC_REQ_REPLAY_DETECT |
+            ISC_REQ_SEQUENCE_DETECT |
+            ISC_REQ_STREAM;
+
+    SecBuffer in_buf;
+    SecBufferDesc in_buf_desc = { .ulVersion = SECBUFFER_VERSION };
+    SecBufferDesc *in_buf_desc_p = NULL;
+
+    char out[16 * 1024];
+    SecBuffer out_buf = {
+            .BufferType = SECBUFFER_TOKEN,
+            .pvBuffer = out,
+            .cbBuffer = sizeof(out),
+    };
+    SecBufferDesc out_buf_desc = {
+            .ulVersion = SECBUFFER_VERSION,
+            .pBuffers = &out_buf,
+            .cBuffers = 1,
+    };
+
+    if (engine->protocols) {
+        in_buf.BufferType = SECBUFFER_APPLICATION_PROTOCOLS;
+        in_buf.pvBuffer = engine->protocols;
+        in_buf.cbBuffer = engine->protocols_len;
+
+        in_buf_desc.cBuffers = 1;
+        in_buf_desc.pBuffers = &in_buf;
+        in_buf_desc_p = &in_buf_desc;
+    }
+
+    engine->status = InitializeSecurityContextA(
+            &engine->cred_handle, NULL, engine->hostname,
+            req_flags, 0, 0,
+            in_buf_desc_p,
+            0,
+            &engine->ctxt_handle,
+            &out_buf_desc, &ret_flags, NULL);
+
+    // the only expected status
+    if (engine->status == SEC_I_CONTINUE_NEEDED) {
+        log_tls_message(engine, ">>>", out_buf.pvBuffer, out_buf.cbBuffer);
+        ssize_t wr = engine->write_fn(engine->io, out_buf.pvBuffer, out_buf.cbBuffer);
+        if (wr != out_buf.cbBuffer) {
+            UM_LOG(ERR, "failed to write client hello[%zd]: %zd", out_buf.cbBuffer, wr);
+            engine->handshake_st = TLS_HS_ERROR;
+        } else {
+            engine->handshake_st = TLS_HS_CONTINUE;
+        }
+        return engine->handshake_st;
+    }
+
+    engine->handshake_st = TLS_HS_ERROR;
+    return TLS_HS_ERROR;
+}
+
 static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
+    assert(engine);
+    assert(engine->read_fn);
+    assert(engine->write_fn);
 
     if (engine->handshake_st == TLS_HS_COMPLETE ||
         engine->handshake_st == TLS_HS_ERROR)
         return engine->handshake_st;
+
+    if (engine->handshake_st == TLS_HS_BEFORE) {
+        return handshake_1(engine);
+    }
 
     u_long req_flags =
             ISC_REQ_USE_SUPPLIED_CREDS |
@@ -144,30 +263,15 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
             ISC_REQ_SEQUENCE_DETECT |
             ISC_REQ_STREAM;
     u_long ret_flags = 0;
-    SecBuffer outbuf[3] = {
-        { .BufferType = SECBUFFER_TOKEN, .pvBuffer = engine->outbound, .cbBuffer = sizeof(engine->outbound) },
-        { .BufferType = SECBUFFER_EMPTY },
-        { .BufferType = SECBUFFER_EMPTY },
-    };
-    SecBufferDesc outbuf_desc = { SECBUFFER_VERSION, 2, outbuf };
-
-    SecBuffer inbuf[2] = { };
-    inbuf[0].cbBuffer = engine->inbound_len;
-    inbuf[0].pvBuffer = engine->inbound;
-    inbuf[0].BufferType = SECBUFFER_TOKEN;
-
-    SecBufferDesc inbuf_desc = { SECBUFFER_VERSION, 2, inbuf };
-
     if (engine->status == SEC_I_CONTINUE_NEEDED ||
         engine->status == SEC_E_INCOMPLETE_MESSAGE) {
+        UM_LOG(VERB, "trying to read");
         ssize_t read = engine->read_fn(engine->io,
                                       engine->inbound + engine->inbound_len,
                                       sizeof(engine->inbound) - engine->inbound_len);
         if (read > 0) {
             engine->inbound_len += read;
-            UM_LOG(VERB, "read %zd bytes of handshake data", read);
-            inbuf[0].cbBuffer = (unsigned long)engine->inbound_len;
-            inbuf[0].pvBuffer = engine->inbound;
+            UM_LOG(TRACE, "read %zd bytes of handshake data", read);
         } else {
             UM_LOG(ERR, "failed to read handshake data: %zd", read);
             engine->handshake_st = TLS_HS_ERROR;
@@ -175,73 +279,81 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         }
     }
 
-    if (engine->handshake_st == TLS_HS_BEFORE && engine->protocols) {
-        memcpy(inbuf[0].pvBuffer, engine->protocols, engine->protocols_len);
-        inbuf[0].BufferType = SECBUFFER_APPLICATION_PROTOCOLS;
-        inbuf[0].cbBuffer = engine->protocols_len;
-    } else if (engine->inbound_len > 0) {
-        inbuf[0].BufferType = SECBUFFER_TOKEN;
-        inbuf[0].pvBuffer = engine->inbound;
-        inbuf[0].cbBuffer = engine->inbound_len;
-    }
+    SecBuffer inbuf[2] = { {
+                                   .BufferType = SECBUFFER_TOKEN,
+                                   .pvBuffer = engine->inbound,
+                                   .cbBuffer = engine->inbound_len,
+                           },
+                           {
+                                   .BufferType = SECBUFFER_EMPTY,
+                                   .pvBuffer = NULL,
+                                   .cbBuffer = 0,
+                           }};
 
-    PCtxtHandle ctx = engine->handshake_st == TLS_HS_BEFORE ? NULL : &engine->ctxt_handle;
+    SecBufferDesc inbuf_desc = { SECBUFFER_VERSION, 2, inbuf };
+
+    char alert_buf[1024];
+    SecBuffer outbuf[3] = {
+            { .BufferType = SECBUFFER_TOKEN, .pvBuffer = engine->outbound, .cbBuffer = sizeof(engine->outbound) },
+            { .BufferType = SECBUFFER_ALERT, .pvBuffer = alert_buf, .cbBuffer = sizeof(alert_buf) },
+            { .BufferType = SECBUFFER_EMPTY },
+    };
+    SecBufferDesc outbuf_desc = { SECBUFFER_VERSION, 2, outbuf };
 
     UM_LOG(TRACE, "processing %d bytes", inbuf[0].cbBuffer);
-    SECURITY_STATUS rc = InitializeSecurityContextA(
-        &engine->cred_handle, ctx, ctx ? NULL : engine->hostname,
+    log_tls_message(engine, "<<<", inbuf[0].pvBuffer, inbuf[0].cbBuffer);
+    engine->status = InitializeSecurityContextA(
+        &engine->cred_handle, &engine->ctxt_handle, NULL,
         req_flags, 0, 0,
-        ctx || engine->protocols ? &inbuf_desc : NULL,
+        &inbuf_desc,
         0,
-        ctx ? NULL : &engine->ctxt_handle,
+        NULL,
         &outbuf_desc, &ret_flags, NULL);
 
-    if (rc < 0) {
-      LOG_ERROR(VERB, rc, "handshake result");
+    if (engine->status == SEC_E_INCOMPLETE_MESSAGE) {
+        UM_LOG(VERB, "TLS message incomplete");
+        engine->handshake_st = TLS_HS_CONTINUE;
+        return TLS_HS_CONTINUE;
     }
 
-    engine->status = rc;
-
     if (inbuf[1].BufferType == SECBUFFER_EXTRA) {
-        UM_LOG(VERB, "extra data in handshake buffer: %lu bytes", inbuf[1].cbBuffer);
+        UM_LOG(VERB, "leftover data in handshake buffer: %lu bytes", inbuf[1].cbBuffer);
         size_t consumed = engine->inbound_len - inbuf[1].cbBuffer;
         memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
         engine->inbound_len -= consumed;
-    } else if (rc != SEC_E_INCOMPLETE_MESSAGE) {
+    } else {
         engine->inbound_len = 0;
     }
 
-    switch (rc) {
+    switch (engine->status) {
         case SEC_E_OK:
             engine->handshake_st = TLS_HS_COMPLETE;
-            if (engine->cert_verify_f) {
-                rc = verify_server_cert(engine);
-            }
-            if (rc != SEC_E_OK) {
-                LOG_ERROR(ERR, rc, "failed to verify server certificate");
+            if (engine->cert_verify_f &&
+                (engine->status = verify_server_cert(engine)) != SEC_E_OK) {
+                LOG_ERROR(ERR, engine->status, "failed to verify server certificate");
                 engine->handshake_st = TLS_HS_ERROR;
                 return engine->handshake_st;
             }
             QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_STREAM_SIZES, &engine->sizes);
             break;
         case SEC_I_CONTINUE_NEEDED:
-        case SEC_E_INCOMPLETE_MESSAGE:
             engine->handshake_st = TLS_HS_CONTINUE;
             break;
         default:
-            LOG_ERROR(ERR, rc, "handshake failed");
+            LOG_ERROR(ERR, engine->status, "handshake failed");
             engine->handshake_st = TLS_HS_ERROR;
             break;
     }
 
-    if (outbuf[0].cbBuffer > 0) {
-        assert (engine->write_fn);
-
-        ssize_t written = engine->write_fn(engine->io, outbuf[0].pvBuffer, outbuf[0].cbBuffer);
-        UM_LOG(VERB, "HS wrote %zd", written);
-        if (written < outbuf[0].cbBuffer) {
-            UM_LOG(ERR, "failed to write handshake data: %zd", written);
-            engine->handshake_st = TLS_HS_ERROR;
+    for (int i = 0; i < 3; i++) {
+        if (outbuf[i].BufferType == SECBUFFER_TOKEN && outbuf[i].cbBuffer > 0) {
+            log_tls_message(engine, ">>>", outbuf[i].pvBuffer, outbuf[i].cbBuffer);
+            ssize_t written = engine->write_fn(engine->io, outbuf[i].pvBuffer, outbuf[i].cbBuffer);
+            UM_LOG(VERB, "HS wrote %zd", written);
+            if (written < outbuf[i].cbBuffer) {
+                UM_LOG(ERR, "failed to write handshake data: %zd", written);
+                engine->handshake_st = TLS_HS_ERROR;
+            }
         }
     }
     return engine->handshake_st;
