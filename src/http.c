@@ -43,9 +43,13 @@ static void close_connection1(tlsuv_http_t *c, const char *src_fn, int src_line)
 
 static void free_http(tlsuv_http_t *clt);
 
+static void process_requests(uv_idle_t *ar);
+
+// initiate processing at the top of the next loop iteration
 static inline void safe_continue(tlsuv_http_t *c) {
     if (c && !uv_is_closing((const uv_handle_t *) &c->proc)) {
-        uv_async_send(&c->proc);
+        uv_ref((uv_handle_t*)&c->proc);
+        uv_idle_start(&c->proc, process_requests);
     }
 }
 
@@ -556,8 +560,11 @@ static void idle_timeout(uv_timer_t *t) {
     close_connection(c);
 }
 
-static void process_requests(uv_async_t *ar) {
+static void process_requests(uv_idle_t *ar) {
     tlsuv_http_t *c = ar->data;
+
+    // the processing will reset it via safe_continue if needed
+    uv_idle_stop(ar);
 
     if (c->active == NULL && !STAILQ_EMPTY(&c->requests)) {
         c->active = STAILQ_FIRST(&c->requests);
@@ -638,7 +645,8 @@ int tlsuv_http_close(tlsuv_http_t *clt, tlsuv_http_close_cb close_cb) {
         clt->conn_timer = NULL;
     }
 
-    if (clt->proc.type == UV_ASYNC) {
+    if (clt->proc.type == UV_IDLE) {
+        uv_ref((uv_handle_t *) &clt->proc);
         clt->close_cb = close_cb;
         uv_close((uv_handle_t *) &clt->proc, on_clt_close);
     } else {
@@ -750,7 +758,7 @@ int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, t
     clt->host = NULL;
     clt->prefix = NULL;
     clt->conn_timer = NULL;
-    clt->proc = (uv_async_t){0};
+    clt->proc = (uv_idle_t){0};
 
     int rc = tlsuv_http_set_url(clt, url);
     if (rc != 0) {
@@ -769,9 +777,9 @@ int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, t
         tlsuv_http_header(clt, "Accept-Encoding", um_available_encoding());
     }
 
-    uv_async_init(l, &clt->proc, process_requests);
-    uv_unref((uv_handle_t *) &clt->proc);
+    uv_idle_init(l, &clt->proc);
     clt->proc.data = clt;
+    uv_unref((uv_handle_t *) &clt->proc);
 
     return 0;
 }
