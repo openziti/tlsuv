@@ -392,7 +392,7 @@ static void process_inbound(tlsuv_stream_t *clt) {
         uv_close((uv_handle_t *) idler, (uv_close_cb) tlsuv__free);
     }
 
-    if (!clt->read_cb) {
+    if (clt->read_cb == NULL) {
         TLS_LOG(TRACE, "no read callback set, skipping read");
         return;
     }
@@ -400,6 +400,10 @@ static void process_inbound(tlsuv_stream_t *clt) {
     int iter = 0;
     ssize_t code = 0;
     for (iter = 0; iter < MAX_INBOUND_ITERATIONS; iter++) {
+        if (clt->read_cb == NULL) {
+            TLS_LOG(TRACE, "read callback cleared, stopping read");
+            break;
+        }
         assert(clt->alloc_cb != NULL);
         size_t total = 0;
         int rc;
