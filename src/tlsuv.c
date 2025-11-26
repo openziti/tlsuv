@@ -42,6 +42,7 @@
 #define TLSUV_VERS "<unknown>"
 #endif
 
+#define MAX_INBOUND_ITERATIONS 16
 #define TLS_LOG(lvl, fmt, ...) UM_LOG(lvl, "tls[%s]" fmt, clt->host, ##__VA_ARGS__)
 
 static void on_clt_io(uv_poll_t *, int, int);
@@ -380,11 +381,6 @@ static void process_outbound(tlsuv_stream_t *clt) {
 }
 
 static void process_inbound(tlsuv_stream_t *clt) {
-    size_t total;
-    uv_buf_t buf;
-    int rc;
-
-    int attempts = 16;
     TLS_LOG(TRACE, "processing inbound data");
 
     // got IO or idle check, can clear the handle
@@ -396,20 +392,25 @@ static void process_inbound(tlsuv_stream_t *clt) {
         uv_close((uv_handle_t *) idler, (uv_close_cb) tlsuv__free);
     }
 
-    ssize_t code = 0;
-    while(clt->read_cb && (attempts-- > 0)) {
-        assert(clt->alloc_cb != NULL);
-        int iteration = 16 - attempts;
+    if (!clt->read_cb) {
+        TLS_LOG(TRACE, "no read callback set, skipping read");
+        return;
+    }
 
-        buf = uv_buf_init(NULL, 0);
+    int iter = 0;
+    ssize_t code = 0;
+    for (iter = 0; iter < MAX_INBOUND_ITERATIONS; iter++) {
+        assert(clt->alloc_cb != NULL);
+        size_t total = 0;
+        int rc;
+        uv_buf_t buf = uv_buf_init(NULL, 0);
+
         clt->alloc_cb((uv_handle_t *) clt, 64 * 1024, &buf);
         if (buf.base == NULL || buf.len == 0) {
             code = UV_ENOBUFS;
             clt->read_cb((uv_stream_t *) clt, UV_ENOBUFS, &buf);
             break;
         }
-
-        total = 0;
 
         do {
             size_t count = 0;
@@ -418,14 +419,14 @@ static void process_inbound(tlsuv_stream_t *clt) {
         } while ( (rc == TLS_MORE_AVAILABLE || rc == TLS_OK) && total < buf.len);
 
         if (total > 0) {
-            TLS_LOG(TRACE, "iteration[%d]: read %zu bytes", iteration, total);
+            TLS_LOG(TRACE, "iteration[%d]: read %zu bytes", iter, total);
             clt->read_cb((uv_stream_t *) clt, (ssize_t) total, &buf);
             continue;
         }
 
         if (rc == TLS_ERR) {
             code = UV_ECONNABORTED;
-            TLS_LOG(VERB, "iteration[%d]: tls read error: %s", iteration, clt->tls_engine->strerror(clt->tls_engine));
+            TLS_LOG(TRACE, "iteration[%d]: tls read error: %s", iter, clt->tls_engine->strerror(clt->tls_engine));
             clt->read_cb((uv_stream_t *)clt, UV_ECONNABORTED, &buf);
             fail_pending_reqs(clt, UV_ECONNABORTED);
             break;
@@ -433,7 +434,7 @@ static void process_inbound(tlsuv_stream_t *clt) {
 
         if (rc == TLS_EOF) {
             code = UV_EOF;
-            TLS_LOG(TRACE, "iteration[%d]: EOF", iteration);
+            TLS_LOG(TRACE, "iteration[%d]: EOF", iter);
             clt->read_cb((uv_stream_t *) clt, UV_EOF, &buf);
             break;
         }
@@ -444,7 +445,7 @@ static void process_inbound(tlsuv_stream_t *clt) {
             break;
         }
     }
-    TLS_LOG(TRACE, "finished reading after %d iterations: %zd/%s", 16 - attempts,
+    TLS_LOG(TRACE, "finished reading after %d iterations: %zd/%s", iter,
             code, code ? uv_strerror((int)code) : "OK");
 }
 
