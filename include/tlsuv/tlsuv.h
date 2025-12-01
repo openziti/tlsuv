@@ -114,7 +114,7 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
  * @param fd socket
  * @return 0 on success, or error code
  */
-int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_fd_t fd, uv_connect_cb);
+int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_sock_t fd, uv_connect_cb);
 
 int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_cb read_cb);
 int tlsuv_stream_read_stop(tlsuv_stream_t *clt);

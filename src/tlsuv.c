@@ -483,7 +483,7 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
     start_io(clt);
 }
 
-int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_fd_t fd, uv_connect_cb cb) {
+int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_sock_t fd, uv_connect_cb cb) {
     if (!req) {
         return UV_EINVAL;
     }
@@ -492,7 +492,7 @@ int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_fd_t fd, uv_
     }
 
     assert(uv_handle_get_type((uv_handle_t*)&clt->watcher) == UV_UNKNOWN_HANDLE);
-    int rc = uv_poll_init_socket(clt->loop, &clt->watcher, clt->sock);
+    int rc = uv_poll_init_socket(clt->loop, &clt->watcher, fd);
     if (rc != 0) {
         TLS_LOG(WARN, "uv_poll_init_socket failed: %s", uv_strerror(rc));
         return rc;
