@@ -590,6 +590,7 @@ int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
     ws->close_cb = cb;
 
     if (ws->connect_req) {
+        UM_LOG(TRACE, "closing ws connect req");
         const tlsuv_connector_t *c = ws->connector ? ws->connector : tlsuv_global_connector();
         tlsuv_connector_req cr = ws->connect_req;
         ws->connect_req = NULL;
@@ -598,12 +599,14 @@ int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
     }
 
     if (ws->src != NULL) {
+        UM_LOG(TRACE, "closing ws link");
         uv_link_close(&ws->ws_link, ws_close_cb);
         return 0;
 
     }
 
     if (ws->tr != NULL) {
+        UM_LOG(TRACE, "closing ws transport");
         ws->tr_close(ws->tr, (uv_close_cb)free);
         ws->tr = NULL;
         on_ws_close(ws);
