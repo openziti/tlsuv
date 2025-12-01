@@ -42,6 +42,7 @@
 #define TLSUV_VERS "<unknown>"
 #endif
 
+#define MAX_INBOUND_ITERATIONS 16
 #define TLS_LOG(lvl, fmt, ...) UM_LOG(lvl, "tls[%s]" fmt, clt->host, ##__VA_ARGS__)
 
 static void on_clt_io(uv_poll_t *, int, int);
@@ -120,6 +121,7 @@ static int start_io(tlsuv_stream_t *clt) {
 
 static void on_internal_close(uv_handle_t *h) {
     tlsuv_stream_t *clt = container_of(h, tlsuv_stream_t, watcher);
+    TLS_LOG(VERB, "internal close");
     if (clt->conn_req) {
         uv_connect_t *req = clt->conn_req;
         clt->conn_req = NULL;
@@ -156,6 +158,7 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
         TLS_LOG(WARN, "already closing");
         return UV_EALREADY;
     }
+    TLS_LOG(VERB, "closing stream");
 
     clt->read_cb = NULL;
     clt->alloc_cb = NULL;
@@ -231,6 +234,7 @@ int tlsuv_stream_set_hostname(tlsuv_stream_t *clt, const char *host) {
 static void process_connect(tlsuv_stream_t *clt, int status) {
     assert(clt->conn_req);
     uv_connect_t *req = clt->conn_req;
+    TLS_LOG(TRACE, "process_connect status=%d", status);
     int err = 0;
     socklen_t l = sizeof(err);
     getsockopt(clt->sock, SOL_SOCKET, SO_ERROR, (void*)&err, &l);
@@ -266,8 +270,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
         clt->tls_engine->set_io_fd(clt->tls_engine, (tlsuv_sock_t) clt->sock);
     }
 
-    int rc;
-    rc = clt->tls_engine->handshake(clt->tls_engine);
+    int rc = clt->tls_engine->handshake(clt->tls_engine);
 
     if (rc == TLS_HS_ERROR) {
         const char *error = clt->tls_engine->strerror(clt->tls_engine);
@@ -284,6 +287,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
         start_io(clt);
         req->cb(req, 0);
     } else {
+        TLS_LOG(TRACE, "waiting for handshake data");
         // wait for incoming handshake messages
         uv_poll_start(&clt->watcher, UV_READABLE, on_clt_io);
     }
@@ -292,6 +296,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
 static ssize_t write_req(tlsuv_stream_t *clt, uv_buf_t *buf) {
     int rc = clt->tls_engine->write(clt->tls_engine, buf->base, buf->len);
     if (rc > 0) {
+        TLS_LOG(TRACE, "wrote %d bytes", rc);
         return rc;
     }
 
@@ -301,6 +306,7 @@ static ssize_t write_req(tlsuv_stream_t *clt, uv_buf_t *buf) {
     }
 
     if (rc == TLS_AGAIN) {
+        TLS_LOG(TRACE, "writing blocked");
         return UV_EAGAIN;
     }
 
@@ -308,6 +314,11 @@ static ssize_t write_req(tlsuv_stream_t *clt, uv_buf_t *buf) {
 }
 
 static void fail_pending_reqs(tlsuv_stream_t *clt, int err) {
+    if (TAILQ_EMPTY(&clt->queue)) {
+        return;
+    }
+
+    TLS_LOG(VERB, "failing %zu pending write requests: %d/%s", clt->queue_len, err, uv_strerror(err));
     while(!TAILQ_EMPTY(&clt->queue)) {
         tlsuv_write_t *req = TAILQ_FIRST(&clt->queue);
         TAILQ_REMOVE(&clt->queue, req, _next);
@@ -324,6 +335,9 @@ static void process_outbound(tlsuv_stream_t *clt) {
     tlsuv_write_t *req;
     ssize_t ret = 0;
 
+    if (clt->queue_len > 0) {
+        TLS_LOG(TRACE, "processing %zu queued write requests", clt->queue_len);
+    }
     while (!TAILQ_EMPTY(&clt->queue)) {
         req = TAILQ_FIRST(&clt->queue);
         ret = write_req(clt, &req->buf);
@@ -367,11 +381,7 @@ static void process_outbound(tlsuv_stream_t *clt) {
 }
 
 static void process_inbound(tlsuv_stream_t *clt) {
-    size_t total;
-    uv_buf_t buf;
-    int rc;
-
-    int attempts = 16;
+    TLS_LOG(TRACE, "processing inbound data");
 
     // got IO or idle check, can clear the handle
     if (clt->watcher.data) {
@@ -382,17 +392,29 @@ static void process_inbound(tlsuv_stream_t *clt) {
         uv_close((uv_handle_t *) idler, (uv_close_cb) tlsuv__free);
     }
 
-    while(clt->read_cb && (attempts-- > 0)) {
-        assert(clt->alloc_cb != NULL);
+    if (clt->read_cb == NULL) {
+        TLS_LOG(TRACE, "no read callback set, skipping read");
+        return;
+    }
 
-        buf = uv_buf_init(NULL, 0);
+    int iter = 0;
+    ssize_t code = 0;
+    for (iter = 0; iter < MAX_INBOUND_ITERATIONS; iter++) {
+        if (clt->read_cb == NULL) {
+            TLS_LOG(TRACE, "read callback cleared, stopping read");
+            break;
+        }
+        assert(clt->alloc_cb != NULL);
+        size_t total = 0;
+        int rc;
+        uv_buf_t buf = uv_buf_init(NULL, 0);
+
         clt->alloc_cb((uv_handle_t *) clt, 64 * 1024, &buf);
         if (buf.base == NULL || buf.len == 0) {
+            code = UV_ENOBUFS;
             clt->read_cb((uv_stream_t *) clt, UV_ENOBUFS, &buf);
             break;
         }
-
-        total = 0;
 
         do {
             size_t count = 0;
@@ -401,17 +423,22 @@ static void process_inbound(tlsuv_stream_t *clt) {
         } while ( (rc == TLS_MORE_AVAILABLE || rc == TLS_OK) && total < buf.len);
 
         if (total > 0) {
+            TLS_LOG(TRACE, "iteration[%d]: read %zu bytes", iter, total);
             clt->read_cb((uv_stream_t *) clt, (ssize_t) total, &buf);
             continue;
         }
 
         if (rc == TLS_ERR) {
+            code = UV_ECONNABORTED;
+            TLS_LOG(TRACE, "iteration[%d]: tls read error: %s", iter, clt->tls_engine->strerror(clt->tls_engine));
             clt->read_cb((uv_stream_t *)clt, UV_ECONNABORTED, &buf);
             fail_pending_reqs(clt, UV_ECONNABORTED);
             break;
         }
 
         if (rc == TLS_EOF) {
+            code = UV_EOF;
+            TLS_LOG(TRACE, "iteration[%d]: EOF", iter);
             clt->read_cb((uv_stream_t *) clt, UV_EOF, &buf);
             break;
         }
@@ -422,7 +449,8 @@ static void process_inbound(tlsuv_stream_t *clt) {
             break;
         }
     }
-    TLS_LOG(TRACE, "finished reading after %d iterations", 16 - attempts);
+    TLS_LOG(TRACE, "finished reading after %d iterations: %zd/%s", iter,
+            code, code ? uv_strerror((int)code) : "OK");
 }
 
 static void on_clt_io(uv_poll_t *p, int status, int events) {
@@ -515,7 +543,7 @@ static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
     tlsuv_stream_t *clt = (tlsuv_stream_t *)r->handle;
     clt->connect_req = NULL;
 
-
+    TLS_LOG(VERB, "connect status: %d", status);
     if (status == 0) {
         tlsuv_stream_open(clt->conn_req, clt, (uv_os_fd_t)sock, clt->conn_req->cb);
         return;
@@ -556,6 +584,7 @@ int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *hos
     tlsuv_stream_set_hostname(clt, host);
     clt->conn_req = req;
 
+    TLS_LOG(VERB, "starting connect to %s:%d", host, port);
     clt->connect_req = clt->connector->connect(clt->loop, clt->connector, host, portstr, on_connect, clt->conn_req);
     return 0;
 }
@@ -647,6 +676,7 @@ int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_w
     clt->queue_len += 1;
     TAILQ_INSERT_TAIL(&clt->queue, wr, _next);
 
+    TLS_LOG(TRACE, "queued write request len[%zd]", wr->buf.len);
     // make sure to re-arm IO after queuing request
     return start_io(clt);
 }

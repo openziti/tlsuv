@@ -906,7 +906,7 @@ static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len) {
                 }
             } else {
                 eng->error = ERR_peek_last_error();
-                UM_LOG(ERR, "openssl: write error: %s", tls_error(eng->error));
+                UM_LOG(ERR, "openssl: write[%d] error: %s", err, tls_error(eng->error));
                 return -1;
             }
         }
@@ -980,8 +980,9 @@ static int tls_close(tlsuv_engine_t self) {
 
     int rc = SSL_shutdown(eng->ssl);
     if (rc < 0) {
+        int err = SSL_get_error(eng->ssl, rc);
         unsigned long err_code = ERR_peek_last_error();
-        UM_LOG(WARN, "openssl shutdown: %lX/%s", err_code, tls_error(err_code));
+        UM_LOG(WARN, "openssl shutdown[%d]: %lX/%s", err, err_code, tls_error(err_code));
     }
     return 0;
 }

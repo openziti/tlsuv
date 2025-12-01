@@ -38,7 +38,8 @@ static void tr_alloc_cb(uv_handle_t *s, size_t suggested_size, uv_buf_t *buf);
 
 static void fail_active_request(tlsuv_http_t *c, int code, const char *msg);
 
-static void close_connection(tlsuv_http_t *c);
+#define close_connection(c) close_connection1(c, __FUNCTION__, __LINE__)
+static void close_connection1(tlsuv_http_t *c, const char *src_fn, int src_line);
 
 static void free_http(tlsuv_http_t *clt);
 
@@ -84,7 +85,9 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
     tlsuv_http_t *c = link->data;
     clt_read_cb(c, nread, buf);
 }
+
 static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
+    CLT_LOG(VERB, "read[%zd]", nread);
     if (nread < 0) {
         if (c->active) {
             const char *err = uv_strerror((int)nread);
@@ -522,8 +525,8 @@ static void send_body(tlsuv_http_req_t *req) {
     }
 }
 
-static void close_connection(tlsuv_http_t *c) {
-    CLT_LOG(VERB, "closing connection");
+static void close_connection1(tlsuv_http_t *c, const char *src_fn, int src_line) {
+    CLT_LOG(VERB, "%s:%d: closing connection", src_fn, src_line);
     if (c->conn_timer) {
         uv_timer_stop(c->conn_timer);
     }
@@ -563,6 +566,9 @@ static void process_requests(uv_async_t *ar) {
         // if not keepalive close connection before next request
         if (!c->keepalive) {
             close_connection(c);
+        }
+        if (c->active) {
+            CLT_LOG(VERB, "starting request[%s]", c->active->path);
         }
     }
 
