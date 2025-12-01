@@ -539,7 +539,7 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
         }
     }
 
-    return tlsuv_stream_open(req, clt, (uv_os_fd_t)s, cb);
+    return tlsuv_stream_open(req, clt, s, cb);
 }
 
 static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
@@ -549,7 +549,7 @@ static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
 
     TLS_LOG(VERB, "connect status: %d", status);
     if (status == 0) {
-        tlsuv_stream_open(clt->conn_req, clt, (uv_os_fd_t)sock, clt->conn_req->cb);
+        tlsuv_stream_open(clt->conn_req, clt, sock, clt->conn_req->cb);
         return;
     }
 

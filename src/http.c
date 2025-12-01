@@ -331,7 +331,7 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
         cr->data = c;
         tlsuv_stream_set_protocols(s, supported_apln_num, supported_alpn);
         CLT_LOG(VERB, "starting TLS handshake");
-        status = tlsuv_stream_open(cr, s, (uv_os_fd_t)sock, on_tls_connect);
+        status = tlsuv_stream_open(cr, s, sock, on_tls_connect);
         if (status != 0) {
             CLT_LOG(WARN, "failed to start TLS on socket: %s", uv_strerror(status));
             tlsuv__free(cr);
