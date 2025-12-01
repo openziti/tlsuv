@@ -176,10 +176,10 @@ static void on_connect(uv_os_sock_t sock, int status, void *connect_ctx) {
 
         uv_connect_t *conn_req = tlsuv__calloc(1, sizeof(*conn_req));
         conn_req->data = ws;
-        tlsuv_stream_open(conn_req, s, (uv_os_fd_t)sock, on_tls_connect);
         ws->tr = s;
         ws->tr_close = (void (*)(void *, uv_close_cb)) tlsuv_stream_close;
         ws->tr_write = (int (*)(uv_write_t *, void *, uv_buf_t *, int, uv_write_cb)) tls_write_shim;
+        tlsuv_stream_open(conn_req, s, (uv_os_fd_t)sock, on_tls_connect);
     } else {
         uv_tcp_t *tcp = tlsuv__calloc(1, sizeof(uv_tcp_t));
         uv_tcp_init(ws->loop, tcp);

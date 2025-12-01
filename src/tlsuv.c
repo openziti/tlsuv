@@ -492,6 +492,11 @@ int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_fd_t fd, uv_
     }
 
     assert(uv_handle_get_type((uv_handle_t*)&clt->watcher) == UV_UNKNOWN_HANDLE);
+    int rc = uv_poll_init_socket(clt->loop, &clt->watcher, clt->sock);
+    if (rc != 0) {
+        TLS_LOG(WARN, "uv_poll_init_socket failed: %s", uv_strerror(rc));
+        return rc;
+    }
 
     clt->conn_req = req;
     req->type = UV_CONNECT;
@@ -499,7 +504,6 @@ int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_fd_t fd, uv_
     req->handle = (uv_stream_t *) clt;
 
     clt->sock = (uv_os_sock_t)fd;
-    uv_poll_init_socket(clt->loop, &clt->watcher, clt->sock);
     process_connect(clt, 0);
     return 0;
 }
