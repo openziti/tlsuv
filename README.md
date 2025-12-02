@@ -28,7 +28,7 @@ with [`FetchContent`](https://cmake.org/cmake/help/latest/module/FetchContent.ht
 ```cmake
     FetchContent_Declare(tlsuv
             GIT_REPOSITORY https://github.com/openziti/tlsuv.git
-            GIT_TAG v0.29.5 # use latest release version
+        GIT_TAG v0.40.0 # use latest release version
             )
     FetchContent_MakeAvailable(tlsuv)
 
@@ -42,12 +42,15 @@ configuration step. This will also reduce dependencies list.
 ## Dependencies
 TLSUV depends on the following libraries:
 
-| Library                                    | Notes                                                                                                                                                                                    |
-|--------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [libuv](https://github.com/libuv/libuv)    |                                                                                                                                                                                          | 
-| TLS                                        | [OpenSSL](https://github.com/openssl/openssl)(default) or<br/> [mbedTLS](https://github.com/mbedtls/mbedtls)(`TLSUV_TLSLIB=mbedtls`). <br/>Some features are only available with OpenSSL |
-| [llhttp](https://github.com/nodejs/llhttp) | only with HTTP enabled                                                                                                                                                                   |
-| [zlib](https://github.com/madler/zlib)     | only with HTTP enabled                                                                                                                                                                   |
+| Library                                                                         | Notes                                                            |
+|---------------------------------------------------------------------------------|------------------------------------------------------------------|
+| [libuv](https://github.com/libuv/libuv)                                         |                                                                  | 
+| TLS - the following are supported                                               | Some features are only available with OpenSSL                    |
+| - [OpenSSL](https://github.com/openssl/openssl)                                 | default TLS implementation except for Windows                    |
+| - [Windows crypto](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/) | default TLS implementation on Windows                            | 
+| - [mbedTLS](https://github.com/mbedtls/mbedtls)                                 | use `TLSUV_TLSLIB=mbedtls` does not support PKCS#11 or keychains |
+| [llhttp](https://github.com/nodejs/llhttp)                                      | only with HTTP enabled                                           |
+| [zlib](https://github.com/madler/zlib)                                          | only with HTTP enabled                                           |
 
 
 CMake configuration process will attempt to resolve the above dependencies via `find_package()` it is up to consuming project
