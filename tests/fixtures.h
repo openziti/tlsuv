@@ -55,7 +55,7 @@ struct UvLoopTest {
         uv_run(loop, UV_RUN_DEFAULT);
     }
 
-    // run while condition is met or until no active handles
+    // run while the condition is met or until no active handles
     void run(std::function<bool()> cond) {
         struct checker_s {
             std::function<bool()>& condition;
@@ -77,7 +77,7 @@ struct UvLoopTest {
         }
     }
 
-    // run loop for given number of seconds, take care not to exceed the test total timeout
+    // run loop for the given number of seconds, take care not to exceed the test total timeout
     void run(int to) const {
         auto t = new uv_timer_t;
         uv_timer_init(loop, t);
@@ -111,6 +111,14 @@ struct UvLoopTest {
         }
         free(loop);
     }
+};
+
+struct TlsDeleter {
+     void  operator()(tls_context *tls) {
+         if (tls) {
+             tls->free_ctx(tls);
+         }
+     }
 };
 
 #endif //UV_MBED_FIXTURES_H

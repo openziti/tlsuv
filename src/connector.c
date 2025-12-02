@@ -52,6 +52,8 @@
 
 #define max_connect_socks 16
 
+#define CR_LOG(l, fmt, ...) UM_LOG(l, "connect(%p): " fmt, cr, ##__VA_ARGS__)
+
 struct conn_req_s {
     uv_getaddrinfo_t resolve;
     void *ctx;
@@ -178,60 +180,73 @@ static int err_to_uv(int err) {
 
 static void on_poll_close(uv_handle_t *h) {
     struct conn_req_s *cr = h->data;
-    cr->count--;
-    if (cr->count <= 0) {
+    h->type = UV_UNKNOWN_HANDLE;
+
+    int poll_count = 0;
+    for (int i = 0; i < cr->count; i++) {
+        if (cr->polls[i].type == UV_POLL) {
+            poll_count++;
+        }
+    }
+
+    if (poll_count <= 0) {
         if (cr->cb) {
+            CR_LOG(TRACE, "no connection was made");
             cr->cb(INVALID_SOCKET, cr->error, cr->ctx);
         }
-        UM_LOG(TRACE, "closing connect request");
+        CR_LOG(TRACE, "closing connect request");
         free_conn_req(cr);
     }
 }
 
 static void on_connect_poll(uv_poll_t *p, int status, int events) {
     struct conn_req_s *cr = p->data;
-    uv_os_sock_t sock;
-    if (uv_fileno((uv_handle_t*)p, (uv_os_fd_t*)&sock) != 0) {
-        UM_LOG(ERR, "poll fileno error");
+    uv_os_sock_t sock = INVALID_SOCKET;
+    int rc = uv_fileno((uv_handle_t*)p, (uv_os_fd_t*)&sock);
+    uv_close((uv_handle_t*)p, on_poll_close);
+
+    if (sock == INVALID_SOCKET) {
+        CR_LOG(ERR, "poll file no error: %d/%s", rc, uv_strerror(rc));
         cr->error = UV_EINVAL;
-        uv_close((uv_handle_t*)p, on_poll_close);
         return;
     }
-    UM_LOG(TRACE, "poll fd[%ld] status=%d events=%d", (long)sock, status, events);
+    CR_LOG(TRACE, "poll fd[%ld] status=%d events=%d", (long)sock, status, events);
 
     // check socket error status
     int err = 0;
-    getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&err, &(socklen_t){sizeof(err)});
-    status = err_to_uv(err);
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&err, &(socklen_t){sizeof(err)}) == 0) {
+        status = err_to_uv(err);
+    } else {
+        status = err_to_uv(errno);
+    }
 
     if (status < 0) {
-        UM_LOG(TRACE, "poll error on fd[%ld]: %s", (long)sock, uv_strerror(status));
+        CR_LOG(TRACE, "closing fd[%ld]: poll error %s", (long)sock, uv_strerror(status));
         cr->error = status;
-        uv_close((uv_handle_t*)p, on_poll_close);
-        UM_LOG(TRACE, "closing fd[%ld]", (long)sock);
         closesocket(sock);
         return;
     }
 
     if (cr->cb == NULL) {
         // already handled
-        uv_close((uv_handle_t*)p, on_poll_close);
+        CR_LOG(TRACE, "closing fd[%ld]: already connected", (long)sock);
         closesocket(sock);
         return;
     }
 
-    uv_close((uv_handle_t*)p, on_poll_close);
+    CR_LOG(TRACE, "connected fd[%ld]", (long)sock);
     cr->cb(sock, 0, cr->ctx);
     cr->cb = NULL;
 
     for (int i = 0; i < cr->count; i++) {
         uv_handle_t *h = (uv_handle_t*)&cr->polls[i];
         if (cr->polls[i].type == UV_POLL && !uv_is_closing(h)) {
-            uv_os_sock_t s = -1;
-            uv_fileno(h, (uv_os_fd_t*)&s);
             uv_close(h, on_poll_close);
-            UM_LOG(TRACE, "closing fd[%ld]", (long)s);
-            closesocket(s);
+            uv_os_sock_t s = -1;
+            if (uv_fileno(h, (uv_os_fd_t*)&s) == 0) {
+                CR_LOG(TRACE, "closing fd[%ld]", (long)s);
+                closesocket(s);
+            }
         }
     }
 }
@@ -248,6 +263,7 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
     }
 
     if (status != 0) {
+        CR_LOG(TRACE, "closing request: failed to resolve: %s", uv_strerror(status));
         uv_freeaddrinfo(addrlist);
         if (cr->cb) cr->cb(INVALID_SOCKET, status, cr->ctx);
         free_conn_req(cr);
@@ -265,13 +281,13 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
             if (err == ENFILE || err == EMFILE) {
                 break;
             }
-            UM_LOG(TRACE, "error[%s] opening socket for %s",
+            CR_LOG(TRACE, "error[%s] opening socket for %s",
                    strerror(err), get_name(addr->ai_addr));
             addr = addr->ai_next;
             continue;
         }
 
-        UM_LOG(TRACE, "fd[%ld] connecting to %s", (long)s, get_name(addr->ai_addr));
+        CR_LOG(TRACE, "fd[%ld] connecting to %s", (long)s, get_name(addr->ai_addr));
         int rc = connect(s, addr->ai_addr, addr->ai_addrlen);
         err = get_error();
         if (rc == 0 || in_progress(err)) {
@@ -280,7 +296,7 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
             cr->polls[count].data = cr;
             count++;
         } else {
-            UM_LOG(TRACE, "fd[%ld] failed to connect: %d/%s", (long)s, err, strerror(err));
+            CR_LOG(TRACE, "fd[%ld] failed to connect: %d/%s", (long)s, err, strerror(err));
             closesocket(s);
         }
         addr = addr->ai_next;
@@ -291,7 +307,6 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
     if (count == 0) {
         if (cr->cb) cr->cb(INVALID_SOCKET, err_to_uv(err), cr->ctx);
         free_conn_req(cr);
-        return;
     }
 }
 
@@ -299,28 +314,29 @@ tlsuv_connector_req direct_connect(uv_loop_t *loop, const tlsuv_connector_t *sel
                                    const char *host, const char *port,
                                    tlsuv_connect_cb cb, void *ctx) {
     assert(cb != NULL);
-    struct conn_req_s *r = tlsuv__calloc(1, sizeof(*r));
-    r->ctx = ctx;
-    r->cb = cb;
+    struct conn_req_s *cr = tlsuv__calloc(1, sizeof(*cr));
+    cr->ctx = ctx;
+    cr->cb = cb;
 
     struct addrinfo hints = {
             .ai_socktype = SOCK_STREAM,
     };
+    CR_LOG(TRACE, "connecting to %s:%s", host, port);
 
-    uv_getaddrinfo(loop, &r->resolve, on_resolve, host, port, &hints);
+    uv_getaddrinfo(loop, &cr->resolve, on_resolve, host, port, &hints);
 
-    return r;
+    return cr;
 }
 
 void direct_cancel(tlsuv_connector_req req) {
-    UM_LOG(VERB, "cancelling");
-    struct conn_req_s *r = (struct conn_req_s *) req;
+    struct conn_req_s *cr = (struct conn_req_s *) req;
+    CR_LOG(VERB, "cancelling");
 
     // try to cancel resolve/connect request before it started
-    uv_cancel((uv_req_t *) &r->resolve);
-    r->error = UV_ECANCELED;
+    uv_cancel((uv_req_t *) &cr->resolve);
+    cr->error = UV_ECANCELED;
     for (int i = 0; i < max_connect_socks; i++) {
-        uv_handle_t *h = (uv_handle_t*)&r->polls[i];
+        uv_handle_t *h = (uv_handle_t*)&cr->polls[i];
         if (h->type == UV_POLL && !uv_is_closing(h)) {
             uv_close(h, on_poll_close);
         }

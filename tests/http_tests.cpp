@@ -100,6 +100,7 @@ void resp_capture_cb(tlsuv_http_resp_t *resp, void *data) {
     rc->code = resp->code;
     rc->status = resp->status ? resp->status : "no status";
     rc->http_version = resp->http_version;
+    std::cerr << "resp_capture_cb: code=" << rc->code << " status=" << rc->status << "\n";
 
     tlsuv_http_hdr *h;
     LIST_FOREACH(h, &resp->headers, _next) {
@@ -831,16 +832,16 @@ TEST_CASE("TLS verify with JWT", "[http]") {
     dot = strchr(dot + 1, '.');
 
     // no default CAs
-    tls_context *tls = default_tls_context("", 0);
+    std::unique_ptr<tls_context, TlsDeleter> tls(default_tls_context("", 0));
     verify_ctx vtx;
-    vtx.tls = tls;
+    vtx.tls = tls.get();
     vtx.data = jwt;
     vtx.datalen = dot - jwt;
     tlsuv_base64url_decode(dot + 1, &vtx.sig, &vtx.siglen);
 
-    tls->set_cert_verify(tls, cert_verify, &vtx);
+    tls->set_cert_verify(tls.get(), cert_verify, &vtx);
     tlsuv_http_init(test.loop, &clt, "https://demo4.ziti.netfoundry.io");
-    tlsuv_http_set_ssl(&clt, tls);
+    tlsuv_http_set_ssl(&clt, tls.get());
 
     tlsuv_http_header(&clt, "Connection", "close");
 
@@ -853,7 +854,6 @@ TEST_CASE("TLS verify with JWT", "[http]") {
     tlsuv_http_close(&clt, nullptr);
 
     free(vtx.sig);
-    tls->free_ctx(tls);
     test.run();
 }
 
@@ -1107,8 +1107,8 @@ TEST_CASE("test req header too big", "[http]") {
 
         test.run();
 
-        REQUIRE(resp.code == UV_ENOMEM);
-        REQUIRE(resp.status == "request header too big");
+        CHECK(resp.code == UV_ENOMEM);
+        CHECK(resp.status == "request header too big");
 
         tlsuv_http_close(&clt, nullptr);
         test.run();
@@ -1196,7 +1196,7 @@ TEST_CASE("url parse", "[http]") {
 }
 
 TEST_CASE("url parse auth", "[http]") {
-    tlsuv_url_s url;
+    tlsuv_url_s url{};
 
     CHECK(tlsuv_parse_url(&url, "https://foo:passwd@host:3128") == 0);
     CHECK(url.username != nullptr);
@@ -1262,19 +1262,18 @@ Aa9mObm9QjQc2wgD80D8EuiuPKuK1ftyeWSm4w5VsTuVP61gM2eKrLanXPDtWlIb
 -----END CERTIFICATE-----
 )";
 
-    auto tls = default_tls_context(ca, strlen(ca));
+    std::unique_ptr<tls_context, TlsDeleter> tls(default_tls_context(ca, strlen(ca)));
     if (tls->allow_partial_chain == nullptr) {
-        tls->free_ctx(tls);
         SKIP("engine always allows partial chains");
         return;
     }
 
+    UvLoopTest t;
 
-    auto loop = uv_loop_new();
     tlsuv_http_t clt{};
-    tlsuv_http_init(loop, &clt, url);
+    tlsuv_http_init(t.loop, &clt, url);
     tlsuv_http_header(&clt, "accept", "application/dns-json");
-    tlsuv_http_set_ssl(&clt, tls);
+    tlsuv_http_set_ssl(&clt, tls.get());
 
 
     struct result_t {
@@ -1288,13 +1287,13 @@ Aa9mObm9QjQc2wgD80D8EuiuPKuK1ftyeWSm4w5VsTuVP61gM2eKrLanXPDtWlIb
                        r->msg = resp->status;
                    },
                    &result);
-    uv_run(loop, UV_RUN_DEFAULT);
+    t.run();
 
     INFO(result.msg);
     CHECK(result.code == UV_ECONNABORTED);
 
     if (tls->allow_partial_chain) {
-        tls->allow_partial_chain(tls, true);
+        tls->allow_partial_chain(tls.get(), true);
     }
 
     tlsuv_http_req(&clt, "GET", req,
@@ -1304,14 +1303,14 @@ Aa9mObm9QjQc2wgD80D8EuiuPKuK1ftyeWSm4w5VsTuVP61gM2eKrLanXPDtWlIb
                        r->msg = resp->status;
                    },
                    &result);
-    uv_run(loop, UV_RUN_DEFAULT);
+    t.run();
 
     // should get HTTP response here
     INFO(result.code << " " << result.msg);
     CHECK(result.code == 200);
 
     tlsuv_http_close(&clt, nullptr);
-    uv_run(loop, UV_RUN_DEFAULT);
+    t.run();
 }
 
 // test for exercising CA store that's
@@ -1326,6 +1325,7 @@ TEST_CASE("old-ca-store", "[http]") {
     auto loop = uv_loop_new();
     tlsuv_http_t clt{};
     tlsuv_http_init(loop, &clt, "https://google.com");
+
     auto tls = default_tls_context(ca_dir, 0);
     tlsuv_http_set_ssl(&clt, tls);
 

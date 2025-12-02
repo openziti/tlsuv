@@ -160,7 +160,7 @@ struct tlsuv_http_s {
     long idle_time;
     uv_timer_t *conn_timer;
 
-    uv_async_t proc;
+    uv_idle_t proc;
     tlsuv_http_req_t *active;
     STAILQ_HEAD(req_q, tlsuv_http_req_s) requests;
 
