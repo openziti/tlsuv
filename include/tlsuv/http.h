@@ -94,6 +94,7 @@ struct tlsuv_http_resp_s {
 
     /** @brief callback called with response body data. May be called multiple times, last one with `len` of `UV_EOF` */
     tlsuv_http_body_cb body_cb;
+    size_t body_bytes;
 };
 
 /**
@@ -108,6 +109,7 @@ struct tlsuv_http_req_s {
     char *query;
     llhttp_t parser;
     enum http_request_state state;
+    bool keepalive;
 
     bool req_chunked;
     ssize_t req_body_size;

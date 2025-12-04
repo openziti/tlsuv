@@ -51,6 +51,22 @@ static void check_read(uv_idle_t *idle);
 
 static tls_context *DEFAULT_TLS = NULL;
 
+static int err_to_uv(int err) {
+#if _WIN32
+    switch (err) {
+    case ECONNREFUSED:
+    case WSAECONNREFUSED: return UV_ECONNREFUSED;
+    case ECONNABORTED:
+    case WSAECONNABORTED: return UV_ECONNABORTED;
+    case ECONNRESET:
+    case WSAECONNRESET: return UV_ECONNRESET;
+    default: return -err;
+    }
+#else
+    return -err;
+#endif
+}
+
 static void free_default_tls(void) {
     if (DEFAULT_TLS) {
         DEFAULT_TLS->free_ctx(DEFAULT_TLS);
@@ -109,7 +125,7 @@ static int start_io(tlsuv_stream_t *clt) {
     }
 
     if (clt->read_cb) {
-        events |= UV_READABLE;
+        events |= (UV_READABLE | UV_DISCONNECT);
     }
 
     if (events != 0) {
@@ -289,7 +305,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     } else {
         TLS_LOG(TRACE, "waiting for handshake data");
         // wait for incoming handshake messages
-        uv_poll_start(&clt->watcher, UV_READABLE, on_clt_io);
+        uv_poll_start(&clt->watcher, UV_READABLE | UV_DISCONNECT, on_clt_io);
     }
 }
 
@@ -461,6 +477,17 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
         return;
     }
 
+    TLS_LOG(TRACE, "processing IO: events=%d status=%d", events, status);
+    if (status == 0) {
+        int err = 0;
+        socklen_t l = sizeof(err);
+        if (getsockopt(clt->sock, SOL_SOCKET, SO_ERROR, (void *)&err, &l) == 0) {
+            status = err_to_uv(err);
+        } else {
+            status = err_to_uv(get_error());
+        }
+    }
+
     if (status != 0) {
         TLS_LOG(WARN, "IO failed: %d/%s", status, uv_strerror(status));
         if (clt->read_cb) {
@@ -476,7 +503,7 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
         process_outbound(clt);
     }
 
-    if (events & UV_READABLE) {
+    if (events & (UV_READABLE | UV_DISCONNECT)) {
         process_inbound(clt);
     }
 
