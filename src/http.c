@@ -29,6 +29,16 @@
 #define CLT_LOG(lvl, fmt, ...) UM_LOG(lvl, "http[%s:%s%s]: " fmt, \
     c->host, c->port, c->prefix ? c->prefix : "", ##__VA_ARGS__)
 
+#define DUMP_REQ(lvl, r, fmt, ...) do {                      \
+UM_LOG(lvl, "req[%s %s%s%s]: " fmt, (r)->method, (r)->path, (r)->query ? "?" : "", (r)->query ? (r)->query : "", ##__VA_ARGS__); \
+UM_LOG(lvl, "status[%d %s] state(%d) body(%zd bytes)", r->resp.code, r->resp.status, r->state, r->resp.body_bytes); \
+tlsuv_http_hdr *h = LIST_FIRST(&(r)->resp.headers);                                                                 \
+while (h) {                                                                                                         \
+    UM_LOG(lvl, "%s: %s", h->name, h->value);                                   \
+    h = LIST_NEXT(h, _next);                                                    \
+}                                                                               \
+} while(0)
+
 extern tls_context *get_default_tls(void);
 
 static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf);
@@ -91,46 +101,57 @@ static void http_read_cb(uv_link_t *link, ssize_t nread, const uv_buf_t *buf) {
 }
 
 static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
-    CLT_LOG(VERB, "read[%zd]", nread);
-    if (nread < 0) {
-        if (c->active) {
-            const char *err = uv_strerror((int)nread);
-            CLT_LOG(ERR, "connection error before active request could complete %zd (%s)", nread, err);
-            fail_active_request(c, (int)nread, err);
-        }
-
-        close_connection(c);
-    } else if (nread > 0) {
-        if (c->active != NULL) {
-            tlsuv_http_req_t *ar = c->active;
-            if (http_req_process(ar, buf->base, nread) < 0) {
-                CLT_LOG(WARN, "failed to parse HTTP response");
-                fail_active_request(c, UV_EINVAL, "failed to parse HTTP response");
-                close_connection(c);
-            }
-
-            if (ar->state == completed) {
-                bool keepalive = c->keepalive;
-                const char *keep_alive_hdr = tlsuv_http_resp_header(&ar->resp, "Connection");
-                if (keep_alive_hdr) {
-                    keepalive = strcasecmp(keep_alive_hdr, "close") != 0;
-                }
-
-                c->active = NULL;
-                http_req_free(ar);
-                tlsuv__free(ar);
-
-                if (keepalive) {
-                    safe_continue(c);
-                } else {
-                    close_connection(c);
-                }
-            }
-         } else {
+    CLT_LOG(TRACE, "read[%zd]", nread);
+    tlsuv_http_req_t *ar = c->active;
+    if (ar == NULL) {
+        if (nread > 0) {
             CLT_LOG(ERR, "received %zd bytes without active request", nread);
         }
+        if (nread == 0) {
+            safe_continue(c);
+        } else {
+            close_connection(c);
+        }
+        if (buf && buf->base) {
+            tlsuv__free(buf->base);
+        }
+        return;
     }
 
+    bool keepalive = nread >= 0;
+    if (nread > 0) {
+        if (http_req_process(ar, buf->base, nread) < 0) {
+            CLT_LOG(ERR, "failed to parse HTTP response");
+            DUMP_REQ(ERR, ar, "failed to parse HTTP response");
+            fail_active_request(c, UV_EINVAL, "failed to parse HTTP response");
+            keepalive = false;
+        } else if (ar->state == completed) {
+            keepalive = c->keepalive && ar->keepalive;
+            c->active = NULL;
+            http_req_free(ar);
+            tlsuv__free(ar);
+        }
+    } else if (nread == UV_EOF) {
+        if (http_req_finish(ar) == 0 && ar->state == completed) {
+            c->active = NULL;
+            http_req_free(ar);
+            tlsuv__free(ar);
+        } else {
+            DUMP_REQ(ERR, ar, "EOF before request could complete");
+            fail_active_request(c, UV_EOF, uv_strerror(UV_EOF));
+        }
+    } else if (nread < 0) {
+        const char *err = uv_strerror((int)nread);
+        CLT_LOG(ERR, "error[%zd/%s] before active request[%s %s] could complete",
+                nread, err, ar->method, ar->path);
+        DUMP_REQ(ERR, ar, "error[%zd/%s] before completion", nread, err);
+        fail_active_request(c, (int)nread, err);
+    }
+    if (keepalive) {
+        safe_continue(c);
+    } else {
+        close_connection(c);
+    }
     if (buf && buf->base) {
         tlsuv__free(buf->base);
     }
@@ -765,6 +786,7 @@ int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, t
         return rc;
     }
 
+    clt->keepalive = true;
     clt->connect_timeout = 0;
     clt->idle_time = DEFAULT_IDLE_TIMEOUT;
     clt->conn_timer = tlsuv__calloc(1, sizeof(uv_timer_t));
@@ -798,6 +820,7 @@ int tlsuv_http_connect_timeout(tlsuv_http_t *clt, long millis) {
 }
 
 int tlsuv_http_idle_keepalive(tlsuv_http_t *clt, long millis) {
+    clt->keepalive = true;
     clt->idle_time = millis;
     return 0;
 }

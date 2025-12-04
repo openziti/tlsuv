@@ -44,6 +44,7 @@ struct UvLoopTest {
             INFO("starting test timer");
             REQUIRE(uv_timer_start(&timer,
                                    [](uv_timer_t *t){
+                                       uv_print_active_handles(t->loop, stderr);
                                        uv_stop(t->loop);
                                        FAIL_CHECK("test exceeded allotted time");
                                    }, secs * 1000, 0) == 0);
