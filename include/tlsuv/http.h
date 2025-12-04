@@ -109,7 +109,7 @@ struct tlsuv_http_req_s {
     char *query;
     llhttp_t parser;
     enum http_request_state state;
-    boolean_t keepalive;
+    bool keepalive;
 
     bool req_chunked;
     ssize_t req_body_size;
