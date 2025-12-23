@@ -640,6 +640,10 @@ static void set_io(tlsuv_engine_t self, io_ctx io, io_read rdf, io_write wrtf) {
 #ifdef SSL_OP_ENABLE_KTLS
     SSL_clear_options(e->ssl, SSL_OP_ENABLE_KTLS);
 #endif
+#ifdef SSL_OP_IGNORE_UNEXPECTED_EOF
+    // treat unexpected EOF like normal TLS shutdown (close notify)
+    SSL_set_options(e->ssl, SSL_OP_IGNORE_UNEXPECTED_EOF);
+#endif
     e->bio = BIO_new(BIO_s_engine());
     BIO_set_data(e->bio, e);
     BIO_set_init(e->bio, true);
