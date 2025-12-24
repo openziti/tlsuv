@@ -27,6 +27,7 @@
 #define ioctl(s,o,v) ioctlsocket(s,o,(u_long*)v)
 #define get_error() WSAGetLastError()
 #else
+#define INVALID_SOCKET (-1)
 #define closesocket(s) close(s)
 #define get_error() errno
 #include <sys/ioctl.h>
@@ -43,7 +44,7 @@
 #endif
 
 #define MAX_INBOUND_ITERATIONS 16
-#define TLS_LOG(lvl, fmt, ...) UM_LOG(lvl, "tls[%s]" fmt, clt->host, ##__VA_ARGS__)
+#define TLS_LOG(lvl, fmt, ...) UM_LOG(lvl, "tls[%s@%p]" fmt, clt->host, clt, ##__VA_ARGS__)
 
 static void on_clt_io(uv_poll_t *, int, int);
 static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
@@ -102,6 +103,7 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
     clt->read_cb = NULL;
     clt->alloc_cb = NULL;
     clt->queue_len = 0;
+    clt->sock = INVALID_SOCKET;
     TAILQ_INIT(&clt->queue);
 
     return 0;
@@ -157,6 +159,7 @@ static void on_internal_close(uv_handle_t *h) {
     fail_pending_reqs(clt, UV_ECANCELED);
 
     tlsuv_stream_free(clt);
+    closesocket(clt->sock);
 
     if (clt->close_cb) {
         clt->close_cb((uv_handle_t *) clt);
@@ -192,10 +195,6 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
         clt->tls_engine->close(clt->tls_engine);
     }
 
-    if (clt->watcher.type == UV_POLL) {
-        uv_poll_stop(&clt->watcher);
-        closesocket(clt->sock);
-    }
     uv_close((uv_handle_t *) &clt->watcher, on_internal_close);
 
     return 0;
