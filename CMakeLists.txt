@@ -63,6 +63,7 @@ set(tlsuv_sources
         src/socket.c
         src/util.h
         src/connector.c
+        src/url.c
         src/alloc.c
         src/keychain.c
 )
@@ -164,6 +165,7 @@ if (APPLE)
 endif (APPLE)
 
 if (TLSUV_HTTP)
+    target_compile_definitions(tlsuv PUBLIC TLSUV_HTTP)
 
     add_subdirectory(deps)
     target_link_libraries(tlsuv PUBLIC uv_link)

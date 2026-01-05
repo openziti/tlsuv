@@ -26,18 +26,22 @@
 #include "queue.h"
 #include "tls_engine.h"
 
+#include "connector.h"
+
+#ifdef TLSUV_HTTP
 #include <llhttp.h>
 #include <uv_link_t.h>
 
-#include "connector.h"
 #include "src_t.h"
 #include "tls_link.h"
+#endif
 
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#ifdef TLSUV_HTTP
 /**
  * HTTP Header struct.
  */
@@ -387,6 +391,7 @@ int tlsuv_http_cancel_all(tlsuv_http_t *clt);
  * @return value of the header or NULL
  */
 const char *tlsuv_http_resp_header(tlsuv_http_resp_t *resp, const char *name);
+#endif /* TLSUV_HTTP */
 
 /**
  * parsed URL
