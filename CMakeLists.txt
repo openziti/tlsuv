@@ -153,7 +153,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 target_link_libraries(tlsuv
-        PRIVATE ${TLSUV_LIBUV_LIB}
+        PUBLIC ${TLSUV_LIBUV_LIB}
         PRIVATE ${TLSUV_TLSLIB}-impl
 )
 
