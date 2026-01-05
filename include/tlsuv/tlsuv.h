@@ -165,6 +165,7 @@ struct tlsuv_stream_s {
     tls_context *tls;
     tlsuv_engine_t tls_engine;
 
+    int authmode;
     int alpn_count;
     const char **alpn_protocols;
 
