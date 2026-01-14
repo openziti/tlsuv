@@ -16,6 +16,7 @@ jobs:
   ziti-webhook:
     runs-on: ubuntu-latest
     name: Ziti Mattermost Action - Py
+    if: github.repository == 'openziti/tlsuv'
     steps:
     - uses: openziti/ziti-mattermost-action-py@v1
       if: github.event_name != 'pull_request_review'
@@ -32,4 +33,3 @@ jobs:
         webhookUrl: ${{ secrets.ZHOOK_URL_DEV_NOTIFICATIONS }}
         eventJson: ${{ toJson(github.event) }}
         senderUsername: "GitHubZ"
-
