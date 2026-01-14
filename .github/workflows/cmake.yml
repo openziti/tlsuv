@@ -12,7 +12,7 @@ on:
 
 jobs:
   build:
-    name: ${{ matrix.target }}-${{ matrix.tls }}
+    name: ${{ matrix.target }}-${{ matrix.tls }}${{ matrix.http == 'OFF' && '-nohttp' || '' }}
     runs-on: ${{ matrix.image }}-latest
     env:
       CI_CACHE: '${{ github.workspace }}/.ci.cache'
@@ -28,33 +28,47 @@ jobs:
           - image: ubuntu
             tls: openssl
             target: x64-linux
+            http: ON
+          - image: ubuntu
+            tls: openssl
+            target: x64-linux
+            http: OFF
           - image: ubuntu
             tls: mbedtls
             target: x64-linux
+            http: ON
           - image: macOS
             tls: openssl
             target: arm64-osx
+            http: ON
           - image: macOS
             tls: mbedtls
             target: arm64-osx
+            http: ON
           - image: windows
             tls: openssl
             target: x64-windows-static-md
+            http: ON
           - image: windows
             tls: mbedtls
             target: x64-windows-static-md
+            http: ON
           - image: windows
             tls: win32crypto
             target: x64-windows-static-md
+            http: ON
           - image: windows
             tls: win32crypto
             target: x86-windows-static-md
+            http: ON
           - image: windows
             tls: openssl
             target: x64-mingw-static
+            http: ON
           - image: windows
             tls: win32crypto
             target: x64-mingw-static
+            http: ON
 
     steps:
     - name: Install tools
@@ -105,7 +119,7 @@ jobs:
       name: Configure build
       with:
         configurePreset: ${{ matrix.target }}
-        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}`, `-DVCPKG_MANIFEST_FEATURES='test;samples;${{ matrix.tls }}'` ]"
+        configurePresetAdditionalArgs: "[ `-DTLSUV_TLSLIB=${{ matrix.tls }}`, `-DTLSUV_HTTP=${{ matrix.http }}`, `-DVCPKG_MANIFEST_FEATURES='test;samples;${{ matrix.tls }}'` ]"
 
     - name: Build
       id: build
@@ -160,5 +174,5 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.target }}-${{ matrix.tls }}-TestReport
+        name: ${{ matrix.target }}-${{ matrix.tls }}${{ matrix.http == 'OFF' && '-nohttp' || '' }}-TestReport
         path: ${{ github.workspace }}/build/Testing/
