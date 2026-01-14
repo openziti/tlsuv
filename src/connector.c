@@ -40,9 +40,9 @@
 #define closesocket(s) close(s)
 #define in_progress(e) ((e) == EINPROGRESS || (e) == EWOULDBLOCK)
 
-#include <unistd.h>
 #include <string.h>
 #include <sys/poll.h>
+#include <unistd.h>
 
 #endif
 
@@ -335,10 +335,16 @@ void direct_cancel(tlsuv_connector_req req) {
     // try to cancel resolve/connect request before it started
     uv_cancel((uv_req_t *) &cr->resolve);
     cr->error = UV_ECANCELED;
-    for (int i = 0; i < max_connect_socks; i++) {
+    for (int i = 0; i < cr->count; i++) {
         uv_handle_t *h = (uv_handle_t*)&cr->polls[i];
         if (h->type == UV_POLL && !uv_is_closing(h)) {
+            uv_os_sock_t sock = INVALID_SOCKET;
+            int rc = uv_fileno(h, (uv_os_fd_t *)&sock);
             uv_close(h, on_poll_close);
+            if (rc == 0) {
+                CR_LOG(TRACE, "closing fd[%ld]", (long)sock);
+                closesocket(sock);
+            }
         }
     }
 }
