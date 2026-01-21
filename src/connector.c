@@ -199,6 +199,21 @@ static void on_poll_close(uv_handle_t *h) {
     }
 }
 
+static void close_poll_handle(struct conn_req_s *cr, uv_handle_t *poll) {
+    if (poll->type != UV_POLL || uv_is_closing(poll)) {
+        return;
+    }
+
+    uv_os_sock_t s = INVALID_SOCKET;
+    int rc = uv_fileno(poll, (uv_os_fd_t *) &s);
+    uv_close(poll, on_poll_close);
+
+    if (rc == 0) {
+        CR_LOG(TRACE, "closing fd[%ld]", (long) s);
+        closesocket(s);
+    }
+}
+
 static void on_connect_poll(uv_poll_t *p, int status, int events) {
     struct conn_req_s *cr = p->data;
     uv_os_sock_t sock = INVALID_SOCKET;
@@ -240,14 +255,7 @@ static void on_connect_poll(uv_poll_t *p, int status, int events) {
 
     for (int i = 0; i < cr->count; i++) {
         uv_handle_t *h = (uv_handle_t*)&cr->polls[i];
-        if (cr->polls[i].type == UV_POLL && !uv_is_closing(h)) {
-            uv_close(h, on_poll_close);
-            uv_os_sock_t s = -1;
-            if (uv_fileno(h, (uv_os_fd_t*)&s) == 0) {
-                CR_LOG(TRACE, "closing fd[%ld]", (long)s);
-                closesocket(s);
-            }
-        }
+        close_poll_handle(cr, h);
     }
 }
 
@@ -337,15 +345,7 @@ void direct_cancel(tlsuv_connector_req req) {
     cr->error = UV_ECANCELED;
     for (int i = 0; i < cr->count; i++) {
         uv_handle_t *h = (uv_handle_t*)&cr->polls[i];
-        if (h->type == UV_POLL && !uv_is_closing(h)) {
-            uv_os_sock_t sock = INVALID_SOCKET;
-            int rc = uv_fileno(h, (uv_os_fd_t *)&sock);
-            uv_close(h, on_poll_close);
-            if (rc == 0) {
-                CR_LOG(TRACE, "closing fd[%ld]", (long)sock);
-                closesocket(sock);
-            }
-        }
+        close_poll_handle(cr, h);
     }
 }
 
