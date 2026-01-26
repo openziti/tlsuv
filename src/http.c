@@ -85,13 +85,21 @@ static const char *supported_alpn[] = {
 static const int supported_apln_num = sizeof(supported_alpn)/ sizeof(*supported_alpn);
 
 static void tr_alloc_cb(uv_handle_t *s, size_t suggested_size, uv_buf_t *buf) {
+    tlsuv_http_t *clt = (tlsuv_http_t *) s->data;
+    assert(clt != NULL);
+    assert(clt->tr == (uv_handle_t*)s);
+
     *buf = uv_buf_init(tlsuv__malloc(suggested_size), suggested_size);
 }
 
 static void tr_read_cb(uv_stream_t *s, ssize_t nread, const uv_buf_t *buf) {
     tlsuv_http_t *clt = (tlsuv_http_t *) s->data;
     if (clt != NULL) {
+        assert(clt->tr == (uv_handle_t*)s);
         clt_read_cb(clt, nread, buf);
+    } else {
+        UM_LOG(WARN, "read on disconnected handle");
+        tlsuv__free(buf->base);
     }
 }
 
@@ -563,9 +571,10 @@ static void close_connection1(tlsuv_http_t *c, const char *src_fn, int src_line)
     }
 
     if (c->tr) {
-        c->tr->data = NULL;
-        c->tr_close(c->tr, (uv_close_cb) tlsuv__free);
+        uv_handle_t *tr = c->tr;
         c->tr = NULL;
+        tr->data = NULL;
+        c->tr_close(tr, (uv_close_cb) tlsuv__free);
     }
 
     if (c->src) {
