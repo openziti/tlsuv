@@ -176,8 +176,6 @@ if (APPLE)
 endif (APPLE)
 
 if (TLSUV_HTTP)
-    target_compile_definitions(tlsuv PUBLIC TLSUV_HTTP)
-
     add_subdirectory(deps)
     target_link_libraries(tlsuv PUBLIC uv_link)
 
