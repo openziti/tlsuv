@@ -13,6 +13,6 @@
 #cmakedefine TLSUV_TLSLIB ${TLSUV_TLSLIB}
 
 /** built with HTTP support */
-#cmakedefine01 TLSUV_HTTP
+#cmakedefine TLSUV_HTTP
 
 #endif // tlsuv_CONFIG_H
