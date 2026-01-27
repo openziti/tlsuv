@@ -52,6 +52,11 @@ if (TLSUV_ASAN)
     add_link_options(-fsanitize=address)
 endif ()
 
+configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/config.h.in
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/tlsuv/config.h
+)
+
 set(tlsuv_sources
         src/tlsuv.c
         src/um_debug.c
@@ -126,10 +131,10 @@ target_include_directories(tlsuv
         PUBLIC
         $<INSTALL_INTERFACE:include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
         PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        )
+)
 
 target_compile_definitions(tlsuv PRIVATE
         TLSUV_VERSION=v${PROJECT_VERSION}
@@ -192,8 +197,10 @@ if (TLSUV_HTTP)
 endif (TLSUV_HTTP)
 
 install(DIRECTORY include/tlsuv DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/generated/tlsuv DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(TARGETS tlsuv
-        ARCHIVE DESTINATION lib)
+        ARCHIVE DESTINATION lib
+)
 
 
 if(PROJECT_IS_TOP_LEVEL)

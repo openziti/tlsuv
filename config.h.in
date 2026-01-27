@@ -1,0 +1,18 @@
+
+#pragma once
+
+#ifndef tlsuv_CONFIG_H
+#define tlsuv_CONFIG_H
+
+#cmakedefine tlsuv_VERSION_MAJOR ${PROJECT_VERSION_MAJOR}
+#cmakedefine tlsuv_VERSION_MINOR ${PROJECT_VERSION_MINOR}
+#cmakedefine tlsuv_VERSION_PATCH ${PROJECT_VERSION_PATCH}
+#cmakedefine tlsuv_VERSION "${tlsuv_VERSION}"
+
+/** TLS backend */
+#cmakedefine TLSUV_TLSLIB ${TLSUV_TLSLIB}
+
+/** built with HTTP support */
+#cmakedefine01 TLSUV_HTTP
+
+#endif // tlsuv_CONFIG_H
