@@ -22,6 +22,9 @@
 #ifndef TLSUV_HTTP_H
 #define TLSUV_HTTP_H
 
+#include <tlsuv/config.h>
+
+
 #include <stdbool.h>
 #include "queue.h"
 #include "tls_engine.h"

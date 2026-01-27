@@ -5,7 +5,6 @@ endif()
 message(NOTICE "TLSUV_HTTP = ${TLSUV_HTTP}")
 
 add_library(common OBJECT common.c)
-target_compile_definitions(common PUBLIC $<$<BOOL:${TLSUV_HTTP}>:TLSUV_HTTP>)
 target_link_libraries(common PUBLIC tlsuv)
 if (MSVC)
     target_link_libraries(common PRIVATE unofficial::getopt-win32::getopt)

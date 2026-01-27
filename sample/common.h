@@ -13,8 +13,10 @@
 // limitations under the License.
 
 
-#ifndef UV_MBED_COMMON_H
-#define UV_MBED_COMMON_H
+#ifndef TLSUV_SAMPLE_COMMON_H
+#define TLSUV_SAMPLE_COMMON_H
+
+#include <tlsuv/config.h>
 
 #if defined(TLSUV_HTTP)
 #include <tlsuv/http.h>
@@ -25,4 +27,4 @@ void body_cb(tlsuv_http_req_t *req, char *body, ssize_t len);
 
 void logger(int level, const char *file, unsigned int line, const char *msg);
 
-#endif //UV_MBED_COMMON_H
+#endif //TLSUV_SAMPLE_COMMON_H
