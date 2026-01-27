@@ -317,7 +317,7 @@ static int tls_write_shim(uv_write_t *r, uv_handle_t *s, uv_buf_t *b, int n, uv_
 
 static void on_tls_connect(uv_connect_t *req, int status) {
     tlsuv_http_t *c = req->data;
-    tlsuv_stream_t *s = (tlsuv_stream_t *) req->handle;
+    tlsuv_stream_t *s = (tlsuv_stream_t*)c->tr;
 
     tlsuv__free(req);
 
@@ -325,8 +325,10 @@ static void on_tls_connect(uv_connect_t *req, int status) {
         CLT_LOG(ERR, "failed to open TLS on socket: %s", uv_strerror(status));
         c->connected = Disconnected;
         c->tr = NULL;
-        if (status != UV_ECANCELED) { // close was alrady called
-            tlsuv_stream_close(s, (uv_close_cb) tlsuv__free);
+        s->data = NULL;
+        int rc = tlsuv_stream_close(s, (uv_close_cb) tlsuv__free);
+        if (rc != 0) {
+            CLT_LOG(WARN, "failed to close TLS stream: %s", uv_strerror(rc));
         }
         fail_all_requests(c, status, uv_strerror(status));
         safe_continue(c);
@@ -334,10 +336,14 @@ static void on_tls_connect(uv_connect_t *req, int status) {
     }
 
     CLT_LOG(VERB, "TLS handshake completed");
-    c->tr = (uv_handle_t*)s;
-    tlsuv_stream_read_start(s, tr_alloc_cb, tr_read_cb);
-    c->connected = Connected;
-    safe_continue(c);
+    status = tlsuv_stream_read_start(s, tr_alloc_cb, tr_read_cb);
+    if (status == 0) {
+        c->connected = Connected;
+        safe_continue(c);
+        return;
+    }
+    CLT_LOG(ERR, "failed to start reading from TLS stream: %s", uv_strerror(status));
+    close_connection(c);
 }
 
 static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
@@ -350,7 +356,6 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
         tlsuv_stream_t *s = tlsuv__calloc(1, sizeof(tlsuv_stream_t));
         tlsuv_stream_init(c->proc.loop, s, c->tls ? c->tls : get_default_tls());
         s->data = c;
-        c->tr = (uv_handle_t*)s;
         // set close callback now incase it is needed when the connection fails
         c->tr_close = (void (*)(uv_handle_t *, uv_close_cb)) tlsuv_stream_close;
         c->tr_write = tls_write_shim;
@@ -360,9 +365,12 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
         cr->data = c;
         tlsuv_stream_set_protocols(s, supported_apln_num, supported_alpn);
         CLT_LOG(VERB, "starting TLS handshake");
+        c->tr = (uv_handle_t*)s;
+        c->connected = Handshaking;
         status = tlsuv_stream_open(cr, s, sock, on_tls_connect);
         if (status != 0) {
             CLT_LOG(WARN, "failed to start TLS on socket: %s", uv_strerror(status));
+            c->tr = NULL;
             tlsuv__free(cr);
             tlsuv_stream_free(s);
             tlsuv__free(s);
@@ -432,23 +440,8 @@ static void src_connect_timeout(uv_timer_t *t) {
         return;
     }
 
-    c->connected = Disconnected;
     fail_all_requests(c, UV_ETIMEDOUT, uv_strerror(UV_ETIMEDOUT));
-
-    if (c->connect_req) {
-        const tlsuv_connector_t *connector = c->connector ? c->connector : tlsuv_global_connector();
-        connector->cancel(c->connect_req);
-        c->connect_req = NULL;
-    }
-
-    if (c->tr) {
-        uv_handle_t *tr = c->tr;
-        c->tr = NULL;
-
-        tr->data = NULL;
-        c->tr_close(tr, (uv_close_cb) tlsuv__free);
-    }
-    safe_continue(c);
+    close_connection(c);
 }
 
 static void req_write_cb(int status, void *arg) {
@@ -619,6 +612,9 @@ static void process_requests(uv_idle_t *ar) {
     }
 
     if (c->connected == Disconnected) {
+        assert(c->tr == NULL);
+        assert(c->connect_req == NULL);
+
         c->connected = Connecting;
         CLT_LOG(VERB, "client not connected, starting connect sequence timeout[%ld]", c->connect_timeout);
         if (c->connect_timeout > 0) {
