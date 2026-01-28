@@ -361,7 +361,7 @@ static int apple_ca_verify(int pre_verify, X509_STORE_CTX *st) {
         CFRelease(d);
         CFRelease(c);
     }
-    sk_X509_free(chain);
+    sk_X509_pop_free(chain, X509_free);
 
     SecTrustRef trust;
     SecPolicyRef policy = SecPolicyCreateBasicX509();
