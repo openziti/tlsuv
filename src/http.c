@@ -317,8 +317,21 @@ static int tls_write_shim(uv_write_t *r, uv_handle_t *s, uv_buf_t *b, int n, uv_
 
 static void on_tls_connect(uv_connect_t *req, int status) {
     tlsuv_http_t *c = req->data;
-    tlsuv_stream_t *s = (tlsuv_stream_t*)c->tr;
+    tlsuv_stream_t *s = (tlsuv_stream_t*)req->handle;
+    assert(s);
 
+    if (status == UV_ECANCELED) {
+        // http client called close before handshake could complete
+        // http client may already be gone
+        assert(s->data == NULL); // http client should have cleared it
+        UM_LOG(WARN, "http[%s] TLS handshake was canceled", s->host);
+        tlsuv__free(req);
+        return;
+    }
+
+    // make sure everything aligns: http client <-> tlsuv stream <-> connect req
+    assert(c == s->data);
+    assert(c->tr == (uv_handle_t*)s);
     tlsuv__free(req);
 
     if (status < 0) {
@@ -887,7 +900,7 @@ int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, con
     if (r == req || req == clt->active) { // req is in the queue
         if (req == clt->active) {
             clt->active = NULL;
-            // since active request is being cancelled we don't want to consume what's left on the wire for it
+            // since active request is being canceled we don't want to consume what's left on the wire for it
             // and need to close connection
             close_connection(clt);
         } else {
