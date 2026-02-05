@@ -106,6 +106,7 @@ struct mbedtls_engine {
 };
 
 static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** protos, int len);
+static void mbedtls_set_authmode(tlsuv_engine_t engine, int authmode);
 static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certificate_t cert);
 
 tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host);
@@ -185,6 +186,7 @@ static struct tlsuv_engine_s mbedtls_engine_api = {
         .set_io = mbedtls_set_io,
         .set_io_fd = mbedtls_set_fd,
         .set_protocols = mbedtls_set_alpn_protocols,
+        .set_authmode = mbedtls_set_authmode,
         .handshake_state = mbedtls_hs_state,
         .handshake = mbedtls_continue_hs,
         .get_alpn = mbedtls_get_alpn,
@@ -707,6 +709,11 @@ static void mbedtls_set_fd(tlsuv_engine_t e, uv_os_fd_t fd) {
     eng->io_fd = fd;
     eng->io = &eng->io_fd;
     mbedtls_ssl_set_bio(eng->ssl, eng->io, mbedtls_net_send, mbedtls_net_recv, NULL);
+}
+
+static void mbedtls_set_authmode(tlsuv_engine_t engine, int authmode) {
+    struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
+    mbedtls_ssl_conf_authmode(&eng->config, authmode);
 }
 
 static tls_handshake_state mbedtls_hs_state(tlsuv_engine_t engine) {
