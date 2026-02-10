@@ -26,8 +26,8 @@
 #include "tlsuv/tlsuv.h"
 
 #define DEFAULT_IDLE_TIMEOUT 0
-#define CLT_LOG(lvl, fmt, ...) UM_LOG(lvl, "http[%s:%s%s]: " fmt, \
-    c->host, c->port, c->prefix ? c->prefix : "", ##__VA_ARGS__)
+#define CLT_LOG(lvl, fmt, ...) UM_LOG(lvl, "http[%s:%s%s](%p): " fmt, \
+    c->host, c->port, c->prefix ? c->prefix : "", c, ##__VA_ARGS__)
 
 #define DUMP_REQ(lvl, r, fmt, ...) do {                      \
 UM_LOG(lvl, "req[%s %s%s%s]: " fmt, (r)->method, (r)->path, (r)->query ? "?" : "", (r)->query ? (r)->query : "", ##__VA_ARGS__); \
@@ -334,34 +334,39 @@ static void on_tls_connect(uv_connect_t *req, int status) {
     assert(c->tr == (uv_handle_t*)s);
     tlsuv__free(req);
 
+    uv_timer_stop(c->conn_timer);
+
     if (status < 0) {
-        CLT_LOG(ERR, "failed to open TLS on socket: %s", uv_strerror(status));
+        CLT_LOG(ERR, "handshake failed on TLS stream[%p]: %s", s, uv_strerror(status));
         c->connected = Disconnected;
         c->tr = NULL;
         s->data = NULL;
         int rc = tlsuv_stream_close(s, (uv_close_cb) tlsuv__free);
         if (rc != 0) {
-            CLT_LOG(WARN, "failed to close TLS stream: %s", uv_strerror(rc));
+            CLT_LOG(WARN, "failed to close TLS stream[%p]: %s", s, uv_strerror(rc));
         }
         fail_all_requests(c, status, uv_strerror(status));
         safe_continue(c);
         return;
     }
 
-    CLT_LOG(VERB, "TLS handshake completed");
+    CLT_LOG(VERB, "handshake completed on TLS stream[%p]", s);
     status = tlsuv_stream_read_start(s, tr_alloc_cb, tr_read_cb);
     if (status == 0) {
         c->connected = Connected;
         safe_continue(c);
         return;
     }
-    CLT_LOG(ERR, "failed to start reading from TLS stream: %s", uv_strerror(status));
+    CLT_LOG(ERR, "failed to start reading from TLS stream[%p]: %s", s, uv_strerror(status));
     close_connection(c);
 }
 
 static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
     tlsuv_http_t *c = ctx;
-    CLT_LOG(DEBG, "tr_connect_cb status = %d", status);
+    assert(c->tr == NULL);
+    assert(c->connected == Connecting);
+
+    CLT_LOG(DEBG, "tr_connect_cb sock[%ld] status = %d", (long)sock, status);
     c->connect_req = NULL;
     if (status < 0) goto on_error;
 
@@ -389,6 +394,7 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
             tlsuv__free(s);
             goto on_error;
         }
+        CLT_LOG(TRACE, "created TLS tr[%p] with fd[%ld]", s, (long) sock);
     } else {
         uv_tcp_t *tcp = tlsuv__calloc(1, sizeof(uv_tcp_t));
         uv_tcp_init(c->proc.loop, tcp);
@@ -398,6 +404,7 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
             goto on_error;
         }
 
+        uv_timer_stop(c->conn_timer);
         tcp->data = c;
         c->tr = (uv_handle_t*)tcp;
         c->tr_close = uv_close;
@@ -405,9 +412,11 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
         uv_read_start((uv_stream_t*)tcp, tr_alloc_cb, tr_read_cb);
         c->connected = Connected;
         safe_continue(c);
+        CLT_LOG(TRACE, "created TCP tr[%p] with fd[%ld]", tcp, (long) sock);
     }
     return;
 on_error:
+    uv_timer_stop(c->conn_timer);
     CLT_LOG(ERR, "connection failed: %s", uv_strerror(status));
     c->connected = Disconnected;
     fail_all_requests(c, status, uv_strerror(status));
@@ -639,6 +648,7 @@ static void process_requests(uv_idle_t *ar) {
                 src_connect_cb(c->src, rc, c);
             }
         } else {
+            CLT_LOG(VERB, "staring connect");
             const tlsuv_connector_t *connector = c->connector ? c->connector : tlsuv_global_connector();
             c->connect_req = connector->connect(c->proc.loop, connector, c->host, c->port, tr_connect_cb, c);
         }
@@ -871,7 +881,7 @@ tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const ch
     }
 
     STAILQ_INSERT_TAIL(&clt->requests, r, _next);
-    if (clt->conn_timer != NULL) {
+    if (clt->conn_timer != NULL && clt->conn_timer->timer_cb == idle_timeout) {
         uv_timer_stop(clt->conn_timer);
     }
     uv_ref((uv_handle_t *) &clt->proc);
