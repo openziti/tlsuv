@@ -362,6 +362,12 @@ static void on_tls_connect(uv_connect_t *req, int status) {
 }
 
 static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
+    if (status == UV_ECANCELED) {
+        // clean up for this connector request should've already been handled
+        // avoid messing up the next connection attempt
+        return;
+    }
+
     tlsuv_http_t *c = ctx;
     assert(c->tr == NULL);
     assert(c->connected == Connecting);

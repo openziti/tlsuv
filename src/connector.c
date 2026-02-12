@@ -339,7 +339,6 @@ tlsuv_connector_req direct_connect(uv_loop_t *loop, const tlsuv_connector_t *sel
 void direct_cancel(tlsuv_connector_req req) {
     struct conn_req_s *cr = (struct conn_req_s *) req;
     CR_LOG(VERB, "cancelling");
-    cr->cb = NULL;
 
     // try to cancel resolve/connect request before it started
     uv_cancel((uv_req_t *) &cr->resolve);
