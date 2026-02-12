@@ -502,15 +502,14 @@ static void tr_write_cb(uv_write_t *req, int status) {
 static void clt_write(tlsuv_http_t *clt, uv_buf_t *buf, void(*cb)(int,void*), void *arg) {
     assert(clt->src || clt->tr);
 
-    struct tr_write_req_s *wr = tlsuv__calloc(1, sizeof(*wr));
-    wr->cb = cb;
-    wr->arg = arg;
-
     if (clt->src) {
         uv_link_write(&clt->http_link, buf, 1, NULL, link_write_cb, arg);
     }
 
     if (clt->tr) {
+        struct tr_write_req_s *wr = tlsuv__calloc(1, sizeof(*wr));
+        wr->cb = cb;
+        wr->arg = arg;
         clt->tr_write((uv_write_t*)wr, clt->tr, buf, 1, tr_write_cb);
     }
 }
