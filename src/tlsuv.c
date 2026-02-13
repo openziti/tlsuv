@@ -43,6 +43,14 @@
 #define TLSUV_VERS "<unknown>"
 #endif
 
+#if defined(USE_MBEDTLS)
+#define TLSUV_VERIFY_NONE 0
+#define TLSUV_VERIFY_REQUIRED 2
+#elif defined(USE_OPENSSL) || defined(USE_WIN32CRYPTO)
+#define TLSUV_VERIFY_NONE 0x00
+#define TLSUV_VERIFY_REQUIRED 0x01
+#endif
+
 #define MAX_INBOUND_ITERATIONS 16
 #define TLS_LOG(lvl, fmt, ...) UM_LOG(lvl, "tls[%s@%p]" fmt, clt->host, clt, ##__VA_ARGS__)
 
@@ -104,6 +112,7 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
     clt->alloc_cb = NULL;
     clt->queue_len = 0;
     clt->sock = INVALID_SOCKET;
+    clt->authmode = TLSUV_VERIFY_REQUIRED;
     TAILQ_INIT(&clt->queue);
 
     return 0;
@@ -283,6 +292,9 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
             clt->tls_engine->set_protocols(clt->tls_engine, clt->alpn_protocols, clt->alpn_count);
         }
         clt->tls_engine->set_io_fd(clt->tls_engine, (tlsuv_sock_t) clt->sock);
+        if (clt->tls_engine->set_authmode) {
+            clt->tls_engine->set_authmode(clt->tls_engine, clt->authmode);
+        }
     }
 
     int rc = clt->tls_engine->handshake(clt->tls_engine);
