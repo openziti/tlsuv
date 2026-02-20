@@ -518,7 +518,11 @@ static void clt_write(tlsuv_http_t *clt, uv_buf_t *buf, void(*cb)(int,void*), vo
     assert(clt->src || clt->tr);
 
     if (clt->src) {
-        uv_link_write(&clt->http_link, buf, 1, NULL, link_write_cb, arg);
+        // Fix: wrap callback in tr_write_req_s like the clt->tr path does
+        struct tr_write_req_s *wr = tlsuv__calloc(1, sizeof(*wr));
+        wr->cb = cb;
+        wr->arg = arg;
+        uv_link_write(&clt->http_link, buf, 1, NULL, link_write_cb, wr);
     }
 
     if (clt->tr) {
