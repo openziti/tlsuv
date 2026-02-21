@@ -534,7 +534,7 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
     ptr += sizeof(mask);
 
     if (ping_data != NULL && len > 0) {
-        for (size_t i = 0; i < buf.len; i++) {
+        for (size_t i = 0; i < (size_t)len; i++) {
             *((char*)ptr + i) = (char)(mask[i % 4] ^ *(ping_data + i));
         }
     }
@@ -549,6 +549,46 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
     if (ws->tr) {
         ws->tr_write((uv_write_t*)ws_wreq, ws->tr, &buf, 1, ws_tr_write_cb);
     }
+}
+
+int tlsuv_websocket_ping(tlsuv_websocket_t *ws) {
+    if (ws == NULL) {
+        return UV_EINVAL;
+    }
+
+    UM_LOG(TRACE, "sending ping frame");
+    uint8_t mask[4];
+    uv_buf_t buf;
+    // Ping frame with no payload: FIN + opcode (1 byte), mask bit + len=0 (1 byte), mask (4 bytes)
+    buf.len = 2 + sizeof(mask);
+    buf.base = tlsuv__malloc(buf.len);
+    if (buf.base == NULL) {
+        return UV_ENOMEM;
+    }
+
+    buf.base[0] = WS_FIN | OpCode_Ping;
+    buf.base[1] = (char)(WS_MASK | 0);  // masked, zero-length payload
+
+    char *ptr = buf.base + 2;
+    uv_random(NULL, NULL, mask, sizeof(mask), 0, NULL);
+    memcpy(ptr, mask, sizeof(mask));
+
+    ws_write_t *ws_wreq = tlsuv__calloc(1, sizeof(ws_write_t));
+    if (ws_wreq == NULL) {
+        tlsuv__free(buf.base);
+        return UV_ENOMEM;
+    }
+    ws_wreq->r.data = buf.base;
+
+    if (ws->src) {
+        uv_link_write(&ws->ws_link, &buf, 1, NULL, ws_write_cb, ws_wreq);
+    }
+
+    if (ws->tr) {
+        ws->tr_write((uv_write_t*)ws_wreq, ws->tr, &buf, 1, ws_tr_write_cb);
+    }
+
+    return 0;
 }
 
 static void on_ws_close(tlsuv_websocket_t *ws) {
