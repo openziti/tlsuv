@@ -99,6 +99,13 @@ struct tlsuv_engine_s {
      */
     void (*set_protocols)(tlsuv_engine_t self, const char **protocols, int len);
 
+    /**
+     * set TLS engine authmode
+     * @param self engine
+     * @param authmode TLSUV_VERIFY_NONE or TLSUV_VERIFY_REQUIRED
+     */
+    void (*set_authmode)(tlsuv_engine_t self, int authmode);
+
     tls_handshake_state (*handshake_state)(tlsuv_engine_t self);
 
     /**
