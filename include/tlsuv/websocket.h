@@ -107,6 +107,13 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
 int tlsuv_websocket_write(uv_write_t *req, tlsuv_websocket_t *ws, uv_buf_t *buf, uv_write_cb cb);
 
 /**
+ * @brief send a ping frame to the websocket server
+ * @param ws websocket
+ * @return 0 on success, error code on failure
+ */
+int tlsuv_websocket_ping(tlsuv_websocket_t *ws);
+
+/**
  * @brief close websocket
  * @param ws websocket
  * @param cb callback called after close operation completes
