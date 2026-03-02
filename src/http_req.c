@@ -1,16 +1,16 @@
-// Copyright (c) NetFoundry Inc.
+// Copyright (c) 2026.  NetFoundry Inc
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// 	Licensed under the Apache License, Version 2.0 (the "License");
+// 	you may not use this file except in compliance with the License.
+// 	You may obtain a copy of the License at
 //
-//     https://www.apache.org/licenses/LICENSE-2.0
+// 	https://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 	Unless required by applicable law or agreed to in writing, software
+// 	distributed under the License is distributed on an "AS IS" BASIS,
+// 	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// 	See the License for the specific language governing permissions and
+// 	limitations under the License.
 
 #include "alloc.h"
 #include "http_req.h"
@@ -301,7 +301,7 @@ void remove_http_header(um_header_list* hl, const char* name) {
     tlsuv_http_hdr* h = LIST_FIRST(hl);
     while (h != NULL) {
         tlsuv_http_hdr* n = LIST_NEXT(h, _next);
-        if (strcmp(h->name, name) == 0) {
+        if (strcasecmp(h->name, name) == 0) {
             LIST_REMOVE(h, _next);
             free_hdr(h);
         }
