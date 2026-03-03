@@ -75,7 +75,7 @@ jobs:
       if: matrix.image == 'ubuntu'
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: valgrind softhsm2
+        packages: valgrind softhsm2 libc6-dbg
 
     - name: Install tools
       if: matrix.image == 'macOS'
