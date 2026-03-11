@@ -77,6 +77,7 @@ tlsuv_engine_t new_openssl_engine(tls_context *ctx, const char *host);
 static void set_io(tlsuv_engine_t , io_ctx , io_read , io_write);
 static void set_io_fd(tlsuv_engine_t , tlsuv_sock_t);
 static void set_protocols(tlsuv_engine_t self, const char** protocols, int len);
+static void set_authmode(tlsuv_engine_t self, int authmode);
 
 static tls_handshake_state tls_hs_state(tlsuv_engine_t engine);
 static tls_handshake_state
@@ -149,6 +150,7 @@ static struct tlsuv_engine_s openssl_engine_api = {
         .set_io = set_io,
         .set_io_fd = set_io_fd,
         .set_protocols = set_protocols,
+        .set_authmode = set_authmode,
         .handshake_state = tls_hs_state,
         .handshake = tls_continue_hs,
         .get_alpn = tls_get_alpn,
@@ -681,6 +683,12 @@ static void set_protocols(tlsuv_engine_t self, const char** protocols, int len) 
     *p = 0;
     SSL_set_alpn_protos(e->ssl, alpn_protocols, strlen((char*)alpn_protocols));
     tlsuv__free(alpn_protocols);
+}
+
+static void set_authmode(tlsuv_engine_t self, int authmode) {
+    struct openssl_engine *e = (struct openssl_engine *)self;
+    int mode = authmode == 0 ? SSL_VERIFY_NONE : SSL_VERIFY_PEER;
+    SSL_set_verify(e->ssl, mode, NULL);
 }
 
 static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
@@ -1239,4 +1247,3 @@ BIO_METHOD *BIO_s_engine(void)
     }
     return engine_bio_meth;
 }
-
