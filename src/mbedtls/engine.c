@@ -618,7 +618,6 @@ static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv
 
     struct priv_key_s *pk = (struct priv_key_s *)key;
     struct cert_s *crt = (struct cert_s *) cert;
-    mbedtls_x509_crt *x509 = crt->chain;
 
 #if MBEDTLS_VERSION_MAJOR == 3
     mbedtls_ctr_drbg_context ctr_drbg;
@@ -627,16 +626,36 @@ static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv
     mbedtls_entropy_context entropy;
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
-    mbedtls_entropy_free(&entropy);
-
-    if (mbedtls_pk_check_pair(&x509->pk, &pk->pkey, mbedtls_ctr_drbg_random, &ctr_drbg) != 0) {
-#else
-    if (mbedtls_pk_check_pair(&x509->pk, &pk->pkey) != 0) {
 #endif
-        rc = -1;
-    } else {
+
+    // Find the certificate matching the private key — the chain may
+    // not have the leaf first (e.g. PEM with intermediate before leaf).
+    mbedtls_x509_crt *leaf = NULL;
+    mbedtls_x509_crt *prev = NULL;
+    for (mbedtls_x509_crt *cur = crt->chain; cur != NULL; cur = cur->next) {
+#if MBEDTLS_VERSION_MAJOR == 3
+        if (mbedtls_pk_check_pair(&cur->pk, &pk->pkey, mbedtls_ctr_drbg_random, &ctr_drbg) == 0) {
+#else
+        if (mbedtls_pk_check_pair(&cur->pk, &pk->pkey) == 0) {
+#endif
+            leaf = cur;
+            break;
+        }
+        prev = cur;
+    }
+
+    if (leaf != NULL) {
+        if (prev != NULL) {
+            // Move leaf to the front of the chain
+            prev->next = leaf->next;
+            leaf->next = crt->chain;
+            crt->chain = leaf;
+        }
         c->own_cert = crt->chain;
         c->own_key = pk;
+    } else {
+        UM_LOG(ERR, "no certificate matching the private key was found");
+        rc = -1;
     }
 
 #if MBEDTLS_VERSION_MAJOR == 3

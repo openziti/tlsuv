@@ -649,3 +649,114 @@ wuXYVyJrG5Tc1vnlSUhUrK2812JyXA7tkWj/qzc=
     c->free(c);
     tls->free_ctx(tls);
 }
+
+// Reproduces bug where tls_set_cert_internal() blindly takes
+// sk_X509_OBJECT_value(certs, 0) as the leaf certificate, but
+// X509_STORE does not guarantee insertion order is preserved.
+// On OpenSSL 1.1.x, X509_STORE_add_cert() triggers a sort by
+// subject name hash during its duplicate check, reordering the
+// objects. On OpenSSL 3.x the sort is deferred until a lookup,
+// but the fundamental bug remains: the code assumes index 0 is
+// the leaf without verifying.
+//
+// This test provides the cert chain with the intermediate CA first
+// in the PEM bundle, which directly triggers the bug: the
+// intermediate lands at index 0, X509_check_private_key() fails
+// because the intermediate's RSA key doesn't match the EC leaf key.
+//
+// Subject hashes (for reference if sort is triggered):
+//   leaf=bc43a3c2  intermediate=4a0b0016  root=c46bcae1
+TEST_CASE("set-own-cert-sort-order", "[key]") {
+
+    // EC P-256 leaf key in PKCS#8 format
+    auto key = R"(-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg9UgiSVugg3rTyIWc
+Ta2bllmSnBoS432fhhTs/WUO3T2hRANCAAS+L7mQjMaHYqt73gNntyP0hG/jNR02
+Z8af0aIgxuzHRacArWDM9gqrBY2/5+8pbTbL9PacCId+xM4MzbNG1NAX
+-----END PRIVATE KEY-----
+)";
+
+    // Chain: intermediate CA + root CA + leaf (non-leaf-first order)
+    // tls_set_cert_internal() will take index 0 (the intermediate) as
+    // the leaf, then X509_check_private_key() fails because the
+    // intermediate's RSA public key doesn't match the EC private key.
+    auto cert = R"(-----BEGIN CERTIFICATE-----
+MIIDfjCCAmagAwIBAgIUDw2MFV6WBNaZi06k5ubTdVHMyjEwDQYJKoZIhvcNAQEL
+BQAwRDELMAkGA1UEBhMCVVMxDTALBgNVBAgMBFRlc3QxEDAOBgNVBAoMB1Rlc3RQ
+S0kxFDASBgNVBAMMC1Jvb3QgQ0EgWlpaMB4XDTI2MDMxMTAyNTUzNVoXDTM2MDMw
+ODAyNTUzNVowSTELMAkGA1UEBhMCVVMxDTALBgNVBAgMBFRlc3QxEDAOBgNVBAoM
+B1Rlc3RQS0kxGTAXBgNVBAMMEEFBQSBJbnRlcm1lZGlhdGUwggEiMA0GCSqGSIb3
+DQEBAQUAA4IBDwAwggEKAoIBAQC2Z4C6ADv5VjvrCvEDEq4+G+uguCGnxMcwd+IA
+fmMn9mFau8s/gtkob9VSK9WnnHNUd6wOGTWZefE8cCZWjFdrXK3YPRDtNMhl/kTU
+CWfI7U8Vq9iT8YwhBhSjZrB16/dxbivWHwq4VnSDHo0jLeJwlrNRljpWgZDRRT/x
+KnafwAu2jn2roc2B0nxtSH0dt1UrFmuJdH6P07Wx5A0zjiGy0izL66P6TEH9IRdH
+Dz3TN1y7pe2ePhtjcp76WJ9/RbHE9Tpxg1QQYoGl9urAd+LKBIp6p6Hzowq1Vz98
+Gh2O/z4t8j1mhEDidnI1DFyUL4iX8ISQ8BkKe3+cz66aiJ7XAgMBAAGjYzBhMA8G
+A1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMB0GA1UdDgQWBBR1bfs3ucp/
+eeApRI3drowDCF/G0TAfBgNVHSMEGDAWgBSEYziWI5XBhYmrnqbn06XdZA0UsjAN
+BgkqhkiG9w0BAQsFAAOCAQEASnLfu9yjvAUcvjajGYFe6zWOn9WIivEaCNn7MSgC
+54mmVH+6rUPY0uMkcBWJotf2tUnymT55DHJZFqF6pkSwMEvwuhh8IIK3HLTClCQU
+gaXCJt7nEpURg2XRgHf+jfhQ1nfdQ6hAiiZUL9wktVcVcHFgm8hNFB573s5VLgzt
+bMByDtfCBsBd5qc8jPG4wi931DnldAeyPecIRmvYlnr4SB9Vbk2N1e9YeI/6OJJH
+Us4cVcui4yIaig5DTIxG0aer1PsDiiGMbgv5PGgINiFE5A9Uv8KOXOQVyQWHNk9u
+eaKF/6P7c9GbVJP8mRyx/h3QaGB6TSy6gEfVDFi9dTWfPg==
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDaTCCAlGgAwIBAgIUKjCrjZuM5EP953d8Qq84gPMz0qswDQYJKoZIhvcNAQEL
+BQAwRDELMAkGA1UEBhMCVVMxDTALBgNVBAgMBFRlc3QxEDAOBgNVBAoMB1Rlc3RQ
+S0kxFDASBgNVBAMMC1Jvb3QgQ0EgWlpaMB4XDTI2MDMxMTAyNTUzNVoXDTM2MDMw
+ODAyNTUzNVowRDELMAkGA1UEBhMCVVMxDTALBgNVBAgMBFRlc3QxEDAOBgNVBAoM
+B1Rlc3RQS0kxFDASBgNVBAMMC1Jvb3QgQ0EgWlpaMIIBIjANBgkqhkiG9w0BAQEF
+AAOCAQ8AMIIBCgKCAQEAmXE6g2NjY70H6yyqwKRv95ndFzXwFxuE9/n7dGqGeMWW
+J3WbVRhSyxPqaeOl4VJ6F/fDVt/JuQ4zoVe2LgHrra/vlHNCvj5ixYLTxxvHgOJJ
+deoi1H9l6rJl5g+Zwl2WRamGpiKJVxCE3WAbbgmTlVEa/jSmJuVI2QYxSHPFN4L6
+GsLD/MZ+5sWTEQhUqGV4lw5PvQJIbpXqoJq55SgiNGQhYtkRhw7bOQCJtC9ZL9nL
+48nbcdpv5aTBAcTwMgkZ4y/zIce2/QFE4l9echozyicLDq+pySGvz1f1YRv8P/4C
+TCwpfJRdlfG1fg0VdmzczWd/r/UAzcHnxpFJl/CQwwIDAQABo1MwUTAdBgNVHQ4E
+FgQUhGM4liOVwYWJq56m59Ol3WQNFLIwHwYDVR0jBBgwFoAUhGM4liOVwYWJq56m
+59Ol3WQNFLIwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAUEuS
+344ERiPxiLPfse9DXQTUqofEEJLfcwTvidijCETgZ3usur4kQKeF3Bwson3ACVtJ
+MdG4lKS2qq72i9ifGZqgxHja5QNIOHj3CkMbjGk5yx6dYif5/R8Ly2JX+xFmp2qy
+45uF1tbkxLLkM9zQlLI40BMilp43pApO37bkL7iAmc1IBvlXeaFkWvtp5to58Nap
+4Q3pLwkElP52P/RTmIvhJUAcT63AElqC2/gDhipqsYhOUrWyb9suMnR/X5+LzBbo
+gTfRSZPb6LrSuHZCX0XFvaXmLa2xJ8Y1M0tXX6CodDsCHISa9EP4NoEV/pJGT05+
+6NcyoB0QBZolpSmS3g==
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIICyTCCAbGgAwIBAgIUX9zcEIls+RSCD7fyGwpY7wQs/M8wDQYJKoZIhvcNAQEL
+BQAwSTELMAkGA1UEBhMCVVMxDTALBgNVBAgMBFRlc3QxEDAOBgNVBAoMB1Rlc3RQ
+S0kxGTAXBgNVBAMMEEFBQSBJbnRlcm1lZGlhdGUwHhcNMjYwMzExMDI1NTM1WhcN
+MzYwMzA4MDI1NTM1WjBIMQswCQYDVQQGEwJVUzENMAsGA1UECAwEVGVzdDEQMA4G
+A1UECgwHVGVzdFBLSTEYMBYGA1UEAwwPWlpaIExlYWYgRW50aXR5MFkwEwYHKoZI
+zj0CAQYIKoZIzj0DAQcDQgAEvi+5kIzGh2Kre94DZ7cj9IRv4zUdNmfGn9GiIMbs
+x0WnAK1gzPYKqwWNv+fvKW02y/T2nAiHfsTODM2zRtTQF6N1MHMwDAYDVR0TAQH/
+BAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwIwHQYDVR0O
+BBYEFPfLxIDmm65FnaidKjC0UcOUsmCdMB8GA1UdIwQYMBaAFHVt+ze5yn954ClE
+jd2ujAMIX8bRMA0GCSqGSIb3DQEBCwUAA4IBAQCUx/fiiO/E04c9hl7JdAuObqD/
+PHmEgDbsEuWRNY28Ckx4dQZAakr1D9j5CPzx3va1WTKakbAfpTaGhZWMAa1VNCYu
+iEQLAYmPkjkElawaFfKCLLTI/Vdx30FZKDkWNLfdf044QhFZfAprwPVcY7cSJD0Q
+HVAFRHJNidXc35YXvrTl3Ljhh4yR5Rqk5ugfLDzH1vgpVy1p2KJIQIa9V8Llr7x1
+gVR4vMEhZP3bGvqSofXMxTlVj56IQFruBV3B+cKmOavMgEFw/4gzPCCHmMbFkorf
+2evSy4/8PDwOgExJHND3bjVv6AELeOU9pJvnkWAxbP8V5BwG+VBaFY1RHWEr
+-----END CERTIFICATE-----
+)";
+
+    auto tls = default_tls_context(nullptr, 0);
+    tlsuv_certificate_t c = nullptr;
+    tlsuv_private_key_t k = nullptr;
+    CHECK(tls->load_key(&k, key, strlen(key)) == 0);
+    CHECK(tls->load_cert(&c, cert, strlen(cert)) == 0);
+
+    // This should succeed but fails because tls_set_cert_internal()
+    // blindly takes sk_X509_OBJECT_value(certs, 0) as the leaf.
+    // When the store objects are not in leaf-first order (either due
+    // to X509_STORE sorting by subject name hash on OpenSSL 1.1.x,
+    // or simply because the PEM bundle has a different cert order),
+    // X509_check_private_key() fails because the cert at index 0
+    // (the intermediate's RSA key) doesn't match the EC private key.
+    CHECK(tls->set_own_cert(tls, k, c) == 0);
+
+    k->free(k);
+    c->free(c);
+    tls->free_ctx(tls);
+}
