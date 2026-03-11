@@ -150,7 +150,13 @@ int tlsuv_stream_peername(const tlsuv_stream_t *clt, struct sockaddr *addr, int 
 
 const char* tlsuv_stream_get_error(const tlsuv_stream_t *clt);
 
-typedef struct tlsuv_write_s tlsuv_write_t;
+size_t tlsuv_stream_size();
+
+tlsuv_stream_t *tlsuv_stream_new();
+void tlsuv_stream_delete(tlsuv_stream_t *clt);
+
+void tlsuv_stream_set_data(tlsuv_stream_t *clt, void *data);
+void *tlsuv_stream_get_data(const tlsuv_stream_t *clt);
 
 struct tlsuv_stream_s {
     // make it (somewhat)compatible with uv_stream_t
