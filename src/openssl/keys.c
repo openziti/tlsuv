@@ -18,6 +18,7 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <openssl/param_build.h>
 
 #include <assert.h>
@@ -40,6 +41,8 @@ static int cert_to_pem(const struct tlsuv_certificate_s * c, int full, char **pe
 static void cert_free(tlsuv_certificate_t c);
 static int cert_verify(const struct tlsuv_certificate_s * c, enum hash_algo md, const char *data, size_t datalen, const char *sig, size_t siglen);
 static int cert_exp(const struct tlsuv_certificate_s *, struct tm *time);
+
+static X509 *find_leaf_cert(X509_STORE *store);
 
 static struct cert_s cert_API = {
         .free = cert_free,
@@ -835,11 +838,11 @@ static int privkey_store_cert(tlsuv_private_key_t pk, tlsuv_certificate_t cert) 
         return -1;
     }
     X509_STORE *store = ((struct cert_s*)cert)->cert;
-
-    STACK_OF(X509_OBJECT) *objects = X509_STORE_get0_objects(store);
-
-    X509_OBJECT *obj = sk_X509_OBJECT_value(objects, 0);
-    X509 *c = X509_OBJECT_get0_X509(obj);
+    X509 *c = find_leaf_cert(store);
+    if (c == NULL) {
+        UM_LOG(WARN, "no leaf cert found in store");
+        return -1;
+    }
 
     X509_NAME *subj_name = X509_get_subject_name(c);
     unsigned char *subj_der = NULL;
@@ -860,8 +863,11 @@ static const char* cert_to_text(const struct tlsuv_certificate_s * cert) {
 
     if(c->text) return c->text;
 
-    STACK_OF(X509_OBJECT) *s = X509_STORE_get0_objects(c->cert);
-    X509 *x509 = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
+    X509 *x509 = find_leaf_cert(c->cert);
+    if (x509 == NULL) {
+        UM_LOG(WARN, "no leaf cert found in store");
+        return NULL;
+    }
 
     BIO *bio = BIO_new(BIO_s_mem());
     X509_print_ex(bio, x509, 0,
@@ -887,17 +893,50 @@ static void cert_free(tlsuv_certificate_t cert) {
     tlsuv__free(c);
 }
 
-static int cert_to_pem(const struct tlsuv_certificate_s * cert, int full_chain, char **pem, size_t *pemlen) {
-    X509_STORE *store = ((struct cert_s*)cert)->cert;
-
-    BIO *pembio = BIO_new(BIO_s_mem());
-    X509 *c;
+static X509 *find_leaf_cert(X509_STORE *store) {
     STACK_OF(X509_OBJECT) *s = X509_STORE_get0_objects(store);
     for (int i = 0; i < sk_X509_OBJECT_num(s); i++) {
-        c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, i));
-        PEM_write_bio_X509(pembio, c);
-        if (!full_chain) {
-            break;
+        X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, i));
+        if (X509_check_ca(c) != 0) {
+            continue;
+        }
+
+        uint32_t ku = X509_get_key_usage(c);
+        uint32_t xku = X509_get_extended_key_usage(c);
+        if ((ku & KU_DIGITAL_SIGNATURE) && (xku & (XKU_SSL_CLIENT | XKU_SSL_SERVER))) {
+            return c;
+        }
+    }
+    return NULL;
+}
+
+static int cert_to_pem(const struct tlsuv_certificate_s * cert, int full_chain, char **pem, size_t *pemlen) {
+    X509_STORE *store = ((struct cert_s *) cert)->cert;
+    STACK_OF(X509_OBJECT) *s = X509_STORE_get0_objects(store);
+    if (sk_X509_OBJECT_num(s) == 0) {
+        UM_LOG(WARN, "store is empty");
+        return -1;
+    }
+
+    X509 *leaf = find_leaf_cert(store);
+    BIO *pembio = BIO_new(BIO_s_mem());
+    if (!full_chain) {
+        if (leaf == NULL) {
+            leaf = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
+        }
+        if (leaf) {
+            PEM_write_bio_X509(pembio, leaf);
+        }
+    } else {
+        // write leaf cert first
+        if (leaf) {
+            PEM_write_bio_X509(pembio, leaf);
+        }
+        for (int i = 0; i < sk_X509_OBJECT_num(s); i++) {
+            X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, i));
+            if (c != leaf) {
+                PEM_write_bio_X509(pembio, c);
+            }
         }
     }
 
@@ -911,8 +950,11 @@ static int cert_to_pem(const struct tlsuv_certificate_s * cert, int full_chain, 
 
 static int cert_verify(const struct tlsuv_certificate_s * cert, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen) {
     X509_STORE *store = ((struct cert_s*)cert)->cert;
-    STACK_OF(X509_OBJECT ) *s = X509_STORE_get0_objects(store);
-    X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
+    X509 *c = find_leaf_cert(store);
+    if (c == NULL) {
+        UM_LOG(WARN, "no leaf cert");
+        return -1;
+    }
     EVP_PKEY *pk = X509_get_pubkey(c);
     if (pk == NULL) {
         unsigned long err = ERR_peek_error();
@@ -929,8 +971,11 @@ static int cert_exp(const struct tlsuv_certificate_s * cert, struct tm *time) {
     }
     
     X509_STORE *store = ((struct cert_s*)cert)->cert;
-    STACK_OF(X509_OBJECT ) *s = X509_STORE_get0_objects(store);
-    X509 *c = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(s, 0));
+    X509 *c = find_leaf_cert(store);
+    if (c == NULL) {
+        UM_LOG(WARN, "no leaf cert found");
+        return -1;
+    }
     const ASN1_TIME *notAfter = X509_get0_notAfter(c);
     return ASN1_TIME_to_tm(notAfter, time) == 1 ? 0 : -1;
 }

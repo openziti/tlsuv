@@ -26,5 +26,5 @@ endif()
 
 foreach (s ${samples})
     add_executable(${s} ${s}.c)
-    target_link_libraries(${s} PUBLIC tlsuv common)
+    target_link_libraries(${s} PUBLIC common)
 endforeach()
