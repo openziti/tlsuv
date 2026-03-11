@@ -775,7 +775,9 @@ static X509* tls_set_cert_internal (SSL_CTX* ssl, X509_STORE *store, EVP_PKEY *p
     STACK_OF(X509_OBJECT) *certs = X509_STORE_get0_objects(store);
     int num = sk_X509_OBJECT_num(certs);
 
-    // find the leaf cert by matching against the private key
+    // Find the certificate matching the private key — X509_STORE sorts
+    // by subject name hash, not insertion order, so the leaf may not be
+    // at index 0.
     X509 *leaf = NULL;
     int leaf_idx = -1;
     for (int i = 0; i < num; i++) {
