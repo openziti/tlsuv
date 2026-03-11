@@ -771,18 +771,37 @@ if ((op) != 1) { \
     }} while(0)
 
 
-static X509* tls_set_cert_internal (SSL_CTX* ssl, X509_STORE *store) {
+static X509* tls_set_cert_internal (SSL_CTX* ssl, X509_STORE *store, EVP_PKEY *pkey) {
     STACK_OF(X509_OBJECT) *certs = X509_STORE_get0_objects(store);
-    X509 *crt = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, 0));
-    SSL_CTX_use_certificate(ssl, crt);
+    int num = sk_X509_OBJECT_num(certs);
+
+    // find the leaf cert by matching against the private key
+    X509 *leaf = NULL;
+    int leaf_idx = -1;
+    for (int i = 0; i < num; i++) {
+        X509 *x509 = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, i));
+        if (x509 && X509_check_private_key(x509, pkey) == 1) {
+            leaf = x509;
+            leaf_idx = i;
+            break;
+        }
+    }
+
+    if (leaf == NULL) {
+        UM_LOG(ERR, "no certificate matching the private key was found");
+        return NULL;
+    }
+
+    SSL_CTX_use_certificate(ssl, leaf);
 
     // rest of certs go to chain
-    for (int i = 1; i < sk_X509_OBJECT_num(certs); i++) {
+    for (int i = 0; i < num; i++) {
+        if (i == leaf_idx) continue;
         X509 *x509 = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, i));
         X509_up_ref(x509);
         SSL_CTX_add_extra_chain_cert(ssl, x509);
     }
-    return crt;
+    return leaf;
 }
 
 static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
@@ -821,10 +840,14 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
     // OpenSSL requires setting certificate before private key
     // https://www.openssl.org/docs/man3.0/man3/SSL_CTX_use_PrivateKey.html
     struct priv_key_s *pk = (struct priv_key_s*)key;
-    X509 *certs = tls_set_cert_internal(ssl, store);
+    X509 *leaf = tls_set_cert_internal(ssl, store, pk->pkey);
     X509_STORE_free(store);
 
-    SSL_OP_CHECK(X509_check_private_key(certs, pk->pkey), "verify key/cert combo");
+    if (leaf == NULL) {
+        UM_LOG(ERR, "failed to find leaf certificate matching private key");
+        return TLS_ERR;
+    }
+
     SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, pk->pkey), "set private key");
     return 0;
 }
