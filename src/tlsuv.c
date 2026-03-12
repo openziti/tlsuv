@@ -46,6 +46,8 @@
 #define MAX_INBOUND_ITERATIONS 16
 #define TLS_LOG(lvl, fmt, ...) UM_LOG(lvl, "tls[%s@%p]" fmt, clt->host, clt, ##__VA_ARGS__)
 
+typedef struct tlsuv_write_s tlsuv_write_t;
+
 static void on_clt_io(uv_poll_t *, int, int);
 static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
 static void check_read(uv_idle_t *idle);
@@ -775,3 +777,28 @@ int tlsuv_stream_peername(const tlsuv_stream_t *clt, struct sockaddr *addr, int 
     *namelen = (int)socklen;
     return 0;
 }
+
+// FFI support functions
+size_t tlsuv_stream_size() {
+    return sizeof(tlsuv_stream_t);
+}
+
+tlsuv_stream_t *tlsuv_stream_new() {
+    return tlsuv__calloc(1, sizeof(tlsuv_stream_t));
+}
+
+void tlsuv_stream_delete(tlsuv_stream_t *clt) {
+    if (clt) {
+        tlsuv_stream_free(clt);
+        tlsuv__free(clt);
+    }
+}
+
+void tlsuv_stream_set_data(tlsuv_stream_t *clt, void *data) {
+    clt->data = data;
+}
+
+void *tlsuv_stream_get_data(const tlsuv_stream_t *clt) {
+    return clt->data;
+}
+
