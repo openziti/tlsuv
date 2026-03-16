@@ -245,9 +245,10 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
     win32_cert_t *crt = (win32_cert_t*)cert;
     struct win32crypto_private_key_s *pk = (struct win32crypto_private_key_s*)key;
 
-    if (c->own_cert) {
+    if (c->own_cert && c->own_cert != INVALID_HANDLE_VALUE) {
         CertFreeCertificateContext(c->own_cert);
         CertCloseStore(c->own_store, 0);
+        c->own_cert = INVALID_HANDLE_VALUE;
     }
 
     if (crt == NULL || pk == NULL) {
