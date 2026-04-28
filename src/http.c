@@ -400,6 +400,10 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
             tlsuv__free(s);
             goto on_error;
         }
+        // HTTP connections should be short-lived,
+        // so enable keepalive to avoid waiting too long for responses on dead connections
+        tlsuv_stream_keepalive(s, 1, 10);
+        tlsuv_stream_nodelay(s, 1);
         CLT_LOG(TRACE, "created TLS tr[%p] with fd[%ld]", s, (long) sock);
     } else {
         uv_tcp_t *tcp = tlsuv__calloc(1, sizeof(uv_tcp_t));
@@ -409,6 +413,8 @@ static void tr_connect_cb(uv_os_sock_t sock, int status, void *ctx) {
             uv_close((uv_handle_t*)tcp, (uv_close_cb)free);
             goto on_error;
         }
+        uv_tcp_keepalive(tcp, 1, 10);
+        uv_tcp_nodelay(tcp, 1);
 
         uv_timer_stop(c->conn_timer);
         tcp->data = c;
