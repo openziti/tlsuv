@@ -527,7 +527,12 @@ int win32crypto_load_keychain_key(tlsuv_private_key_t *pk, const char *id) {
         SECURITY_STATUS rc = NCryptOpenStorageProvider(&ph, providers[i], 0);
         if (rc != ERROR_SUCCESS) continue;
 
+        UM_LOG(DEBG, "loading key[%ls] provider[%ls]", name, providers[i]);
         rc = NCryptOpenKey(ph, &kh, name, 0, 0);
+        if (rc != ERROR_SUCCESS) {
+            UM_LOG(DEBG, "fallback to load machine level key[%ls]", name);
+            rc = NCryptOpenKey(ph, &kh, name, 0, NCRYPT_MACHINE_KEY_FLAG);
+        }
         if (rc == ERROR_SUCCESS) {
           UM_LOG(DEBG, "loaded key[%ls] from provider[%ls]", name, providers[i]);
           break;
