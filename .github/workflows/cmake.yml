@@ -92,7 +92,7 @@ jobs:
 
     - uses: lukka/get-cmake@latest
       with:
-        cmakeVersion: "~3.31.0"
+        cmakeVersion: "~4.3.2"
 
     - name: create cache dir
       shell: bash
