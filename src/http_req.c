@@ -263,6 +263,7 @@ l += a_size;\
 
     if (strcmp(req->method, "POST") == 0 ||
         strcmp(req->method, "PUT") == 0 ||
+        strcmp(req->method, "DELETE") == 0 ||
         strcmp(req->method, "PATCH") == 0) {
         if (!req->req_chunked && req->req_body_size == -1) {
             size_t req_len = 0;
