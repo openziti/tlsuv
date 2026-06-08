@@ -198,7 +198,10 @@ int tlsuv_http_req_query(tlsuv_http_req_t* req, size_t count, const tlsuv_http_p
 }
 
 int tlsuv_http_req_form(tlsuv_http_req_t* req, size_t count, const tlsuv_http_pair pairs[]) {
-    if (strcmp(req->method, "POST") != 0) {
+    if (strcmp(req->method, "POST") != 0 &&
+        strcmp(req->method, "PUT") != 0 &&
+        strcmp(req->method, "PATCH") != 0 &&
+        strcmp(req->method, "DELETE") != 0) {
         return UV_EINVAL;
     }
 
