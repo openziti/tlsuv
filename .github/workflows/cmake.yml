@@ -165,7 +165,7 @@ jobs:
 
     - name: upload test summary
       if: always()
-      uses: mikepenz/action-junit-report@v4
+      uses: mikepenz/action-junit-report@v6
       with:
         detailed_summary: 'true'
         report_paths: ${{ github.workspace }}/build/**/TEST-*.xml
