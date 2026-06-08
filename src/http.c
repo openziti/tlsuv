@@ -1006,7 +1006,10 @@ void tlsuv_http_req_end(tlsuv_http_req_t *req) {
 }
 
 int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen, tlsuv_http_body_cb cb) {
-    if (strcmp(req->method, "POST") != 0 && strcmp(req->method, "PUT") != 0) {
+    if (strcmp(req->method, "POST") != 0 &&
+        strcmp(req->method, "PUT") != 0 &&
+        strcmp(req->method, "PATCH") != 0 &&
+        strcmp(req->method, "DELETE") != 0) {
         return UV_EINVAL;
     }
 
