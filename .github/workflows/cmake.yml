@@ -86,7 +86,7 @@ jobs:
       if: matrix.image == 'windows'
       uses: microsoft/setup-msbuild@v2
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: '0'
 
@@ -101,7 +101,7 @@ jobs:
 
     - name: Cache ${{ matrix.target }} deps
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         save-always: true
         path: ${{ env.CI_CACHE }}
@@ -127,7 +127,7 @@ jobs:
         cmake --build build
 
     - name: Setup Golang with cache
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version-file: tests/test_server/go.mod
         cache-dependency-path: tests/test_server/go.sum
@@ -172,7 +172,7 @@ jobs:
 
     - name: upload test report
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.target }}-${{ matrix.tls }}${{ matrix.http == 'OFF' && '-nohttp' || '' }}-TestReport
         path: ${{ github.workspace }}/build/Testing/
