@@ -12,3 +12,6 @@ target_include_directories(mbedtls-impl
         PRIVATE $<BUILD_INTERFACE:${MBEDTLS_INCLUDE_DIRS}>
 )
 target_link_libraries(mbedtls-impl PRIVATE ${MBEDTLS_LIBRARIES})
+if (WIN32)
+    target_link_libraries(mbedtls-impl PUBLIC bcrypt)
+endif ()

@@ -156,7 +156,7 @@ if(WIN32)
         )
     endif (MSVC)
 
-    target_link_libraries(tlsuv PUBLIC crypt32 ncrypt)
+    target_link_libraries(tlsuv PUBLIC crypt32 ncrypt bcrypt)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
