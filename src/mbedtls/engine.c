@@ -111,7 +111,8 @@ static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv
 tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host);
 
 static void mbedtls_set_io(tlsuv_engine_t, io_ctx , io_read , io_write );
-static void mbedtls_set_fd(tlsuv_engine_t, uv_os_fd_t );
+
+static void mbedtls_set_fd(tlsuv_engine_t, tlsuv_sock_t);
 
 static tls_handshake_state mbedtls_hs_state(tlsuv_engine_t engine);
 static tls_handshake_state
