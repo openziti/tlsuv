@@ -69,6 +69,10 @@ jobs:
             tls: win32crypto
             target: x64-mingw-static
             http: ON
+          - image: windows
+            tls: mbedtls
+            target: x64-mingw-static
+            http: ON
 
     steps:
     - name: Install tools
