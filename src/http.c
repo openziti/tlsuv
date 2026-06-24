@@ -26,6 +26,14 @@
 #include "tlsuv/tlsuv.h"
 
 #define DEFAULT_IDLE_TIMEOUT 0
+
+#define to_str1(s) #s
+#define to_str(s) to_str1(s)
+#ifdef TLSUV_VERSION
+#define TLSUV_DEFAULT_UA "tlsuv/" to_str(TLSUV_VERSION)
+#else
+#define TLSUV_DEFAULT_UA "tlsuv/<unknown>"
+#endif
 #define CLT_LOG(lvl, fmt, ...) UM_LOG(lvl, "http[%s:%s%s](%p): " fmt, \
     c->host, c->port, c->prefix ? c->prefix : "", c, ##__VA_ARGS__)
 
@@ -838,6 +846,7 @@ int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, t
     clt->conn_timer->data = clt;
 
     tlsuv_http_header(clt, "Connection", "keep-alive");
+    tlsuv_http_header(clt, "User-Agent", TLSUV_DEFAULT_UA);
     if (um_available_encoding() != NULL) {
         tlsuv_http_header(clt, "Accept-Encoding", um_available_encoding());
     }
