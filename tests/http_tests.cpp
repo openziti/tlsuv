@@ -245,11 +245,27 @@ TEST_CASE("http_tests", "[http]") {
 
         REQUIRE(resp.code == HTTP_STATUS_OK);
         REQUIRE(resp2.code == HTTP_STATUS_OK);
-        REQUIRE_THAT(resp.body, Catch::Matchers::ContainsSubstring("Client-Header") && Catch::Matchers::ContainsSubstring("This is client header"));
-        REQUIRE_THAT(resp2.body, Catch::Matchers::ContainsSubstring("Client-Header") && Catch::Matchers::ContainsSubstring("This is client header"));
 
-        REQUIRE_THAT(resp.body, Catch::Matchers::ContainsSubstring("Request-Header") && Catch::Matchers::ContainsSubstring("this is request header"));
-        REQUIRE_THAT(resp2.body, !Catch::Matchers::ContainsSubstring("Request-Header") && !Catch::Matchers::ContainsSubstring("this is request header"));
+        std::string expected_ua = std::string("tlsuv/") + tlsuv_version();
+
+        auto j1 = json_parse_string(resp.body.c_str());
+        auto *o1 = json_value_get_object(j1);
+        REQUIRE_THAT(json_array_get_string(json_object_dotget_array(o1, "headers.Client-Header"), 0),
+                     Catch::Matchers::Equals("This is client header"));
+        REQUIRE_THAT(json_array_get_string(json_object_dotget_array(o1, "headers.Request-Header"), 0),
+                     Catch::Matchers::Equals("this is request header"));
+        REQUIRE_THAT(json_array_get_string(json_object_dotget_array(o1, "headers.User-Agent"), 0),
+                     Catch::Matchers::Equals(expected_ua));
+        json_value_free(j1);
+
+        auto j2 = json_parse_string(resp2.body.c_str());
+        auto *o2 = json_value_get_object(j2);
+        REQUIRE_THAT(json_array_get_string(json_object_dotget_array(o2, "headers.Client-Header"), 0),
+                     Catch::Matchers::Equals("This is client header"));
+        REQUIRE(json_object_dotget_array(o2, "headers.Request-Header") == nullptr);
+        REQUIRE_THAT(json_array_get_string(json_object_dotget_array(o2, "headers.User-Agent"), 0),
+                     Catch::Matchers::Equals(expected_ua));
+        json_value_free(j2);
     }
 
     WHEN(testType << " POST body") {
