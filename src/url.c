@@ -24,9 +24,9 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
                 p++;
             } else {
                 // file://path means there must be a hostname. find the next slash
-                char *pos = strchr(p, '/');
+                const char *pos = strchr(p, '/');
                 if (pos != NULL) {
-                    size_t index = pos - p;
+                    const size_t index = pos - p;
                     url->hostname = p;
                     url->hostname_len = index;
                     p += index + 1;
