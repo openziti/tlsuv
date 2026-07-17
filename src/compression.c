@@ -119,12 +119,14 @@ int um_inflate(http_inflater_t *inflater, const char *compressed, size_t len) {
         if (rc == Z_DATA_ERROR) {
             return -1;
         }
+        if (rc == Z_STREAM_END) {
+            inflater->complete = 1;
+        }
         size_t decomp_count = sizeof(decompressed) - inflater->s.avail_out;
         if (decomp_count > 0) {
             inflater->cb(inflater->cb_ctx, (const char*)decompressed, (ssize_t)decomp_count);
         }
         if (rc == Z_STREAM_END) {
-            inflater->complete = 1;
             return 1;
         }
     }
