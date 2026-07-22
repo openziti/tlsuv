@@ -524,13 +524,17 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
 
 static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
     UM_LOG(TRACE, "send_pong len=%d", len);
+    if (len > 125) {
+        // PONG is a control frame with 125 bytes max payload
+        len = 125;
+    }
     uint8_t mask[4];
     uv_buf_t buf;
     buf.len = 2 + sizeof(mask) + len;
     buf.base = tlsuv__malloc(buf.len);
 
     buf.base[0] = WS_FIN | OpCode_Pong;
-    buf.base[1] = (char)(WS_MASK | (0x7f & len));
+    buf.base[1] = (char)(WS_MASK | len);
 
     char *ptr = buf.base + 2;
     uv_random(NULL, NULL, mask, sizeof(mask), 0, NULL);
