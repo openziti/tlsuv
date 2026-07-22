@@ -53,7 +53,7 @@ static void ws_read_cb(uv_link_t* link,
                                 ssize_t nread,
                                 const uv_buf_t* buf);
 static void ws_write_cb(uv_link_t *l, int nwrote, void *data);
-static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len);
+static void send_pong(tlsuv_websocket_t* ws, const char* ping_data, size_t len);
 static void tls_hs_cb(tls_link_t *tls, int status);
 
 static int ws_read_start(uv_link_t *l);
@@ -510,7 +510,7 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
             break;
         case OpCode_Ping:
             UM_LOG(TRACE, "got ping masked=%d len=%zd", masked, len);
-            send_pong(ws, dp, (int)len);
+            send_pong(ws, dp, len);
             break;
         case OpCode_Pong:
             UM_LOG(TRACE, "got pong");
@@ -522,8 +522,8 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
     tlsuv__free(buf->base);
 }
 
-static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
-    UM_LOG(TRACE, "send_pong len=%d", len);
+static void send_pong(tlsuv_websocket_t* ws, const char* ping_data, size_t len) {
+    UM_LOG(TRACE, "send_pong len=%zd", len);
     if (len > 125) {
         // PONG is a control frame with 125 bytes max payload
         len = 125;
@@ -542,8 +542,8 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
     ptr += sizeof(mask);
 
     if (ping_data != NULL && len > 0) {
-        for (size_t i = 0; i < (size_t)len; i++) {
-            *((char*)ptr + i) = (char)(mask[i % 4] ^ *(ping_data + i));
+        for (size_t i = 0; i < len; i++) {
+            *(ptr + i) = (char)(mask[i % 4] ^ *(ping_data + i));
         }
     }
 
