@@ -119,6 +119,10 @@ void tlsuv_stream_set_connector(tlsuv_stream_t *clt, const tlsuv_connector_t *c)
 static int start_io(tlsuv_stream_t *clt) {
     int events = 0;
 
+    if (uv_handle_get_type((uv_handle_t*)&clt->watcher) != UV_POLL) {
+        return UV_EINVAL;
+    }
+
     // was closed already
     if (uv_is_closing((const uv_handle_t *) &clt->watcher)) {
         return UV_EINVAL;
@@ -281,6 +285,14 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
 
     if (clt->tls_engine == NULL) {
         clt->tls_engine = clt->tls->new_engine(clt->tls, clt->host);
+        if (clt->tls_engine == NULL) {
+            TLS_LOG(ERR, "failed to create TLS engine");
+            clt->conn_req = NULL;
+            uv_poll_stop(&clt->watcher);
+            req->cb(req, UV_ENOMEM);
+            return;
+        }
+
         if (clt->alpn_protocols) {
             clt->tls_engine->set_protocols(clt->tls_engine, clt->alpn_protocols, clt->alpn_count);
         }
@@ -641,11 +653,13 @@ int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_c
     } else {
         // schedule idle read (if nothing on the wire)
         // in case reading was stopped with data buffered in TLS engine
-        uv_idle_t *idle = tlsuv__calloc(1, sizeof(*idle));
-        clt->watcher.data = idle;
-        uv_idle_init(clt->loop, idle);
-        idle->data = clt;
-        uv_idle_start(idle, check_read);
+        if (clt->watcher.data == NULL) {
+            uv_idle_t* idle = tlsuv__calloc(1, sizeof(*idle));
+            clt->watcher.data = idle;
+            uv_idle_init(clt->loop, idle);
+            idle->data = clt;
+        }
+        uv_idle_start(clt->watcher.data, check_read);
     }
     return rc;
 }
