@@ -53,6 +53,7 @@ static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
 static void check_read(uv_idle_t *idle);
 
 static tls_context *DEFAULT_TLS = NULL;
+static uv_once_t def_tls_once = UV_ONCE_INIT;
 
 static int err_to_uv(int err) {
 #if _WIN32
@@ -83,11 +84,13 @@ struct tlsuv_write_s {
     TAILQ_ENTRY(tlsuv_write_s) _next;
 };
 
+static void init_default_tls() {
+    DEFAULT_TLS = default_tls_context(NULL, 0);
+    atexit(free_default_tls);
+}
+
 tls_context *get_default_tls(void) {
-    if (DEFAULT_TLS == NULL) {
-        DEFAULT_TLS = default_tls_context(NULL, 0);
-        atexit(free_default_tls);
-    }
+    uv_once(&def_tls_once, init_default_tls);
     return DEFAULT_TLS;
 }
 
@@ -714,7 +717,7 @@ int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_w
     }
 
     // successfully wrote the whole request
-    if (count == buf->len) {
+    if (count >= buf->len) {
         cb(req, 0);
         return 0;
     }
