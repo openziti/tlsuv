@@ -53,6 +53,7 @@ static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
 static void check_read(uv_idle_t *idle);
 
 static tls_context *DEFAULT_TLS = NULL;
+static uv_once_t def_tls_once = UV_ONCE_INIT;
 
 static int err_to_uv(int err) {
 #if _WIN32
@@ -83,11 +84,13 @@ struct tlsuv_write_s {
     TAILQ_ENTRY(tlsuv_write_s) _next;
 };
 
+static void init_default_tls() {
+    DEFAULT_TLS = default_tls_context(NULL, 0);
+    atexit(free_default_tls);
+}
+
 tls_context *get_default_tls(void) {
-    if (DEFAULT_TLS == NULL) {
-        DEFAULT_TLS = default_tls_context(NULL, 0);
-        atexit(free_default_tls);
-    }
+    uv_once(&def_tls_once, init_default_tls);
     return DEFAULT_TLS;
 }
 
@@ -119,6 +122,10 @@ void tlsuv_stream_set_connector(tlsuv_stream_t *clt, const tlsuv_connector_t *c)
 static int start_io(tlsuv_stream_t *clt) {
     int events = 0;
 
+    if (uv_handle_get_type((uv_handle_t*)&clt->watcher) != UV_POLL) {
+        return UV_EINVAL;
+    }
+
     // was closed already
     if (uv_is_closing((const uv_handle_t *) &clt->watcher)) {
         return UV_EINVAL;
@@ -134,9 +141,8 @@ static int start_io(tlsuv_stream_t *clt) {
 
     if (events != 0) {
         return uv_poll_start(&clt->watcher, events, on_clt_io);
-    } else {
-        return uv_poll_stop(&clt->watcher);
     }
+    return uv_poll_stop(&clt->watcher);
 }
 
 static void on_internal_close(uv_handle_t *h) {
@@ -281,6 +287,14 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
 
     if (clt->tls_engine == NULL) {
         clt->tls_engine = clt->tls->new_engine(clt->tls, clt->host);
+        if (clt->tls_engine == NULL) {
+            TLS_LOG(ERR, "failed to create TLS engine");
+            clt->conn_req = NULL;
+            uv_poll_stop(&clt->watcher);
+            req->cb(req, UV_ENOMEM);
+            return;
+        }
+
         if (clt->alpn_protocols) {
             clt->tls_engine->set_protocols(clt->tls_engine, clt->alpn_protocols, clt->alpn_count);
         }
@@ -545,7 +559,7 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
     }
 
     uv_os_sock_t s = tlsuv_socket(addr, 0);
-    if (s < 0) {
+    if (s == INVALID_SOCKET) {
         return -get_error();
     }
 
@@ -561,6 +575,7 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
 #endif
                 break;
             default:
+                closesocket(s);
                 cb(req, -error);
                 clt->conn_req = NULL;
                 return 0;
@@ -572,10 +587,25 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
 
 static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
     uv_connect_t *r = ctx;
+    if (r == NULL || r->handle == NULL) {
+        closesocket(sock);
+        return;
+    }
     tlsuv_stream_t *clt = (tlsuv_stream_t *)r->handle;
     clt->connect_req = NULL;
 
     TLS_LOG(VERB, "connect status: %d", status);
+
+    if (clt->close_cb) {
+        closesocket(sock);
+        if (uv_handle_get_type((uv_handle_t*)&clt->watcher) == UV_UNKNOWN_HANDLE) {
+            on_internal_close((uv_handle_t*)&clt->watcher);
+        } else if (!uv_is_closing((uv_handle_t*)&clt->watcher)) {
+            uv_close((uv_handle_t*)&clt->watcher, on_internal_close);
+        }
+        return;
+    }
+
     if (status == 0) {
         tlsuv_stream_open(clt->conn_req, clt, sock, clt->conn_req->cb);
         return;
@@ -583,17 +613,6 @@ static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
 
     clt->conn_req = NULL;
     r->cb(r, status);
-
-    // app closed stream before it connected
-    if (clt->close_cb) {
-        TLS_LOG(VERB, "closed before connect: %d/%s", status, uv_strerror(status));
-        if (uv_handle_get_type((uv_handle_t *)&clt->watcher) == UV_UNKNOWN_HANDLE) {
-            uv_idle_init(clt->loop, (uv_idle_t*)&clt->watcher);
-        }
-        if (!uv_is_closing((uv_handle_t*)&clt->watcher)) {
-            uv_close((uv_handle_t*)&clt->watcher, on_internal_close);
-        }
-    }
 }
 
 int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *host, int port, uv_connect_cb cb) {
@@ -640,11 +659,13 @@ int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_c
     } else {
         // schedule idle read (if nothing on the wire)
         // in case reading was stopped with data buffered in TLS engine
-        uv_idle_t *idle = tlsuv__calloc(1, sizeof(*idle));
-        clt->watcher.data = idle;
-        uv_idle_init(clt->loop, idle);
-        idle->data = clt;
-        uv_idle_start(idle, check_read);
+        if (clt->watcher.data == NULL) {
+            uv_idle_t* idle = tlsuv__calloc(1, sizeof(*idle));
+            clt->watcher.data = idle;
+            uv_idle_init(clt->loop, idle);
+            idle->data = clt;
+        }
+        uv_idle_start(clt->watcher.data, check_read);
     }
     return rc;
 }
@@ -696,7 +717,7 @@ int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_w
     }
 
     // successfully wrote the whole request
-    if (count == buf->len) {
+    if (count >= buf->len) {
         cb(req, 0);
         return 0;
     }
