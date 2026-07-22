@@ -138,9 +138,8 @@ static int start_io(tlsuv_stream_t *clt) {
 
     if (events != 0) {
         return uv_poll_start(&clt->watcher, events, on_clt_io);
-    } else {
-        return uv_poll_stop(&clt->watcher);
     }
+    return uv_poll_stop(&clt->watcher);
 }
 
 static void on_internal_close(uv_handle_t *h) {
@@ -557,7 +556,7 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
     }
 
     uv_os_sock_t s = tlsuv_socket(addr, 0);
-    if (s < 0) {
+    if (s == INVALID_SOCKET) {
         return -get_error();
     }
 
@@ -585,6 +584,10 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
 
 static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
     uv_connect_t *r = ctx;
+    if (r == NULL || r->handle == NULL) {
+        closesocket(sock);
+        return;
+    }
     tlsuv_stream_t *clt = (tlsuv_stream_t *)r->handle;
     clt->connect_req = NULL;
 
