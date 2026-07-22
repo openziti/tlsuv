@@ -53,7 +53,7 @@ static void ws_read_cb(uv_link_t* link,
                                 ssize_t nread,
                                 const uv_buf_t* buf);
 static void ws_write_cb(uv_link_t *l, int nwrote, void *data);
-static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len);
+static void send_pong(tlsuv_websocket_t* ws, const char* ping_data, size_t len);
 static void tls_hs_cb(tls_link_t *tls, int status);
 
 static int ws_read_start(uv_link_t *l);
@@ -475,10 +475,14 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
     size_t len = frame[1] & (~WS_MASK);
     char *dp = frame + 2;
     if (len == 126) {
-        len = be16toh(*(uint16_t *)(&frame[2]));
+        uint16_t v;
+        memcpy(&v, &frame[2], sizeof(v));
+        len = be16toh(v);
         dp += 2;
     } else if (len == 127) {
-        len = be64toh(*(uint64_t*)&frame[2]);
+        uint64_t v;
+        memcpy(&v, &frame[2], sizeof(v));
+        len = be64toh(v);
         dp += 8;
     }
 
@@ -506,7 +510,7 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
             break;
         case OpCode_Ping:
             UM_LOG(TRACE, "got ping masked=%d len=%zd", masked, len);
-            send_pong(ws, dp, (int)len);
+            send_pong(ws, dp, len);
             break;
         case OpCode_Pong:
             UM_LOG(TRACE, "got pong");
@@ -518,15 +522,19 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
     tlsuv__free(buf->base);
 }
 
-static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
-    UM_LOG(TRACE, "send_pong len=%d", len);
+static void send_pong(tlsuv_websocket_t* ws, const char* ping_data, size_t len) {
+    UM_LOG(TRACE, "send_pong len=%zd", len);
+    if (len > 125) {
+        // PONG is a control frame with 125 bytes max payload
+        len = 125;
+    }
     uint8_t mask[4];
     uv_buf_t buf;
     buf.len = 2 + sizeof(mask) + len;
     buf.base = tlsuv__malloc(buf.len);
 
     buf.base[0] = WS_FIN | OpCode_Pong;
-    buf.base[1] = (char)(WS_MASK | (0x7f & len));
+    buf.base[1] = (char)(WS_MASK | len);
 
     char *ptr = buf.base + 2;
     uv_random(NULL, NULL, mask, sizeof(mask), 0, NULL);
@@ -534,8 +542,8 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
     ptr += sizeof(mask);
 
     if (ping_data != NULL && len > 0) {
-        for (size_t i = 0; i < (size_t)len; i++) {
-            *((char*)ptr + i) = (char)(mask[i % 4] ^ *(ping_data + i));
+        for (size_t i = 0; i < len; i++) {
+            *(ptr + i) = (char)(mask[i % 4] ^ *(ping_data + i));
         }
     }
 
@@ -544,10 +552,11 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
 
     if (ws->src) {
         uv_link_write(&ws->ws_link, &buf, 1, NULL, ws_write_cb, ws_wreq);
-    }
-
-    if (ws->tr) {
+    } else if (ws->tr) {
         ws->tr_write((uv_write_t*)ws_wreq, ws->tr, &buf, 1, ws_tr_write_cb);
+    } else {
+        tlsuv__free(buf.base);
+        tlsuv__free(ws_wreq);
     }
 }
 
@@ -582,10 +591,11 @@ int tlsuv_websocket_ping(tlsuv_websocket_t *ws) {
 
     if (ws->src) {
         uv_link_write(&ws->ws_link, &buf, 1, NULL, ws_write_cb, ws_wreq);
-    }
-
-    if (ws->tr) {
+    } else if (ws->tr) {
         ws->tr_write((uv_write_t*)ws_wreq, ws->tr, &buf, 1, ws_tr_write_cb);
+    } else {
+        tlsuv__free(buf.base);
+        tlsuv__free(ws_wreq);
     }
 
     return 0;
