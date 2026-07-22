@@ -475,10 +475,14 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
     size_t len = frame[1] & (~WS_MASK);
     char *dp = frame + 2;
     if (len == 126) {
-        len = be16toh(*(uint16_t *)(&frame[2]));
+        uint16_t v;
+        memcpy(&v, &frame[2], sizeof(v));
+        len = be16toh(v);
         dp += 2;
     } else if (len == 127) {
-        len = be64toh(*(uint64_t*)&frame[2]);
+        uint64_t v;
+        memcpy(&v, &frame[2], sizeof(v));
+        len = be64toh(v);
         dp += 8;
     }
 
@@ -544,10 +548,11 @@ static void send_pong(tlsuv_websocket_t *ws, const char* ping_data, int len) {
 
     if (ws->src) {
         uv_link_write(&ws->ws_link, &buf, 1, NULL, ws_write_cb, ws_wreq);
-    }
-
-    if (ws->tr) {
+    } else if (ws->tr) {
         ws->tr_write((uv_write_t*)ws_wreq, ws->tr, &buf, 1, ws_tr_write_cb);
+    } else {
+        tlsuv__free(buf.base);
+        tlsuv__free(ws_wreq);
     }
 }
 
@@ -582,10 +587,11 @@ int tlsuv_websocket_ping(tlsuv_websocket_t *ws) {
 
     if (ws->src) {
         uv_link_write(&ws->ws_link, &buf, 1, NULL, ws_write_cb, ws_wreq);
-    }
-
-    if (ws->tr) {
+    } else if (ws->tr) {
         ws->tr_write((uv_write_t*)ws_wreq, ws->tr, &buf, 1, ws_tr_write_cb);
+    } else {
+        tlsuv__free(buf.base);
+        tlsuv__free(ws_wreq);
     }
 
     return 0;

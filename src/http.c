@@ -199,7 +199,7 @@ static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
         req->resp_cb(&req->resp, req->data);
         req->resp_cb = NULL;
     } else if (req->resp.body_cb != NULL) {
-        req->resp.body_cb(c->active, NULL, code);
+        req->resp.body_cb(req, NULL, code);
     }
 
     clear_req_body(req, code);
@@ -532,14 +532,11 @@ static void clt_write(tlsuv_http_t *clt, uv_buf_t *buf, void(*cb)(int,void*), vo
     assert(clt->src || clt->tr);
 
     if (clt->src) {
-        // Fix: wrap callback in tr_write_req_s like the clt->tr path does
         struct tr_write_req_s *wr = tlsuv__calloc(1, sizeof(*wr));
         wr->cb = cb;
         wr->arg = arg;
         uv_link_write(&clt->http_link, buf, 1, NULL, link_write_cb, wr);
-    }
-
-    if (clt->tr) {
+    } else if (clt->tr) {
         struct tr_write_req_s *wr = tlsuv__calloc(1, sizeof(*wr));
         wr->cb = cb;
         wr->arg = arg;
