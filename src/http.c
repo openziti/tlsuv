@@ -559,8 +559,9 @@ static void send_body(tlsuv_http_req_t *req) {
 
         if (req->req_chunked) {
             if (b->len > 0) {
-                buf.base = tlsuv__malloc(10);
-                buf.len = snprintf(buf.base, 10, "%zx\r\n", b->len);
+                size_t hsz = sizeof(b->len) * 2 + 3;
+                buf.base = tlsuv__malloc(hsz);
+                buf.len = snprintf(buf.base, hsz, "%zx\r\n", b->len);
                 clt_write(c, &buf, chunk_hdr_wcb, buf.base);
 
                 buf.base = (char*)b->chunk;

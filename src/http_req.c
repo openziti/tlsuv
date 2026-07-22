@@ -57,6 +57,7 @@ void http_req_free(tlsuv_http_req_t* req) {
 
     free_hdr_list(&req->req_headers);
     free_hdr_list(&req->resp.headers);
+    tlsuv__free(req->resp.curr_header);
     if (req->resp.status) {
         tlsuv__free(req->resp.status);
     }
