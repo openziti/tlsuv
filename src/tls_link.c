@@ -248,6 +248,7 @@ static ssize_t tls_link_io_write(io_ctx ctx, const char *data, size_t data_len) 
 
         if (len == 0) {
             tls_link_flush_io(tls, NULL, NULL);
+            continue;
         }
 
         if (len > data_len) {
