@@ -90,7 +90,7 @@ static void tls_free(tlsuv_engine_t self);
 static void tls_free_ctx(tls_context * ctx);
 
 static void tls_set_cert_verify(tls_context * ctx,
-                                int(*verify_f)(conststruct tlsuv_certificate_s * cert, void *v_ctx),
+                                int (*verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
                                 void *v_ctx);
 
 static int parse_pkcs7_certs(tlsuv_certificate_t* chain, const char* pkcs7, size_t pkcs7len);
@@ -606,7 +606,7 @@ int tls_set_partial_vfy(tls_context* ctx, int allow) {
 }
 
 static void tls_set_cert_verify(tls_context * ctx,
-                                int(*verify_f)(conststruct tlsuv_certificate_s * cert, void *v_ctx),
+                                int (*verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
                                 void *v_ctx) {
     struct openssl_ctx* c = (struct openssl_ctx*)ctx;
     c->cert_verify_f = verify_f;
