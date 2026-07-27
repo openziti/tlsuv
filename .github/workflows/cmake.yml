@@ -37,6 +37,10 @@ jobs:
             tls: mbedtls
             target: x64-linux
             http: ON
+          - image: ubuntu
+            tls: boringssl
+            target: x64-linux
+            http: ON
           - image: macOS
             tls: openssl
             target: arm64-osx
