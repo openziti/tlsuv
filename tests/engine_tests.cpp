@@ -120,6 +120,8 @@ TEST_CASE("implementation test", "[engine]") {
     CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("OpenSSL"));
 #elif defined(TEST_win32crypto)
     CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("win32"));
+#elif defined(TEST_boringssl)
+    CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("BoringSSL"));
 #else
     FAIL("invalid engine");
 #endif
