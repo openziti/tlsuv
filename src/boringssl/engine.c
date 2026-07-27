@@ -715,7 +715,7 @@ static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t key,
                 return -1;
             }
             store = crt->cert;
-            free(crt);
+            tlsuv__free(crt);
         }
     } else {
         // owned by the caller
