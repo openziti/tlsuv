@@ -799,6 +799,7 @@ static const char* tls_get_alpn(tlsuv_engine_t self) {
     unsigned int protolen;
     SSL_get0_alpn_selected(eng->ssl, &proto, &protolen);
 
+    tlsuv__free(eng->alpn);
     eng->alpn = tlsuv__calloc(1, protolen + 1);
     strncpy(eng->alpn, (const char*)proto, protolen);
     return eng->alpn;
