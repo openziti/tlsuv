@@ -35,7 +35,7 @@ else ()
     set(default_crypto "openssl")
 endif ()
 
-set(supported_tls_libs openssl mbedtls win32crypto)
+set(supported_tls_libs openssl mbedtls win32crypto boringssl)
 set(TLSUV_TLSLIB ${default_crypto} CACHE STRING "TLS implementation library ${supported_tls_libs}")
 
 if(NOT TLSUV_TLSLIB IN_LIST supported_tls_libs)

@@ -32,6 +32,12 @@
       "description": "use mbedTLS",
       "dependencies": [ "mbedtls" ]
     },
+    "boringssl": {
+      "description": "use BoringSSL",
+      "dependencies": [
+        "boringssl"
+      ]
+    },
     "http": {
       "description": "adds HTTP and websocket support",
       "dependencies": [

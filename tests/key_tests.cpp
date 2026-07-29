@@ -564,7 +564,11 @@ Z8AgrJehwuXYVyJrG5Tc1vnlSUhUrK2812JyXA7tkWj/qzc=
         const char *text = cert->get_text(cert);
         CHECK(text != nullptr);
         CHECK_THAT(text, Catch::Matchers::ContainsSubstring("Subject: CN=CafSvpHp0"));
+#if !defined(TEST_boringssl)
+        // BoringSSL's X509_print_ex omits the "ASN1 OID: <curve>" line under
+        // the EC public key info that OpenSSL/mbedTLS include.
         CHECK_THAT(text, Catch::Matchers::ContainsSubstring("ASN1 OID: prime256v1"));
+#endif
         printf("Cert text:\n%s\n", text);
     }
 
