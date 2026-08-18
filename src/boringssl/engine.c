@@ -38,6 +38,11 @@
 struct openssl_ctx {
     tls_context api;
     SSL_CTX* ctx;
+
+    // own client cert
+    EVP_PKEY* pkey;
+    X509_STORE* store;
+
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx);
     void* verify_ctx;
     unsigned char* alpn_protocols;
@@ -105,6 +110,8 @@ static void msg_cb(int write_p, int version, int content_type, const void* buf, 
 static void info_cb(const SSL* s, int where, int ret);
 
 static int tls_set_partial_vfy(tls_context* ctx, int allow);
+
+static int tls_set_cert_internal(SSL* ssl, X509_STORE* store, EVP_PKEY* pkey);
 
 static BIO_METHOD* BIO_s_engine(void);
 
@@ -523,6 +530,12 @@ tlsuv_engine_t new_boringssl_engine(tls_context* ctx, const char* host) {
 
     SSL_set_app_data(engine->ssl, engine);
 
+    if (context->pkey != NULL) {
+        if (tls_set_cert_internal(engine->ssl, context->store, context->pkey) != 0) {
+            UM_LOG(ERR, "failed to set cert/key pair");
+        }
+    }
+
     return &engine->api;
 }
 
@@ -624,6 +637,8 @@ static void tls_free_ctx(tls_context* ctx) {
         tlsuv__free(c->alpn_protocols);
     }
 
+    EVP_PKEY_free(c->pkey);
+    X509_STORE_free(c->store);
     SSL_CTX_free(c->ctx);
     tlsuv__free(c);
 }
@@ -661,7 +676,7 @@ if ((op) != 1) { \
     }} while(0)
 
 
-static X509* tls_set_cert_internal(SSL_CTX* ssl, X509_STORE* store, EVP_PKEY* pkey) {
+static int tls_set_cert_internal(SSL* ssl, X509_STORE* store, EVP_PKEY* pkey) {
     STACK_OF(X509_OBJECT) * certs = X509_STORE_get0_objects(store);
     int num = sk_X509_OBJECT_num(certs);
 
@@ -681,35 +696,48 @@ static X509* tls_set_cert_internal(SSL_CTX* ssl, X509_STORE* store, EVP_PKEY* pk
 
     if (leaf == NULL) {
         UM_LOG(ERR, "no certificate matching the private key was found");
-        return NULL;
+        return -1;
     }
 
-    SSL_CTX_use_certificate(ssl, leaf);
+    if (SSL_use_certificate(ssl, leaf) != 1) {
+        UM_LOG(ERR, "failed to set certificate");
+        return -1;
+    }
+    if (SSL_use_PrivateKey(ssl, pkey) != 1) {
+        UM_LOG(ERR, "failed to set private key");
+        return -1;
+    }
+    if (SSL_check_private_key(ssl) != 1) {
+        UM_LOG(ERR, "cert/key mismatch");
+        return -1;
+    }
 
     // rest of certs go to chain
     for (int i = 0; i < num; i++) {
         if (i == leaf_idx) continue;
         X509* x509 = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, i));
-        X509_up_ref(x509);
-        SSL_CTX_add_extra_chain_cert(ssl, x509);
+        if (x509) {
+            SSL_add1_chain_cert(ssl, x509);
+        }
     }
-    return leaf;
+    return 0;
 }
 
 static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t key,
                             tlsuv_certificate_t cert) {
     struct openssl_ctx* c = (struct openssl_ctx*)ctx;
-    SSL_CTX* ssl = c->ctx;
+    struct priv_key_s* pk = (struct priv_key_s*)key;
+    struct cert_s* crt = (struct cert_s*)cert;
 
-    SSL_CTX_use_PrivateKey(ssl, NULL);
-    SSL_CTX_use_certificate(ssl, NULL);
-    SSL_CTX_clear_chain_certs(ssl);
+    EVP_PKEY_free(c->pkey);
+    c->pkey = NULL;
+    X509_STORE_free(c->store);
+    c->store = NULL;
 
     if (key == NULL) {
         return 0;
     }
 
-    struct cert_s* crt = (struct cert_s*)cert;
     X509_STORE* store = NULL;
     if (crt == NULL) {
         if (key->get_certificate) {
@@ -729,18 +757,30 @@ static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t key,
         return -1;
     }
 
-    // OpenSSL requires setting certificate before private key
-    // https://www.openssl.org/docs/man3.0/man3/SSL_CTX_use_PrivateKey.html
-    struct priv_key_s* pk = (struct priv_key_s*)key;
-    X509* leaf = tls_set_cert_internal(ssl, store, pk->pkey);
-    X509_STORE_free(store);
+    STACK_OF(X509_OBJECT)* certs = X509_STORE_get0_objects(store);
+    size_t num = sk_X509_OBJECT_num(certs);
 
+    // Find the certificate matching the private key — X509_STORE sorts
+    // by subject name hash, not insertion order, so the leaf may not be
+    // at index 0.
+    X509* leaf = NULL;
+    for (int i = 0; i < num; i++) {
+        X509* x509 = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, i));
+        if (x509 && X509_check_private_key(x509, pk->pkey) == 1) {
+            leaf = x509;
+            break;
+        }
+    }
     if (leaf == NULL) {
-        UM_LOG(ERR, "failed to find leaf certificate matching private key");
-        return TLS_ERR;
+        UM_LOG(ERR, "invalid cert/key pair");
+        X509_STORE_free(store);
+        return -1;
     }
 
-    SSL_OP_CHECK(SSL_CTX_use_PrivateKey(ssl, pk->pkey), "set private key");
+    EVP_PKEY_up_ref(pk->pkey);
+    c->pkey = pk->pkey;
+    c->store = store;
+
     return 0;
 }
 
