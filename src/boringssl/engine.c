@@ -716,7 +716,9 @@ static int tls_set_cert_internal(SSL* ssl, X509_STORE* store, EVP_PKEY* pkey) {
     for (int i = 0; i < num; i++) {
         if (i == leaf_idx) continue;
         X509* x509 = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, i));
-        SSL_add1_chain_cert(ssl, x509);
+        if (x509) {
+            SSL_add1_chain_cert(ssl, x509);
+        }
     }
     return 0;
 }
@@ -762,12 +764,10 @@ static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t key,
     // by subject name hash, not insertion order, so the leaf may not be
     // at index 0.
     X509* leaf = NULL;
-    int leaf_idx = -1;
     for (int i = 0; i < num; i++) {
         X509* x509 = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, i));
         if (x509 && X509_check_private_key(x509, pk->pkey) == 1) {
             leaf = x509;
-            leaf_idx = i;
             break;
         }
     }
