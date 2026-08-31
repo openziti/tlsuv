@@ -78,6 +78,28 @@ enum status {
     Connected
 };
 
+static void request_timeout(uv_timer_t* t) {
+    tlsuv_http_t* c = t->data;
+    if (c->active == NULL) return;
+
+    CLT_LOG(WARN, "request[%s] timed out", c->active->path);
+    http_req_cancel_err(c, c->active, UV_ETIMEDOUT, uv_strerror(UV_ETIMEDOUT));
+}
+
+static void start_req_timer(tlsuv_http_t* c) {
+    if (c->conn_timer && c->active && c->active->timeout > 0) {
+        CLT_LOG(VERB, "starting request[%s] timeout[%ld]", c->active->path, c->active->timeout);
+        uv_timer_start(c->conn_timer, request_timeout, c->active->timeout, 0);
+    }
+}
+
+// conn_timer is shared, only stop it if it is being used for the request timeout
+static void stop_req_timer(tlsuv_http_t* c) {
+    if (c->conn_timer && c->conn_timer->timer_cb == request_timeout) {
+        uv_timer_stop(c->conn_timer);
+    }
+}
+
 static const uv_link_methods_t http_methods = {
         .close = uv_link_default_close,
         .read_start = uv_link_default_read_start,
@@ -143,12 +165,14 @@ static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
             keepalive = false;
         } else if (ar->state == completed) {
             keepalive = c->keepalive && ar->keepalive;
+            stop_req_timer(c);
             c->active = NULL;
             http_req_free(ar);
             tlsuv__free(ar);
         }
     } else if (nread == UV_EOF) {
         if (http_req_finish(ar) == 0 && ar->state == completed) {
+            stop_req_timer(c);
             c->active = NULL;
             http_req_free(ar);
             tlsuv__free(ar);
@@ -191,6 +215,7 @@ static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
     tlsuv_http_req_t *req = c->active;
 
     if (req == NULL || req->state == completed) return;
+    stop_req_timer(c);
     c->active = NULL;
 
     if (req->resp_cb != NULL) {
@@ -677,6 +702,7 @@ static void process_requests(uv_idle_t *ar) {
         CLT_LOG(VERB, "client connected, processing request[%s] state[%d]", c->active->path, c->active->state);
         if (c->active->state < headers_sent) {
             CLT_LOG(VERB, "sending request[%s] headers", c->active->path);
+            start_req_timer(c);
             uv_buf_t req;
             req.base = tlsuv__malloc(8196);
             ssize_t header_len = http_req_write(c->active, req.base, 8196);
@@ -837,6 +863,7 @@ int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, t
 
     clt->keepalive = true;
     clt->connect_timeout = 0;
+    clt->request_timeout = 0;
     clt->idle_time = DEFAULT_IDLE_TIMEOUT;
     clt->conn_timer = tlsuv__calloc(1, sizeof(uv_timer_t));
     uv_timer_init(l, clt->conn_timer);
@@ -869,6 +896,26 @@ int tlsuv_http_connect_timeout(tlsuv_http_t *clt, long millis) {
     return 0;
 }
 
+int tlsuv_http_request_timeout(tlsuv_http_t* clt, long millis) {
+    clt->request_timeout = millis;
+    return 0;
+}
+
+int tlsuv_http_req_timeout(tlsuv_http_req_t* req, long millis) {
+    req->timeout = millis;
+
+    // only re-arm if the shared timer is already running the request timeout for this request.
+    // while connecting the timer belongs to the connect timeout, and the request timer is armed
+    // with the new value when the request is sent out
+    tlsuv_http_t* clt = req->client;
+    if (clt && clt->active == req && clt->conn_timer &&
+        clt->conn_timer->timer_cb == request_timeout) {
+        stop_req_timer(clt);
+        start_req_timer(clt);
+    }
+    return 0;
+}
+
 int tlsuv_http_idle_keepalive(tlsuv_http_t *clt, long millis) {
     clt->keepalive = true;
     clt->idle_time = millis;
@@ -893,6 +940,7 @@ tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const ch
     http_req_init(r, method, path);
 
     r->client = clt;
+    r->timeout = clt->request_timeout;
     r->resp_cb = resp_cb;
     r->data = ctx;
 
@@ -931,6 +979,7 @@ int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, con
 
     if (r == req || req == clt->active) { // req is in the queue
         if (req == clt->active) {
+            stop_req_timer(clt);
             clt->active = NULL;
             // since active request is being canceled we don't want to consume what's left on the wire for it
             // and need to close connection

@@ -117,6 +117,7 @@ struct tlsuv_http_req_s {
     llhttp_t parser;
     enum http_request_state state;
     bool keepalive;
+    long timeout;
 
     bool req_chunked;
     ssize_t req_body_size;
@@ -167,6 +168,7 @@ struct tlsuv_http_s {
 
     long connect_timeout;
     long idle_time;
+    long request_timeout;
     uv_timer_t *conn_timer;
 
     uv_idle_t proc;
@@ -260,6 +262,25 @@ int tlsuv_http_idle_keepalive(tlsuv_http_t *clt, long millis);
 int tlsuv_http_connect_timeout(tlsuv_http_t *clt, long millis);
 
 /**
+ * \brief Set request timeout.
+ *
+ * Sets the length of time client will wait for a request to complete.
+ * The timeout only applies to the currently active request: it starts when the request
+ * becomes active (is sent out on an established connection) and runs until the response
+ * is fully received. Requests waiting in the queue are not charged for that time.
+ * Establishing the connection is governed separately by tlsuv_http_connect_timeout().
+ * A request that times out is failed with `UV_ETIMEDOUT`.
+ *
+ * Only requests created after this call are affected.
+ * @see tlsuv_http_req_timeout
+ * @param clt
+ * @param millis timeout in milliseconds, use 0 to disable, default is 0.
+ *        Any value <= 0 disables the timeout.
+ * @return 0 or error code
+ */
+int tlsuv_http_request_timeout(tlsuv_http_t* clt, long millis);
+
+/**
  * @brief Set #tls_context on the client.
  *
  * Useful if you have custom TLS context (different implementation)
@@ -323,6 +344,17 @@ tlsuv_http_req_t *tlsuv_http_req(tlsuv_http_t *clt, const char *method, const ch
  * @return o or error code
  */
 int tlsuv_http_req_header(tlsuv_http_req_t *req, const char *name, const char *value);
+
+/**
+ * Set timeout for this request, overriding the value inherited from the client.
+ *
+ * @see tlsuv_http_request_timeout
+ * @param req
+ * @param millis timeout in milliseconds, use 0 to disable.
+ *        Any value <= 0 disables the timeout.
+ * @return 0 or error code
+ */
+int tlsuv_http_req_timeout(tlsuv_http_req_t* req, long millis);
 
 /**
  * Write request body. Could be called multiple times.

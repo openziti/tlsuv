@@ -894,6 +894,155 @@ TEST_CASE("TLS to IP address", "[http]") {
     test.run();
 }
 
+TEST_CASE("request timeout", "[http]") {
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    resp_capture resp(resp_body_cb);
+
+    tlsuv_http_init(test.loop, &clt, testServerURL("http").c_str());
+    tlsuv_http_request_timeout(&clt, 1000);
+    tlsuv_http_req(&clt, "GET", "/delay/5", resp_capture_cb, &resp);
+
+    uv_timeval64_t start;
+    uv_gettimeofday(&start);
+    test.run();
+    uv_timeval64_t stop;
+    uv_gettimeofday(&stop);
+
+    THEN("request should time out well before the server responds") {
+        CHECK(resp.code == UV_ETIMEDOUT);
+        CHECK(duration(start, stop) < 3 * ONE_SECOND);
+    }
+
+    tlsuv_http_close(&clt, nullptr);
+    test.run();
+}
+
+TEST_CASE("per request timeout", "[http]") {
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    resp_capture resp(resp_body_cb);
+    resp_capture resp2(resp_body_cb);
+
+    tlsuv_http_init(test.loop, &clt, testServerURL("http").c_str());
+    // no client-wide timeout
+    tlsuv_http_req_t* req = tlsuv_http_req(&clt, "GET", "/delay/5", resp_capture_cb, &resp);
+    tlsuv_http_req_timeout(req, 1000);
+
+    tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp2);
+
+    test.run();
+
+    THEN("only the request with the timeout should fail") {
+        CHECK(resp.code == UV_ETIMEDOUT);
+        CHECK(resp2.code == HTTP_STATUS_OK);
+    }
+
+    tlsuv_http_close(&clt, nullptr);
+    test.run();
+}
+
+TEST_CASE("request timeout applies only to active request", "[http]") {
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    resp_capture resp[3] = {
+        resp_capture(resp_body_cb), resp_capture(resp_body_cb), resp_capture(resp_body_cb)
+    };
+
+    tlsuv_http_init(test.loop, &clt, testServerURL("http").c_str());
+    tlsuv_http_request_timeout(&clt, 1500);
+
+    // each request takes ~1 second, the last one does not become active until ~2 seconds in
+    for (auto& r : resp) {
+        tlsuv_http_req(&clt, "GET", "/delay/1", resp_capture_cb, &r);
+    }
+
+    uv_timeval64_t start;
+    uv_gettimeofday(&start);
+    test.run();
+    uv_timeval64_t stop;
+    uv_gettimeofday(&stop);
+
+    THEN("queued requests are not charged for time spent waiting") {
+        for (auto& r : resp) {
+            CHECK(r.code == HTTP_STATUS_OK);
+        }
+        CHECK(duration(start, stop) > 2 * ONE_SECOND);
+    }
+
+    tlsuv_http_close(&clt, nullptr);
+    test.run();
+}
+
+TEST_CASE("request timeout during response body", "[http]") {
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    tlsuv_http_body_cb bodyCb = [](tlsuv_http_req_t* req, char* b, ssize_t len) {
+        auto r = static_cast<resp_capture*>(req->data);
+        if (len > 0) {
+            r->body.append(b, len);
+        } else {
+            r->resp_body_end_called += 1;
+            r->code = len; // terminal code: UV_EOF or an error
+        }
+    };
+    resp_capture resp(bodyCb);
+
+    tlsuv_http_init(test.loop, &clt, testServerURL("http").c_str());
+    tlsuv_http_request_timeout(&clt, 1000);
+    // headers come back immediately, body is dribbled out over 5 seconds
+    tlsuv_http_req(&clt, "GET", "/drip?duration=5&delay=0&numbytes=100", resp_capture_cb, &resp);
+
+    test.run();
+
+    THEN("timeout is reported via body callback") {
+        CHECK(resp.headers["Content-Length"] == "100"); // headers were received
+        CHECK(resp.resp_body_end_called == 1);
+        CHECK(resp.code == UV_ETIMEDOUT);
+        CHECK(resp.body.size() < 100);
+    }
+
+    tlsuv_http_close(&clt, nullptr);
+    test.run();
+}
+
+TEST_CASE("request timeout does not disturb idle timeout", "[http]") {
+    UvLoopTest test;
+
+    tlsuv_http_t clt;
+    tlsuv_http_body_cb bodyCb = [](tlsuv_http_req_t* req, char* b, ssize_t len) {
+        auto r = static_cast<resp_capture*>(req->data);
+        if (len == UV_EOF) {
+            uv_gettimeofday(&r->resp_endtime);
+        }
+    };
+    resp_capture resp(bodyCb);
+
+    tlsuv_http_init(test.loop, &clt, testServerURL("http").c_str());
+    tlsuv_http_request_timeout(&clt, 5000);
+    tlsuv_http_idle_keepalive(&clt, 3000);
+    tlsuv_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
+
+    uv_timeval64_t start;
+    uv_gettimeofday(&start);
+    test.run();
+    uv_timeval64_t stop;
+    uv_gettimeofday(&stop);
+
+    THEN("request completes and connection is kept idle for the full idle time") {
+        CHECK(resp.code == HTTP_STATUS_OK);
+        CHECK(duration(start, resp.resp_endtime) < 2 * ONE_SECOND);
+        CHECK(duration(resp.resp_endtime, stop) >= (3 * ONE_SECOND - ONE_MILLI));
+    }
+
+    tlsuv_http_close(&clt, nullptr);
+    test.run();
+}
+
 TEST_CASE("connect timeout", "[http]") {
     UvLoopTest test;
 
