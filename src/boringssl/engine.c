@@ -116,6 +116,7 @@ static int tls_set_cert_internal(SSL* ssl, X509_STORE* store, EVP_PKEY* pkey);
 static BIO_METHOD* BIO_s_engine(void);
 
 static tls_context openssl_context_api = {
+        // .new_server_engine: TLS server engines are OpenSSL-only
     .version = tls_lib_version,
     .strerror = (const char *(*)(long))tls_error,
     .new_engine = new_boringssl_engine,
