@@ -146,6 +146,10 @@ func init() {
 		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
 		NotBefore:   time.Now(),
 		NotAfter:    time.Now().Add(24 * time.Hour),
+		// Apple's TLS policy requires server certificates to carry an explicit
+		// serverAuth EKU, so the applesec backend rejects the cert without it.
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	templ.SerialNumber = big.NewInt(42)
 	serverX509, err := x509.CreateCertificate(rand.Reader, templ, caX509, serverKey.Public(), caCert.PrivateKey)

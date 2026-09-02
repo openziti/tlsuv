@@ -109,6 +109,7 @@ struct UvLoopTest {
         if (rc != 0) {
             fprintf(stderr, "loop_close_failed: %d(%s)", rc, uv_strerror(rc));
             uv_print_all_handles(loop, stderr);
+            fflush(stderr);
         }
         free(loop);
     }

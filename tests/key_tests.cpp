@@ -185,6 +185,10 @@ JlTFCo9+PRbDqDeGVht898nBQJjE+9i/rOs9c6LzVswsoMrnnkhrESMF
 
 TEST_CASE("gen csr", "[engine]") {
     tls_context *ctx = default_tls_context(nullptr, 0);
+    if (ctx->generate_csr_to_pem == nullptr) {
+        ctx->free_ctx(ctx);
+        SKIP("TLS does not implement CSR generation");
+    }
 
     tlsuv_private_key_t key;
     REQUIRE(ctx->generate_key(&key) == 0);
