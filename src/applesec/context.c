@@ -399,17 +399,171 @@ static CFDataRef unwrap_pkcs8_ec(const uint8_t* der, size_t derlen) {
     return result;
 }
 
+// SEC1 ECPrivateKey -> the ANSI X9.63 form SecKeyCreateWithData() wants:
+// the uncompressed public point (0x04 || X || Y) followed by the private
+// scalar, left-padded to the field size.
+//
+//   ECPrivateKey ::= SEQUENCE { version INTEGER (1),
+//                               privateKey OCTET STRING,
+//                               [0] parameters OPTIONAL,
+//                               [1] publicKey OPTIONAL }
+static CFDataRef sec1_to_x963(const uint8_t* sec1, size_t len) {
+    const uint8_t *p = sec1, *end = sec1 + len;
+    const uint8_t* seq;
+    size_t seqlen;
+    if (!der_next(&p, end, 0x30, &seq, &seqlen)) return NULL;
+
+    const uint8_t *q = seq, *qend = seq + seqlen;
+    const uint8_t* item;
+    size_t itemlen;
+    if (!der_next(&q, qend, 0x02, &item, &itemlen)) return NULL; // version
+
+    const uint8_t* priv;
+    size_t privlen;
+    if (!der_next(&q, qend, 0x04, &priv, &privlen)) return NULL; // privateKey
+
+    // skip the optional [0] parameters to reach [1] publicKey
+    const uint8_t* pub = NULL;
+    size_t publen = 0;
+    while (q < qend) {
+        const uint8_t tag = *q;
+        if (!der_next(&q, qend, tag, &item, &itemlen)) break;
+        if (tag == 0xA1) {
+            const uint8_t *b = item, *bend = item + itemlen;
+            const uint8_t* bits;
+            size_t bitslen;
+            if (der_next(&b, bend, 0x03, &bits, &bitslen) && bitslen > 1 && bits[0] == 0) {
+                pub = bits + 1; // drop the unused-bits count
+                publen = bitslen - 1;
+            }
+            break;
+        }
+    }
+
+    // without the public point there is no way to build X9.63 short of doing
+    // the scalar multiplication ourselves
+    if (pub == NULL || publen < 3 || pub[0] != 0x04) return NULL;
+
+    size_t field = (publen - 1) / 2;
+    if (privlen > field) return NULL;
+
+    uint8_t* out = tlsuv__calloc(1, publen + field);
+    memcpy(out, pub, publen);
+    // left-pad the scalar; DER may have dropped leading zero bytes
+    memcpy(out + publen + (field - privlen), priv, privlen);
+
+    CFDataRef result = CFDataCreate(kCFAllocatorDefault, out, (CFIndex)(publen + field));
+    tlsuv__free(out);
+    return result;
+}
+
+// Reduces any of the private key encodings we accept -- PKCS#8 (RSA or EC),
+// PKCS#1 RSAPrivateKey, SEC1 ECPrivateKey -- to the raw representation
+// SecKeyCreateWithData() takes, and says which key type it is.
+static CFDataRef key_data_for(const uint8_t* der, size_t derlen, enum applesec_key_type* type) {
+    static const uint8_t OID_EC_PUBKEY[] = {0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01};
+    // NB: not OID_RSA -- Security/oidsalg.h already defines that
+    static const uint8_t OID_RSA_ENC[] = {0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01};
+
+    const uint8_t *p = der, *end = der + derlen;
+    const uint8_t* seq;
+    size_t seqlen;
+    if (!der_next(&p, end, 0x30, &seq, &seqlen)) return NULL;
+
+    const uint8_t *q = seq, *qend = seq + seqlen;
+    const uint8_t* item;
+    size_t itemlen;
+    if (!der_next(&q, qend, 0x02, &item, &itemlen)) return NULL; // version
+    if (q >= qend) return NULL;
+
+    // PKCS#8 PrivateKeyInfo: the version is followed by an AlgorithmIdentifier
+    if (*q == 0x30) {
+        const uint8_t* alg;
+        size_t alglen;
+        if (!der_next(&q, qend, 0x30, &alg, &alglen)) return NULL;
+
+        const uint8_t* inner;
+        size_t innerlen;
+        if (!der_next(&q, qend, 0x04, &inner, &innerlen)) return NULL;
+
+        if (alglen >= sizeof(OID_RSA_ENC) && memcmp(alg, OID_RSA_ENC, sizeof(OID_RSA_ENC)) == 0) {
+            *type = APPLESEC_KEY_RSA; // privateKey is a PKCS#1 RSAPrivateKey
+            return CFDataCreate(kCFAllocatorDefault, inner, (CFIndex)innerlen);
+        }
+        if (alglen >= sizeof(OID_EC_PUBKEY) && memcmp(alg, OID_EC_PUBKEY, sizeof(OID_EC_PUBKEY)) == 0) {
+            *type = APPLESEC_KEY_EC; // privateKey is a SEC1 ECPrivateKey
+            return sec1_to_x963(inner, innerlen);
+        }
+        return NULL;
+    }
+
+    // SEC1 ECPrivateKey: version is followed by the private scalar
+    if (*q == 0x04) {
+        *type = APPLESEC_KEY_EC;
+        return sec1_to_x963(der, derlen);
+    }
+
+    // PKCS#1 RSAPrivateKey: version is followed by the modulus
+    if (*q == 0x02) {
+        *type = APPLESEC_KEY_RSA;
+        return CFDataCreate(kCFAllocatorDefault, der, (CFIndex)derlen);
+    }
+
+    return NULL;
+}
+
+// Builds a SecKey directly, without going through SecItemImport. That keeps
+// keys off the legacy CDSA code path, which leaks on every import.
+static SecKeyRef create_private_key(CFDataRef blob, enum applesec_key_type* type) {
+    uint8_t* der = NULL;
+    size_t derlen = 0;
+    bool owned = false;
+    if (pem_to_der((const char*)CFDataGetBytePtr(blob), CFDataGetLength(blob), &der, &derlen) == 0) {
+        owned = true;
+    } else {
+        der = (uint8_t*)CFDataGetBytePtr(blob);
+        derlen = CFDataGetLength(blob);
+    }
+
+    CFDataRef key_data = key_data_for(der, derlen, type);
+    if (owned) tlsuv__free(der);
+    if (key_data == NULL) {
+        UM_LOG(WARN, "unrecognized private key format");
+        return NULL;
+    }
+
+    CFMutableDictionaryRef attrs = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFDictionaryAddValue(attrs, kSecAttrKeyClass, kSecAttrKeyClassPrivate);
+    CFDictionaryAddValue(attrs, kSecAttrKeyType,
+                         *type == APPLESEC_KEY_RSA ? kSecAttrKeyTypeRSA
+                                                   : kSecAttrKeyTypeECSECPrimeRandom);
+
+    CFErrorRef err = NULL;
+    SecKeyRef key = SecKeyCreateWithData(key_data, attrs, &err);
+    CFRelease(key_data);
+    CFRelease(attrs);
+
+    if (key == NULL) {
+        UM_LOG(WARN, "failed to create private key: %s", cferr(err));
+    }
+    if (err) CFRelease(err);
+    return key;
+}
+
+// Still needed for the mTLS identity: SecKeyCreateWithData() produces a
+// floating key, but SecIdentityCreateWithCertificate() can only pair a
+// certificate with a key that lives in a keychain.
+//
 // SecItemImport auto-detects PEM and DER, PKCS#8 RSA and the traditional
 // OpenSSL/SEC1 forms. `keyParams` must stay NULL: passing a populated
 // SecItemImportExportKeyParameters fails with errSecItemNotFound, since
 // keyAttributes there takes CSSM values rather than kSecAttr* constants.
 static OSStatus import_key(CFDataRef data, SecKeychainRef kc, CFArrayRef* items) {
-    SecExternalFormat fmt = kSecFormatUnknown;
-    SecExternalItemType type = kSecItemTypePrivateKey;
-    OSStatus rc = SecItemImport(data, NULL, &fmt, &type, 0, NULL, kc, items);
-    if (rc == errSecSuccess) return rc;
-
-    // PKCS#8 EC: unwrap to SEC1 and retry
+    // SecItemImport cannot parse PKCS#8 EC, and it leaks ~144 bytes of CSP
+    // provider state on *every failed import* (measured: linear in the number
+    // of failures). So convert up front instead of probing and retrying --
+    // there must be exactly one import call, and it has to succeed.
     uint8_t* der = NULL;
     size_t derlen = 0;
     bool owned = false;
@@ -420,15 +574,15 @@ static OSStatus import_key(CFDataRef data, SecKeychainRef kc, CFArrayRef* items)
         derlen = CFDataGetLength(data);
     }
 
+    // non-NULL only for PKCS#8 EC; every other encoding imports as-is
     CFDataRef sec1 = unwrap_pkcs8_ec(der, derlen);
     if (owned) tlsuv__free(der);
-    if (sec1 == NULL) return rc;
 
-    fmt = kSecFormatOpenSSL;
-    type = kSecItemTypePrivateKey;
-    OSStatus rc2 = SecItemImport(sec1, NULL, &fmt, &type, 0, NULL, kc, items);
-    CFRelease(sec1);
-    return rc2 == errSecSuccess ? rc2 : rc;
+    SecExternalFormat fmt = sec1 ? kSecFormatOpenSSL : kSecFormatUnknown;
+    SecExternalItemType type = kSecItemTypePrivateKey;
+    OSStatus rc = SecItemImport(sec1 ? sec1 : data, NULL, &fmt, &type, 0, NULL, kc, items);
+    if (sec1) CFRelease(sec1);
+    return rc;
 }
 
 static int load_key(tlsuv_private_key_t* key_ref, const char* keystr, size_t len) {
@@ -444,52 +598,17 @@ static int load_key(tlsuv_private_key_t* key_ref, const char* keystr, size_t len
     CFDataRef data = CFDataCreate(kCFAllocatorDefault, (const uint8_t*)buf, (CFIndex)buflen);
     free(file_buf);
 
-    CFArrayRef items = NULL;
-    OSStatus rc = import_key(data, NULL, &items);
-    if (rc != errSecSuccess || items == NULL || CFArrayGetCount(items) == 0) {
-        UM_LOG(WARN, "failed to load private key: %s", applesec_error(rc));
-        if (items) CFRelease(items);
+    enum applesec_key_type type = APPLESEC_KEY_UNKNOWN;
+    SecKeyRef k = create_private_key(data, &type);
+    if (k == NULL) {
         CFRelease(data);
         return -1;
-    }
-
-    SecKeyRef k = (SecKeyRef)CFArrayGetValueAtIndex(items, 0);
-    if (CFGetTypeID(k) != SecKeyGetTypeID()) {
-        UM_LOG(WARN, "imported item is not a key");
-        CFRelease(items);
-        CFRelease(data);
-        return -1;
-    }
-    CFRetain(k);
-    CFRelease(items);
-
-    // for some keys Security loads the private key but then fails to derive the
-    // public one; reloading from its external representation works around it.
-    SecKeyRef pub = SecKeyCopyPublicKey(k);
-    if (pub == NULL) {
-        CFDictionaryRef attrs = SecKeyCopyAttributes(k);
-        CFDataRef kd = SecKeyCopyExternalRepresentation(k, NULL);
-        if (kd != NULL && attrs != NULL) {
-            CFErrorRef err = NULL;
-            SecKeyRef k1 = SecKeyCreateWithData(kd, attrs, &err);
-            if (k1 != NULL) {
-                CFRelease(k);
-                k = k1;
-            } else {
-                UM_LOG(WARN, "could not derive public key: %s", cferr(err));
-            }
-            if (err) CFRelease(err);
-        }
-        if (kd) CFRelease(kd);
-        if (attrs) CFRelease(attrs);
-    } else {
-        CFRelease(pub);
     }
 
     struct sectransport_priv_key* pk = tlsuv__calloc(1, sizeof(*pk));
     pk->api = sec_key_api;
     pk->key = k;
-    pk->key_type = key_type_of(k);
+    pk->key_type = type;
     pk->pem = data; // keeps the exact bytes for to_pem() and keychain re-import
     *key_ref = &pk->api;
     return 0;
