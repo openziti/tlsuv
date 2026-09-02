@@ -23,6 +23,11 @@ void http_req_init(tlsuv_http_req_t* req, const char* method, const char* path);
 int http_req_cancel_err(tlsuv_http_t* clt, tlsuv_http_req_t* req, int error, const char* msg);
 
 void http_req_free(tlsuv_http_req_t * r);
+
+// replaces resp->status, freeing any status already set.
+// `status` may be NULL, and need not be NUL-terminated when `len` is given.
+void http_resp_set_status(tlsuv_http_resp_t *resp, const char *status, size_t len);
+
 ssize_t http_req_process(tlsuv_http_req_t* req, const char* buf, ssize_t len);
 int http_req_finish(tlsuv_http_req_t * req);
 

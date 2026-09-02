@@ -220,7 +220,7 @@ static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
 
     if (req->resp_cb != NULL) {
         req->resp.code = code;
-        req->resp.status = tlsuv__strdup(msg);
+        http_resp_set_status(&req->resp, msg, msg ? strlen(msg) : 0);
         req->resp_cb(&req->resp, req->data);
         req->resp_cb = NULL;
     } else if (req->resp.body_cb != NULL) {
@@ -245,7 +245,7 @@ static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
         STAILQ_REMOVE_HEAD(&queue, _next);
         if (r->resp_cb != NULL) {
             r->resp.code = code;
-            r->resp.status = tlsuv__strdup(msg);
+            http_resp_set_status(&r->resp, msg, msg ? strlen(msg) : 0);
             r->resp_cb(&r->resp, r->data);
             uv_unref((uv_handle_t *) &c->proc);
         }
@@ -989,7 +989,8 @@ int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, con
         }
 
         req->resp.code = error;
-        req->resp.status = tlsuv__strdup(msg ? msg : uv_strerror(error));
+        const char *status = msg ? msg : uv_strerror(error);
+        http_resp_set_status(&req->resp, status, strlen(status));
         clear_req_body(req, req->resp.code);
 
         if (req->state < headers_received && req->resp_cb) { // resp_cb has not been called yet

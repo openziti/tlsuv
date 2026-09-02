@@ -52,6 +52,16 @@ void http_req_init(tlsuv_http_req_t* r, const char* method, const char* path) {
     r->parser.data = r;
 }
 
+void http_resp_set_status(tlsuv_http_resp_t *resp, const char *status, size_t len) {
+    // the status can be set more than once for the same request: llhttp reports
+    // one for each response it parses, and a request that fails after its
+    // headers arrived replaces it with the error message.
+    if (resp->status) {
+        tlsuv__free(resp->status);
+    }
+    resp->status = tlsuv__strndup(status, len);
+}
+
 void http_req_free(tlsuv_http_req_t* req) {
     if (req == NULL) return;
 
@@ -391,7 +401,7 @@ static int http_status_cb(llhttp_t* parser, const char* status, size_t len) {
     tlsuv_http_req_t* r = parser->data;
     r->resp.code = (int)parser->status_code;
     snprintf(r->resp.http_version, sizeof(r->resp.http_version), "%1d.%1d", parser->http_major, parser->http_minor);
-    r->resp.status = tlsuv__strndup(status, len);
+    http_resp_set_status(&r->resp, status, len);
     return 0;
 }
 
