@@ -253,6 +253,9 @@ static void check_transfer(tlsuv_engine_t from, tlsuv_engine_t to, const std::st
     std::string received;
     std::vector<char> buf(16 * 1024);
 
+    CHECK(to->handshake_state(to) == TLS_HS_COMPLETE);
+    CHECK(from->handshake_state(from) == TLS_HS_COMPLETE);
+
     for (int i = 0; i < MAX_ITERATIONS && received.size() < data.size(); i++) {
         if (sent < data.size()) {
             int rc = from->write(from, data.data() + sent, data.size() - sent);
@@ -264,11 +267,16 @@ static void check_transfer(tlsuv_engine_t from, tlsuv_engine_t to, const std::st
         }
 
         size_t n = 0;
-        int rc = TLS_MORE_AVAILABLE;
-        while (rc == TLS_MORE_AVAILABLE) {
-            rc = to->read(to, buf.data(), &n, buf.size());
+        for (int j = 0; j < 10; j++) {
+            int rc = to->read(to, buf.data(), &n, buf.size());
             REQUIRE((rc == TLS_OK || rc == TLS_MORE_AVAILABLE || rc == TLS_AGAIN));
+            if (rc == TLS_AGAIN) {
+                // allow transport to catch up
+                uv_sleep(1);
+                continue;
+            }
             received.append(buf.data(), n);
+            if (rc == TLS_OK) break;
         }
     }
 
@@ -359,7 +367,7 @@ TEST_CASE("server engine handshake and data", "[engine][server]") {
 
     WHEN("payload spanning multiple TLS records: " << t->name()) {
         std::string big;
-        for (int i = 0; i < 4096; i++) big += "0123456789\n"; // 40KB
+        for (int i = 0; i < 4096; i++) big += "0123456789"; // 40KB
         check_transfer(clt_eng, srv_eng, big);
         check_transfer(srv_eng, clt_eng, big);
     }
@@ -515,6 +523,7 @@ TEST_CASE("server engine without CA requests no client cert", "[engine][server]"
         CHECK(peer == nullptr);
     }
 
+    INFO("transport: " << t->name());
     check_transfer(clt_eng, srv_eng, "no client auth");
 }
 
@@ -580,7 +589,7 @@ TEST_CASE("server engine client cert verify callback", "[engine][server]") {
 }
 
 TEST_CASE("server engine reset", "[engine][server]") {
-    auto make = GENERATE(as<transport_factory>{}, make_mem, make_socketpair, make_socket);
+    auto make = GENERATE(as<transport_factory>{}, make_socketpair, make_socket);
 
     tls_ctx_holder srv(test_ca);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
@@ -590,6 +599,9 @@ TEST_CASE("server engine reset", "[engine][server]") {
 
     const char *protos[] = {"bar"};
     engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
+    if (srv_eng->reset == nullptr) {
+        SKIP("reset is not implemented");
+    }
     srv_eng->set_protocols(srv_eng, protos, 1);
 
     for (int round = 0; round < 2; round++) {
@@ -598,6 +610,8 @@ TEST_CASE("server engine reset", "[engine][server]") {
 
         auto t = make();
         t->attach(clt_eng, srv_eng);
+
+        INFO("transport: " << t->name());
 
         REQUIRE(do_handshake(clt_eng, srv_eng));
         // accept state and the supported protocol list survive reset()

@@ -645,7 +645,6 @@ int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
         tlsuv_connector_req cr = ws->connect_req;
         ws->connect_req = NULL;
         c->cancel(cr);
-        on_ws_close(ws);
     }
 
     if (ws->src != NULL) {
@@ -659,8 +658,8 @@ int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
         UM_LOG(TRACE, "closing ws transport");
         ws->tr_close(ws->tr, (uv_close_cb)free);
         ws->tr = NULL;
-        on_ws_close(ws);
     }
+    on_ws_close(ws);
     return 0;
 }
 
