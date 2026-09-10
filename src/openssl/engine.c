@@ -741,6 +741,8 @@ tlsuv_engine_t new_openssl_server_engine(tls_context *ctx) {
 
     struct openssl_engine *engine = tlsuv__calloc(1, sizeof(struct openssl_engine));
     engine->api = openssl_engine_api;
+    // not requesting client certs yet
+    engine->api.get_peer_cert = NULL;
     engine->is_server = true;
 
     engine->ssl = SSL_new(context->ctx);

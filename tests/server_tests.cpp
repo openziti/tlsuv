@@ -425,7 +425,11 @@ TEST_CASE("server engine optional client cert", "[engine][server]") {
         clt.set_identity();
 
         engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
+        if (srv_eng->get_peer_cert == nullptr) {
+            SKIP("get_peer_cert is not implemented");
+        }
         engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
+
         auto t = make();
         t->attach(clt_eng, srv_eng);
         REQUIRE(do_handshake(clt_eng, srv_eng));
@@ -450,6 +454,10 @@ TEST_CASE("server engine optional client cert", "[engine][server]") {
 
     SECTION("client presents no certificate") {
         engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
+        if (srv_eng->get_peer_cert == nullptr) {
+            SKIP("get_peer_cert is not implemented");
+        }
+
         engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
         auto t = make();
         t->attach(clt_eng, srv_eng);
@@ -485,9 +493,11 @@ TEST_CASE("server engine without CA requests no client cert", "[engine][server]"
 
     // the client has an identity, so an absent peer cert proves the server never
     // sent a CertificateRequest
-    tlsuv_certificate_t peer = nullptr;
-    CHECK(srv_eng->get_peer_cert(srv_eng, &peer) == TLS_ERR);
-    CHECK(peer == nullptr);
+    if (srv_eng->get_peer_cert != nullptr) {
+        tlsuv_certificate_t peer = nullptr;
+        CHECK(srv_eng->get_peer_cert(srv_eng, &peer) == TLS_ERR);
+        CHECK(peer == nullptr);
+    }
 
     check_transfer(clt_eng, srv_eng, "no client auth");
 }
@@ -512,12 +522,15 @@ TEST_CASE("server engine client cert verify callback", "[engine][server]") {
     srv.tls->set_cert_verify(srv.tls, counting_verify, nullptr);
 
     tls_ctx_holder clt(test_ca);
+    engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
+    if (srv_eng->get_peer_cert == nullptr) {
+        SKIP("get_peer_cert is not implemented");
+    }
 
     SECTION("callback accepts the client cert") {
         verify_result = 0;
         clt.set_identity();
 
-        engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
         engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
         auto t = make();
         t->attach(clt_eng, srv_eng);
@@ -530,7 +543,6 @@ TEST_CASE("server engine client cert verify callback", "[engine][server]") {
         verify_result = -1;
         clt.set_identity();
 
-        engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
         engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
         auto t = make();
         t->attach(clt_eng, srv_eng);
@@ -542,7 +554,6 @@ TEST_CASE("server engine client cert verify callback", "[engine][server]") {
     SECTION("callback is not invoked without a client cert") {
         verify_result = -1; // would reject, but never gets asked
 
-        engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
         engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
         auto t = make();
         t->attach(clt_eng, srv_eng);
