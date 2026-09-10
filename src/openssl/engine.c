@@ -665,6 +665,8 @@ tlsuv_engine_t new_openssl_engine(tls_context *ctx, const char *host) {
 
     engine->ssl = SSL_new(context->ctx);
 
+    X509_VERIFY_PARAM* vfy_param = SSL_get0_param(engine->ssl);
+    X509_VERIFY_PARAM_set_purpose(vfy_param, X509_PURPOSE_ANY);
     SSL_set_tlsext_host_name(engine->ssl, host);
     SSL_set1_host(engine->ssl, host);
     SSL_set_connect_state(engine->ssl);
@@ -748,8 +750,6 @@ tlsuv_engine_t new_openssl_server_engine(tls_context *ctx) {
         return NULL;
     }
 
-    // no SSL_set_tlsext_host_name()/SSL_set1_host(): those are client side
-    // (SNI and peer hostname verification). Client SNI is ignored.
     SSL_set_accept_state(engine->ssl);
     SSL_set_app_data(engine->ssl, engine);
 
@@ -760,7 +760,9 @@ tlsuv_engine_t new_openssl_server_engine(tls_context *ctx) {
         return NULL;
     }
 
-    setup_client_auth(context, engine->ssl);
+    // disable for now: maybe add engine->set_client_auth()
+    // setup_client_auth(context, engine->ssl);
+    SSL_set_verify(engine->ssl, SSL_VERIFY_NONE, NULL);
 
     return &engine->api;
 }
@@ -846,7 +848,7 @@ static int alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *ou
             if (clen == slen && memcmp(cp, sp, slen) == 0) {
                 *out = sp; // stable: owned by the engine
                 *outlen = slen;
-                UM_LOG(VERB, "ALPN selected %.*s", (int)slen, sp);
+                UM_LOG(VERB, "ALPN selected %.*s", (int)slen, (char*)sp);
                 return SSL_TLSEXT_ERR_OK;
             }
             cp += clen;
@@ -1113,10 +1115,11 @@ tls_continue_hs(tlsuv_engine_t self) {
 
     if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
         return TLS_HS_CONTINUE;
-    } else { // something else is wrong
-        UM_LOG(ERR, "openssl: handshake was terminated: %s", tls_error(eng->error));
-        return TLS_HS_ERROR;
     }
+
+    // something else is wrong
+    UM_LOG(ERR, "openssl: handshake was terminated: %s", tls_error(eng->error));
+    return TLS_HS_ERROR;
 }
 
 static const char* tls_get_alpn(tlsuv_engine_t self) {
