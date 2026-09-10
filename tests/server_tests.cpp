@@ -58,6 +58,7 @@ static const char *test_host = "localhost";
 // A transport connects a client engine to a server engine. Each subclass covers
 // one of the engine's two IO modes.
 struct transport {
+    virtual const char* name() = 0;
     virtual ~transport() = default;
     virtual void attach(tlsuv_engine_t clt, tlsuv_engine_t srv) = 0;
 };
@@ -109,6 +110,10 @@ struct mem_transport : transport {
         clt->set_io(clt, &clt_ep, mem_read, mem_write);
         srv->set_io(srv, &srv_ep, mem_read, mem_write);
     }
+
+    const char* name() override {
+        return "mem_transport";
+    }
 };
 
 // loopback socket pair, both ends non-blocking so a single thread can drive both
@@ -137,6 +142,10 @@ struct socket_transport : transport {
     SOCKET listener = INVALID_SOCKET;
     SOCKET clt_sock = INVALID_SOCKET;
     SOCKET srv_sock = INVALID_SOCKET;
+
+    const char* name() override {
+        return "socket_transport";
+    }
 
     socket_transport() {
 #if defined(_WIN32)
@@ -202,6 +211,10 @@ struct uv_socketpair_transport : transport {
         clt->set_io_fd(clt, (tlsuv_sock_t) fds[0]);
         srv->set_io_fd(srv, (tlsuv_sock_t) fds[1]);
     }
+
+    const char* name() override {
+        return "socketpair";
+    }
 };
 
 using transport_factory = std::unique_ptr<transport> (*)();
@@ -251,9 +264,12 @@ static void check_transfer(tlsuv_engine_t from, tlsuv_engine_t to, const std::st
         }
 
         size_t n = 0;
-        int rc = to->read(to, buf.data(), &n, buf.size());
-        REQUIRE((rc == TLS_OK || rc == TLS_MORE_AVAILABLE || rc == TLS_AGAIN));
-        received.append(buf.data(), n);
+        int rc = TLS_MORE_AVAILABLE;
+        while (rc == TLS_MORE_AVAILABLE) {
+            rc = to->read(to, buf.data(), &n, buf.size());
+            REQUIRE((rc == TLS_OK || rc == TLS_MORE_AVAILABLE || rc == TLS_AGAIN));
+            received.append(buf.data(), n);
+        }
     }
 
     CHECK(sent == data.size());
@@ -302,7 +318,7 @@ struct engine_holder {
 #define SKIP_UNLESS_SERVER_SUPPORTED(holder)                                    \
     do {                                                                        \
         if (!(holder).supports_server()) {                                      \
-            WARN("TLS server engines are not supported by this backend");        \
+            WARN("TLS server engines are not supported by this backend");       \
             return;                                                             \
         }                                                                       \
     } while (0)
@@ -336,19 +352,19 @@ TEST_CASE("server engine handshake and data", "[engine][server]") {
 
     REQUIRE(do_handshake(clt_eng, srv_eng));
 
-    SECTION("small payload both ways") {
+    WHEN("small payload both ways: " << t->name()) {
         check_transfer(clt_eng, srv_eng, "hello server");
         check_transfer(srv_eng, clt_eng, "hello client");
     }
 
-    SECTION("payload spanning multiple TLS records") {
+    WHEN("payload spanning multiple TLS records: " << t->name()) {
         std::string big;
-        for (int i = 0; i < 4096; i++) big += "0123456789";  // 40KB
+        for (int i = 0; i < 4096; i++) big += "0123456789\n"; // 40KB
         check_transfer(clt_eng, srv_eng, big);
         check_transfer(srv_eng, clt_eng, big);
     }
 
-    SECTION("close notify") {
+    WHEN("close notify: " << t->name()) {
         CHECK(clt_eng->close(clt_eng) == 0);
 
         char buf[128];
