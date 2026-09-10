@@ -200,6 +200,8 @@ struct uv_socketpair_transport : transport {
 
     uv_socketpair_transport() {
         REQUIRE(uv_socketpair(SOCK_STREAM, 0, fds, UV_NONBLOCK_PIPE, UV_NONBLOCK_PIPE) == 0);
+        set_nonblocking(fds[0]);
+        set_nonblocking(fds[1]);
     }
 
     ~uv_socketpair_transport() override {
@@ -393,7 +395,9 @@ TEST_CASE("server engine ALPN", "[engine][server]") {
     engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
     engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
 
-    SECTION("server list order wins") {
+    auto t = make();
+
+    WHEN("server list order wins: " << t->name()) {
         // the client offers baz before bar, so a "bar" result can only come from
         // the server's own preference order
         const char *srv_protos[] = {"bar", "baz"};
@@ -401,7 +405,6 @@ TEST_CASE("server engine ALPN", "[engine][server]") {
         srv_eng->set_protocols(srv_eng, srv_protos, 2);
         clt_eng->set_protocols(clt_eng, clt_protos, 3);
 
-        auto t = make();
         t->attach(clt_eng, srv_eng);
         REQUIRE(do_handshake(clt_eng, srv_eng));
 
@@ -409,13 +412,12 @@ TEST_CASE("server engine ALPN", "[engine][server]") {
         CHECK_THAT(clt_eng->get_alpn(clt_eng), Catch::Matchers::Equals("bar"));
     }
 
-    SECTION("no overlap completes without ALPN") {
+    WHEN("no overlap completes without ALPN: " << t->name()) {
         const char *srv_protos[] = {"bar"};
         const char *clt_protos[] = {"foo"};
         srv_eng->set_protocols(srv_eng, srv_protos, 1);
         clt_eng->set_protocols(clt_eng, clt_protos, 1);
 
-        auto t = make();
         t->attach(clt_eng, srv_eng);
         REQUIRE(do_handshake(clt_eng, srv_eng));
 
@@ -423,11 +425,10 @@ TEST_CASE("server engine ALPN", "[engine][server]") {
         CHECK_THAT(clt_eng->get_alpn(clt_eng), Catch::Matchers::Equals(""));
     }
 
-    SECTION("server offers none") {
+    WHEN("server offers none: " << t->name()) {
         const char *clt_protos[] = {"foo"};
         clt_eng->set_protocols(clt_eng, clt_protos, 1);
 
-        auto t = make();
         t->attach(clt_eng, srv_eng);
         REQUIRE(do_handshake(clt_eng, srv_eng));
 
@@ -445,13 +446,14 @@ TEST_CASE("server engine optional client cert", "[engine][server]") {
 
     tls_ctx_holder clt(test_ca);
 
+    engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
+    if (srv_eng->get_peer_cert == nullptr) {
+        SKIP("get_peer_cert is not implemented");
+    }
+
     SECTION("client presents a certificate") {
         clt.set_identity();
 
-        engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
-        if (srv_eng->get_peer_cert == nullptr) {
-            SKIP("get_peer_cert is not implemented");
-        }
         engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
 
         auto t = make();
@@ -477,11 +479,6 @@ TEST_CASE("server engine optional client cert", "[engine][server]") {
     }
 
     SECTION("client presents no certificate") {
-        engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
-        if (srv_eng->get_peer_cert == nullptr) {
-            SKIP("get_peer_cert is not implemented");
-        }
-
         engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
         auto t = make();
         t->attach(clt_eng, srv_eng);
