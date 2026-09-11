@@ -36,6 +36,12 @@ else ()
 endif ()
 
 set(supported_tls_libs openssl mbedtls win32crypto boringssl)
+if (APPLE)
+    # Security.framework/SecureTransport backend: opt-in only, `openssl`
+    # remains the default on macOS.
+    list(APPEND supported_tls_libs applesec)
+endif ()
+
 set(TLSUV_TLSLIB ${default_crypto} CACHE STRING "TLS implementation library ${supported_tls_libs}")
 
 if(NOT TLSUV_TLSLIB IN_LIST supported_tls_libs)
@@ -94,8 +100,6 @@ if (TLSUV_HTTP)
     )
 endif (TLSUV_HTTP)
 
-add_subdirectory(src/${TLSUV_TLSLIB})
-
 if (TARGET libuv::uv)
     message(NOTICE "upstream project set libuv target")
     set(TLSUV_LIBUV_LIB libuv::uv)
@@ -118,6 +122,9 @@ if (NOT libuv_FOUND)
     pkg_check_modules(libuv REQUIRED IMPORTED_TARGET libuv)
     set(TLSUV_LIBUV_LIB PkgConfig::libuv)
 endif()
+
+# after libuv resolution: a backend may need uv.h (via src/util.h or tlsuv.h)
+add_subdirectory(src/${TLSUV_TLSLIB})
 
 add_library(tlsuv STATIC
         ${tlsuv_sources}

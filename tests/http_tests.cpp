@@ -463,7 +463,7 @@ TEST_CASE("client_cert_test","[http]") {
                       "GTH3fhaM/pZZGdIC75x/69Y=\n"
                       "-----END PRIVATE KEY-----";
         tlsuv_private_key_t pk = nullptr;
-        int rc = tls->load_key(&pk, key, strlen(key) + 1);
+        int rc = tls->load_key(&pk, key, strlen(key));
         REQUIRE(rc == 0);
         REQUIRE(pk != nullptr);
 
