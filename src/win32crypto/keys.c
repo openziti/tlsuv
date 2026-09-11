@@ -22,15 +22,16 @@
 #include <tlsuv/tls_engine.h>
 #include <ncrypt.h>
 
-#define PK_HEADER  "-----BEGIN PRIVATE KEY-----"
-#define PK_FOOTER "-----END PRIVATE KEY-----"
+#define PK_HDR "-----BEGIN PRIVATE KEY-----"
+#define PK_HEADER PK_HDR "\n"
+#define PK_FOOTER "-----END PRIVATE KEY-----\n"
 
 #define EC_PK_HEADER  "-----BEGIN EC PRIVATE KEY-----"
 
 #define RSA_PK_HEADER  "-----BEGIN RSA PRIVATE KEY-----"
 
-#define PUB_HEADER  "-----BEGIN PUBLIC KEY-----"
-#define PUB_FOOTER "-----END PUBLIC KEY-----"
+#define PUB_HEADER  "-----BEGIN PUBLIC KEY-----\n"
+#define PUB_FOOTER "-----END PUBLIC KEY-----\n"
 
 static struct win32crypto_private_key_s* new_private_key(NCRYPT_PROV_HANDLE ph, NCRYPT_KEY_HANDLE kh);
 
@@ -184,7 +185,7 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
     NCryptOpenStorageProvider(&ph, MS_KEY_STORAGE_PROVIDER, 0);
 
     const char *header = pem + skip;
-    if (strncmp(header, PK_HEADER, sizeof(PK_HEADER) -1) == 0) {
+    if (strncmp(header, PK_HDR, sizeof(PK_HDR) - 1) == 0) {
         status = NCryptImportKey(
             ph, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, NULL,
             &kh, der, der_len,
