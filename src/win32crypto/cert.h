@@ -32,6 +32,14 @@ extern win32_cert_t *win32_new_cert(PCCERT_CONTEXT, HCERTSTORE);
 
 const char* win32_error(DWORD code);
 
+/**
+ * Reads entire contents of a file into a newly allocated buffer (caller frees with tlsuv__free()).
+ * @param path path to file
+ * @param out_len (out) length of the returned buffer
+ * @returns buffer with file contents, or NULL if [path] is not a regular file or could not be read
+ */
+extern char* win32_read_file(const char *path, size_t *out_len);
+
 #define LOG_ERROR(lvl, code, fmt, ...) do { \
 UM_LOG(lvl, fmt ": 0x%lX/%s", ##__VA_ARGS__, code, win32_error(code));\
 } while(0)
