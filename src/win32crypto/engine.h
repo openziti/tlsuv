@@ -21,9 +21,15 @@
 
 #include <schannel.h>
 #include <sspi.h>
+#include <stdbool.h>
 
 struct win32crypto_engine_s {
     struct tlsuv_engine_s api;
+    // server engines accept (AcceptSecurityContext), client engines
+    // initiate (InitializeSecurityContext)
+    bool is_server;
+    // server engines only: ask the client for a certificate
+    bool request_client_cert;
     char *hostname;
 
     // requested protocols
@@ -56,5 +62,16 @@ extern struct win32crypto_engine_s *new_win32engine(
     const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
     void *verify_ctx);
+
+/**
+ * Creates a server(accept) side engine. [own_cert] is required and must have an
+ * associated private key. A client certificate is requested only when [ca] or
+ * [cert_verify_f] is provided, and is optional even then.
+ * Returns NULL when server credentials cannot be acquired.
+ */
+extern struct win32crypto_engine_s* new_win32_server_engine(
+    HCERTSTORE ca, PCCERT_CONTEXT own_cert,
+    int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
+    void* verify_ctx);
 
 #endif //ENGINE_H

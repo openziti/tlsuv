@@ -440,10 +440,24 @@ static tlsuv_engine_t new_win32_engine(tls_context *ctx, const char *hostname) {
         hostname, c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx);
 }
 
+static tlsuv_engine_t new_win32_server(tls_context* ctx) {
+    struct win32tls* c = (struct win32tls*)ctx;
+
+    if (c->own_cert == NULL || c->own_cert == INVALID_HANDLE_VALUE) {
+        UM_LOG(ERR, "server engine requires server credentials: "
+               "call tls_context->set_own_cert() first");
+        return NULL;
+    }
+
+    return (tlsuv_engine_t)new_win32_server_engine(
+        c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx);
+}
+
 static tls_context win32tls_context_api = {
         .version = tls_lib_version,
         .strerror = (const char *(*)(long)) win32_error,
         .new_engine = new_win32_engine,
+        .new_server_engine = new_win32_server,
         .free_ctx = tls_free_ctx,
         .set_ca_bundle = set_ca_bundle,
         .set_own_cert = set_own_cert,
