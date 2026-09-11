@@ -137,26 +137,11 @@ static int load_cert_internal(HCERTSTORE *storep, PCCERT_CONTEXT *crt, const cha
     }
 
     const char *pem = buf;
-    WIN32_FIND_DATA file_data;
-    HANDLE pem_file = FindFirstFileA(buf, &file_data);
-    FindClose(pem_file);
-    if (pem_file != INVALID_HANDLE_VALUE) {
-        if (file_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            UM_LOG(ERR, "file[%s] is a directory", buf);
-            return -1;
-        }
-
-        pem = (const char*)tlsuv__malloc(file_data.nFileSizeLow);
-        buf_len = file_data.nFileSizeLow;
-
-        pem_file = CreateFileA(buf, GENERIC_READ, FILE_SHARE_READ, NULL,
-                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (!ReadFile(pem_file, (LPVOID)pem, file_data.nFileSizeLow, NULL, NULL)) {
-            LOG_LAST_ERROR(ERR, "failed to read file[%s]", buf);
-            tlsuv__free((void*)pem);
-            return -1;
-        }
-        CloseHandle(pem_file);
+    size_t file_len;
+    char *file_data = win32_read_file(buf, &file_len);
+    if (file_data != NULL) {
+        pem = file_data;
+        buf_len = file_len;
     }
 
     HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_MEMORY,
