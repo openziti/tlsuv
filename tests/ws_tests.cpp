@@ -106,7 +106,10 @@ TEST_CASE("websocket fail tests", "[websocket]") {
         lt.run();
         CHECK(test.conn_status == 0);
         CHECK(rc == UV_EINVAL);
+
         tlsuv_websocket_close(clt, on_close_cb);
+        lt.run();
+        CHECK(test.close_cb_called);
     }
 
     WHEN("resolve failure ") {
@@ -114,6 +117,7 @@ TEST_CASE("websocket fail tests", "[websocket]") {
         lt.run();
         INFO("rc = " << rc);
         CHECK((rc == UV_EAI_NONAME || test.conn_status == UV_EAI_NONAME));
+        CHECK(test.close_cb_called);
     }
 }
 
@@ -131,18 +135,6 @@ TEST_CASE("websocket echo tests", "[websocket]") {
 
     uv_connect_t r;
     r.data = &test;
-
-    WHEN("ws echo test") {
-        SKIP("non-TLS connection is not supported by echo.websocket.org");
-        int rc = tlsuv_websocket_connect(&r, clt, "ws://" WS_TEST_HOST, on_connect, on_ws_data);
-        lt.run();
-        CHECK(rc == 0);
-        CHECK(test.conn_status == 0);
-        CHECK(test.write_status == 0);
-        CHECK(test.close_cb_called);
-        REQUIRE(test.resp.size() == 2);
-        CHECK_THAT(test.resp[1],Catch::Matchers::Matches("this is a test"));
-    }
 
     WHEN("wss echo test") {
         int rc = tlsuv_websocket_connect(&r, clt, "wss://" WS_TEST_HOST, on_connect, on_ws_data);

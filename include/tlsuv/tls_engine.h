@@ -68,6 +68,7 @@ typedef intptr_t ssize_t;
 #endif
 
 typedef struct tlsuv_engine_s *tlsuv_engine_t;
+typedef struct tlsuv_certificate_s *tlsuv_certificate_t;
 
 typedef void* io_ctx;
 typedef ssize_t (*io_read)(io_ctx, char *buf, size_t len);
@@ -78,11 +79,11 @@ struct tlsuv_engine_s {
     /**
      * set TLS engine abstract IO
      * @param self engine
-     * @param io_ctx IO object passed into [io_read] and [io_write] callbacks
-     * @param io_read read callback, called when TLS engine requires input SSL bytes
-     * @param io_write write callback, called when TLS engine requires output SSL bytes
+     * @param ctx IO object passed into [io_read] and [io_write] callbacks
+     * @param read_fn read callback, called when TLS engine requires input SSL bytes
+     * @param write_fn write callback, called when TLS engine requires output SSL bytes
      */
-    void (*set_io)(tlsuv_engine_t self, io_ctx, io_read, io_write);
+    void (*set_io)(tlsuv_engine_t self, io_ctx ctx, io_read read_fn, io_write write_fn);
 
     /**
      * sets TLS engine file descriptor IO (usually socket)
@@ -92,7 +93,13 @@ struct tlsuv_engine_s {
     void (*set_io_fd)(tlsuv_engine_t self, tlsuv_sock_t fd);
 
     /**
-     * set requested ALPN protocols
+     * set ALPN protocols.
+     *
+     * On a client engine this is the list of protocols offered to the server.
+     * On a server engine (see tls_context_s::new_server_engine()) this is the list
+     * of *supported* protocols: the first entry that the client also offered is
+     * selected. When there is no overlap the handshake completes without ALPN.
+     *
      * @param self
      * @param protocols
      * @param len
@@ -121,7 +128,7 @@ struct tlsuv_engine_s {
 
     /**
       * writes application data into ssl stream
-      * @param engine
+      * @param self engine instance
       * @param data
       * @param data_len
       * @return number of written bytes or error
@@ -130,7 +137,7 @@ struct tlsuv_engine_s {
 
     /**
      * read application bytes from ssl stream.
-     * @param engine
+     * @param self engine instance
      * @param out buffer for application data
      * @param out_bytes number of bytes received
      * @param maxout size of out buffer
@@ -146,21 +153,39 @@ struct tlsuv_engine_s {
 
     /**
      * resets state of the engine so it can be used on the next connection.
-     * @param engine
+     * @param self engine instance
      */
     int (*reset)(tlsuv_engine_t self);
 
     /**
      * frees the engine
-     * @param self
+     * @param self engine instance
      */
     void (*free)(tlsuv_engine_t self);
+
+    /**
+     * Retrieves the peer certificate chain after a completed handshake.
+     *
+     * On a server engine this is the client certificate. Client certificates are
+     * optional, so a successful handshake does not imply that one is present.
+     * On a client engine this is the server certificate.
+     *
+     * The returned handle is owned by the caller: release it with cert->free(cert).
+     *
+     * Optional: may be NULL when the TLS backend does not implement it, so always
+     * check before calling.
+     *
+     * @param self engine
+     * @param cert (out) receives the certificate handle, set to NULL on failure
+     * @return 0 on success, [TLS_ERR] if the peer presented no certificate,
+     *         the handshake has not completed, or the operation is unsupported
+     */
+    int (*get_peer_cert)(tlsuv_engine_t self, tlsuv_certificate_t *cert);
 };
 
 typedef struct tls_context_s tls_context;
 typedef struct tlsuv_public_key_s *tlsuv_public_key_t;
 typedef struct tlsuv_private_key_s *tlsuv_private_key_t;
-typedef struct tlsuv_certificate_s *tlsuv_certificate_t;
 
 #define TLSUV_CERT_API                                                              \
     void (*free)(struct tlsuv_certificate_s * cert);                                \
@@ -212,7 +237,7 @@ struct tls_context_s {
     int (*set_ca_bundle)(tls_context *ctx, const char *ca, size_t ca_len);
 
     /**
-     * \brief set client certfificate credentials.
+     * \brief set client certificate credentials.
      *
      * (Optional): if you bring your own engine this is probably not needed.
      * This method is provided to set client/server side cert on the default TLS context.
@@ -232,16 +257,23 @@ struct tls_context_s {
      * Causes intermediate certificates in the trust store to be treated as trust-anchors,
      * in the same way as the self-signed root CA certificates.
      * @param ctx
-     * @param on
+     * @param allow
      * @return 0 for success, err code if not supported
      */
     int (*allow_partial_chain)(tls_context *ctx, int allow);
 
     /**
-     * Sets custom server cert validation function.
+     * Sets custom peer cert validation function.
      *
      * certificate handle passed into verification callback can be used to verify signature by calling verify_signature()
      * callback function must return 0 for success, and any other value for failure
+     *
+     * The same callback validates server certificates on client engines and
+     * *client* certificates on server engines; it cannot tell the two roles apart.
+     * Note it is not invoked at all when a client presents no certificate, so it
+     * cannot be used to reject an anonymous client -- use
+     * tlsuv_engine_s::get_peer_cert() after the handshake for that.
+     *
      * @param ctx TLS implementation
      * @param verify_f verification callback, receives opaque(implementation specific) certificate handle and custom data
      * @param v_ctx custom data passed into verification callback
@@ -250,18 +282,6 @@ struct tls_context_s {
     void (*set_cert_verify)(tls_context *ctx,
             int (*verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx), void *v_ctx);
 
-//    /**
-//     * verify signature using supplied TLS certificate handle
-//     * @param cert
-//     * @param algo
-//     * @param data
-//     * @param datalen
-//     * @param sig
-//     * @param siglen
-//     */
-//    int (*verify_signature)(tlsuv_certificate_t cert, enum hash_algo algo, const char *data, size_t datalen, const char *sig,
-//                            size_t siglen);
-//
     /**
      * Parses certificate chain in base64 encoded PKCS#7 format
      * @param chain
@@ -271,18 +291,6 @@ struct tls_context_s {
      */
     int (*parse_pkcs7_certs)(tlsuv_certificate_t *chain, const char *pkcs7, size_t pkcs7len);
 
-//    /**
-//     * Generate PEM representation of the TLS certificate or chain.
-//     *
-//     * PEM buffer is allocated and returned. It is the caller responsibily to free memory associated with it.
-//     * @param cert TLS certificate handle
-//     * @param full_chain output whole chain
-//     * @param pem (out) address where allocated buffer pointer will be get stored
-//     * @param pemlen size of produced PEM
-//     * @returns 0 on success, or error code
-//     */
-//    int (*write_cert_to_pem)(tlsuv_certificate_t cert, int full_chain, char **pem, size_t *pemlen);
-//
     /**
      * Load X509 certificate from a file or in-memory PEM
      * @param cert Certificate handle
@@ -345,6 +353,33 @@ struct tls_context_s {
      */
      const char *(*version)();
 
+    /**
+     * Creates a new server-side (accept) TLS engine.
+     *
+     * The application owns the accepted connection and drives the handshake with
+     * handshake()/handshake_state() exactly as for a client engine; IO is attached
+     * with set_io()/set_io_fd(). No hostname verification is performed, and the
+     * client's SNI is ignored.
+     *
+     * Requires server credentials: set_own_cert() must have been called on this
+     * context, otherwise NULL is returned.
+     *
+     *
+     * The context must be fully configured before any server engine is created.
+     *
+     * Not implemented yet:
+     * SNI based certificate selection, session ticket key
+     * management, a client-certificate-*required* mode, and there is no
+     * tlsuv_stream_t listen/accept path.
+     *
+     * mTLS is not implemented. Client certificates are not requested or validated.
+     *
+     * Optional: may be NULL when the TLS backend has no server support.
+     *
+     * @param ctx TLS context
+     * @return new server engine, or NULL on error / when unsupported
+     */
+    tlsuv_engine_t (*new_server_engine)(tls_context *ctx);
 };
 
 typedef tls_context *(*tls_context_factory)(const char* ca, size_t ca_len);

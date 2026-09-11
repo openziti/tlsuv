@@ -24,6 +24,7 @@
 
 #include <openssl/err.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <openssl/ssl.h>
 #include <openssl/types.h>
 #include <openssl/crypto.h>
@@ -46,19 +47,29 @@ struct openssl_ctx {
     tls_context api;
     SSL_CTX *ctx;
 
-    // own client cert
+    // own client/server cert
     EVP_PKEY* pkey;
     X509_STORE* store;
 
+    // CA bundle explicitly supplied via set_ca_bundle(); NULL means the system
+    // or default trust store is used. Server engines verify client certs against
+    // it, and only request a client cert when it (or cert_verify_f) is set.
+    X509_STORE* ca_store;
+
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx);
     void *verify_ctx;
-    unsigned char *alpn_protocols;
 };
 
 struct openssl_engine {
     struct tlsuv_engine_s api;
     SSL *ssl;
+    bool is_server;
     char *alpn;
+
+    // server engines only: ALPN protocol list in wire format. alpn_select_cb
+    // hands OpenSSL a pointer into this buffer, so it must outlive the handshake.
+    unsigned char *alpn_protocols;
+    size_t alpn_protocols_len;
 
     BIO *bio;
     io_ctx io;
@@ -79,6 +90,11 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
 static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len);
 
 tlsuv_engine_t new_openssl_engine(tls_context *ctx, const char *host);
+tlsuv_engine_t new_openssl_server_engine(tls_context *ctx);
+static void setup_client_auth(struct openssl_ctx *c, SSL *ssl);
+static int alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                          const unsigned char *in, unsigned int inlen, void *arg);
+static int tls_get_peer_cert(tlsuv_engine_t self, tlsuv_certificate_t *cert);
 static void set_io(tlsuv_engine_t , io_ctx , io_read , io_write);
 static void set_io_fd(tlsuv_engine_t , tlsuv_sock_t);
 static void set_protocols(tlsuv_engine_t self, const char** protocols, int len);
@@ -132,6 +148,7 @@ static tls_context openssl_context_api = {
         .version = tls_lib_version,
         .strerror = (const char *(*)(long)) tls_error,
         .new_engine = new_openssl_engine,
+        .new_server_engine = new_openssl_server_engine,
         .free_ctx = tls_free_ctx,
         .set_ca_bundle = set_ca_bundle,
         .set_own_cert = tls_set_own_cert,
@@ -165,6 +182,7 @@ static struct tlsuv_engine_s openssl_engine_api = {
         .reset = tls_reset,
         .free = tls_free,
         .strerror = tls_eng_error,
+        .get_peer_cert = tls_get_peer_cert,
 };
 
 static OSSL_LIB_CTX *global_ctx;
@@ -389,10 +407,16 @@ static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
     struct openssl_ctx *c = (struct openssl_ctx *) tls;
     SSL_CTX *ctx = c->ctx;
 
+    // may be called more than once on the same context
+    X509_STORE_free(c->ca_store);
+    c->ca_store = NULL;
+
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     if (ca != NULL) {
         X509_STORE *store = load_certs(ca, ca_len);
-        SSL_CTX_set0_verify_cert_store(ctx, store);
+        // set1: SSL_CTX takes its own reference, we keep ours for server engines
+        SSL_CTX_set1_verify_cert_store(ctx, store);
+        c->ca_store = store;
     } else {
         // try loading default CA stores
 #if _WIN32
@@ -417,7 +441,9 @@ static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
 }
 
 static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t cabuf_len) {
-    const SSL_METHOD *method = TLS_client_method();
+    // a single SSL_CTX serves both roles; the role is fixed per-SSL with
+    // SSL_set_connect_state()/SSL_set_accept_state()
+    const SSL_METHOD *method = TLS_method();
     SSL_CTX *ctx = SSL_CTX_new_ex(global_ctx, NULL, method);
     if (ctx == NULL) {
         ERR_print_errors_fp(stderr);
@@ -426,6 +452,14 @@ static void init_ssl_context(struct openssl_ctx *c, const char *cabuf, size_t ca
     }
     SSL_CTX_set_app_data(ctx, c);
     c->ctx = ctx;
+
+    // OpenSSL has no per-SSL ALPN select callback. This one is only ever invoked
+    // for SSL objects in accept state, and finds the per-engine protocol list
+    // through SSL_get_app_data().
+    SSL_CTX_set_alpn_select_cb(ctx, alpn_select_cb, NULL);
+    // TLS_method() defaults to SSL_SESS_CACHE_SERVER, but tlsuv implements no
+    // session resumption - don't grow a cache nothing reads.
+    SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
 
     set_ca_bundle((tls_context *) c, cabuf, cabuf_len);
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
@@ -631,6 +665,8 @@ tlsuv_engine_t new_openssl_engine(tls_context *ctx, const char *host) {
 
     engine->ssl = SSL_new(context->ctx);
 
+    X509_VERIFY_PARAM* vfy_param = SSL_get0_param(engine->ssl);
+    X509_VERIFY_PARAM_set_purpose(vfy_param, X509_PURPOSE_ANY);
     SSL_set_tlsext_host_name(engine->ssl, host);
     SSL_set1_host(engine->ssl, host);
     SSL_set_connect_state(engine->ssl);
@@ -642,6 +678,93 @@ tlsuv_engine_t new_openssl_engine(tls_context *ctx, const char *host) {
             UM_LOG(ERR, "failed to set cert/key pair");
         }
     }
+
+    return &engine->api;
+}
+
+// subject names of the CA certificates in the given store, for advertising
+// acceptable client CAs. Returns NULL when there is nothing to advertise.
+static STACK_OF(X509_NAME) *ca_subject_names(X509_STORE *store) {
+    STACK_OF(X509_NAME) *names = sk_X509_NAME_new_null();
+    STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
+    for (int i = 0; i < sk_X509_OBJECT_num(objs); i++) {
+        X509 *x = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(objs, i));
+        if (x == NULL || X509_check_ca(x) == 0) continue;
+
+        X509_NAME *n = X509_NAME_dup(X509_get_subject_name(x));
+        if (n != NULL && sk_X509_NAME_push(names, n) == 0) {
+            X509_NAME_free(n);
+        }
+    }
+    if (sk_X509_NAME_num(names) == 0) {
+        sk_X509_NAME_free(names);
+        return NULL;
+    }
+    return names;
+}
+
+static void setup_client_auth(struct openssl_ctx *c, SSL *ssl) {
+    // Client certificates are OPTIONAL: on a server SSL_VERIFY_PEER *requests* a
+    // certificate, and without SSL_VERIFY_FAIL_IF_NO_PEER_CERT a client that
+    // sends none still completes the handshake.
+    if (c->ca_store == NULL && c->cert_verify_f == NULL) {
+        // nothing to verify against, so don't even ask
+        SSL_set_verify(ssl, SSL_VERIFY_NONE, NULL);
+        return;
+    }
+
+    // SSL_set_verify also replaces any verify callback inherited from the
+    // SSL_CTX. That is deliberate: on Apple the context callback is
+    // apple_ca_verify, which validates against the *system* trust store - the
+    // wrong store for client certificates.
+    SSL_set_verify(ssl, SSL_VERIFY_PEER, NULL);
+
+    if (c->ca_store != NULL) {
+        SSL_set1_verify_cert_store(ssl, c->ca_store);
+        // advertise acceptable client CAs (TLS1.2 CertificateRequest,
+        // TLS1.3 certificate_authorities) so clients can pick a usable identity
+        STACK_OF(X509_NAME) *names = ca_subject_names(c->ca_store);
+        if (names != NULL) {
+            SSL_set_client_CA_list(ssl, names); // takes ownership of the stack
+        }
+    }
+}
+
+tlsuv_engine_t new_openssl_server_engine(tls_context *ctx) {
+    struct openssl_ctx *context = (openssl_ctx *) ctx;
+
+    if (context->pkey == NULL || context->store == NULL) {
+        UM_LOG(ERR, "server engine requires server credentials: "
+                    "call tls_context->set_own_cert() first");
+        return NULL;
+    }
+
+    struct openssl_engine *engine = tlsuv__calloc(1, sizeof(struct openssl_engine));
+    engine->api = openssl_engine_api;
+    // not requesting client certs yet
+    engine->api.get_peer_cert = NULL;
+    engine->is_server = true;
+
+    engine->ssl = SSL_new(context->ctx);
+    if (engine->ssl == NULL) {
+        UM_LOG(ERR, "failed to create SSL: %s", tls_error(ERR_get_error()));
+        tlsuv__free(engine);
+        return NULL;
+    }
+
+    SSL_set_accept_state(engine->ssl);
+    SSL_set_app_data(engine->ssl, engine);
+
+    if (tls_set_cert_internal(engine->ssl, context->store, context->pkey) != 0) {
+        UM_LOG(ERR, "failed to set server cert/key pair");
+        SSL_free(engine->ssl);
+        tlsuv__free(engine);
+        return NULL;
+    }
+
+    // disable for now: maybe add engine->set_client_auth()
+    // setup_client_auth(context, engine->ssl);
+    SSL_set_verify(engine->ssl, SSL_VERIFY_NONE, NULL);
 
     return &engine->api;
 }
@@ -688,12 +811,55 @@ static void set_protocols(tlsuv_engine_t self, const char** protocols, int len) 
     for (int i=0; i < len; i++) {
         size_t plen = strlen(protocols[i]);
         *p++ = (unsigned char)plen;
-        strncpy((char*)p, protocols[i], plen);
+        memcpy(p, protocols[i], plen);
         p += plen;
     }
     *p = 0;
-    SSL_set_alpn_protos(e->ssl, alpn_protocols, strlen((char*)alpn_protocols));
-    tlsuv__free(alpn_protocols);
+
+    if (e->is_server) {
+        // kept for the lifetime of the engine: alpn_select_cb returns a pointer
+        // into this buffer and OpenSSL requires it to stay valid
+        tlsuv__free(e->alpn_protocols);
+        e->alpn_protocols = alpn_protocols;
+        e->alpn_protocols_len = protolen;
+    } else {
+        SSL_set_alpn_protos(e->ssl, alpn_protocols, (unsigned int)protolen);
+        tlsuv__free(alpn_protocols);
+    }
+}
+
+// Selects the first protocol from the server's supported list that the client
+// also offered. Deliberately hand-rolled: before OpenSSL 3.4
+// SSL_select_next_proto() falls back to the client's first protocol when there
+// is no overlap, which would negotiate something we do not support.
+static int alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                          const unsigned char *in, unsigned int inlen, void *arg) {
+    struct openssl_engine *e = SSL_get_app_data(ssl);
+    if (e == NULL || e->alpn_protocols == NULL) {
+        return SSL_TLSEXT_ERR_NOACK; // no ALPN configured, proceed without it
+    }
+
+    const unsigned char *sp = e->alpn_protocols;
+    const unsigned char *s_end = sp + e->alpn_protocols_len;
+    while (sp < s_end) {
+        unsigned char slen = *sp++;
+        if (slen == 0 || sp + slen > s_end) break; // malformed list
+        for (const unsigned char *cp = in; cp < in + inlen; ) {
+            unsigned char clen = *cp++;
+            if (clen == 0 || cp + clen > in + inlen) break;
+            if (clen == slen && memcmp(cp, sp, slen) == 0) {
+                *out = sp; // stable: owned by the engine
+                *outlen = slen;
+                UM_LOG(VERB, "ALPN selected %.*s", (int)slen, (char*)sp);
+                return SSL_TLSEXT_ERR_OK;
+            }
+            cp += clen;
+        }
+        sp += slen;
+    }
+
+    UM_LOG(VERB, "no mutually supported ALPN protocol");
+    return SSL_TLSEXT_ERR_NOACK; // continue without ALPN rather than aborting
 }
 
 static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
@@ -743,12 +909,10 @@ static void tls_set_cert_verify(tls_context *ctx,
 
 static void tls_free_ctx(tls_context *ctx) {
     struct openssl_ctx *c = (struct openssl_ctx*)ctx;
-    if (c->alpn_protocols) {
-        tlsuv__free(c->alpn_protocols);
-    }
 
     EVP_PKEY_free(c->pkey);
     X509_STORE_free(c->store);
+    X509_STORE_free(c->ca_store);
     SSL_CTX_free(c->ctx);
     tlsuv__free(c);
 }
@@ -759,11 +923,24 @@ static int tls_reset(tlsuv_engine_t self) {
 
     e->bio = NULL;
 
+    tlsuv__free(e->alpn);
+    e->alpn = NULL;
+
     if (!SSL_clear(e->ssl)) {
         int err = SSL_get_error(e->ssl, 0);
         UM_LOG(ERR, "error resetting TSL enging: %d(%s)", err, tls_error(err));
         return -1;
     }
+
+    // SSL_clear() is documented to retain the connect/accept state; be explicit
+    if (e->is_server) {
+        SSL_set_accept_state(e->ssl);
+    } else {
+        SSL_set_connect_state(e->ssl);
+    }
+
+    // the engine's supported ALPN protocols do not change between connections,
+    // so e->alpn_protocols is intentionally kept
     return 0;
 }
 
@@ -774,6 +951,7 @@ static void tls_free(tlsuv_engine_t self) {
     if (e->alpn) {
         tlsuv__free(e->alpn);
     }
+    tlsuv__free(e->alpn_protocols);
     tlsuv__free(e);
 }
 
@@ -939,21 +1117,57 @@ tls_continue_hs(tlsuv_engine_t self) {
 
     if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
         return TLS_HS_CONTINUE;
-    } else { // something else is wrong
-        UM_LOG(ERR, "openssl: handshake was terminated: %s", tls_error(eng->error));
-        return TLS_HS_ERROR;
     }
+
+    // something else is wrong
+    UM_LOG(ERR, "openssl: handshake was terminated: %s", tls_error(eng->error));
+    return TLS_HS_ERROR;
 }
 
 static const char* tls_get_alpn(tlsuv_engine_t self) {
     struct openssl_engine *eng = (struct openssl_engine *) self;
-    const unsigned char *proto;
-    unsigned int protolen;
+    const unsigned char *proto = NULL;
+    unsigned int protolen = 0;
     SSL_get0_alpn_selected(eng->ssl, &proto, &protolen);
 
+    tlsuv__free(eng->alpn);
     eng->alpn = tlsuv__calloc(1, protolen + 1);
-    strncpy(eng->alpn, (const char*)proto, protolen);
+    if (protolen > 0) {
+        memcpy(eng->alpn, proto, protolen);
+    }
     return eng->alpn;
+}
+
+static int tls_get_peer_cert(tlsuv_engine_t self, tlsuv_certificate_t *cert) {
+    struct openssl_engine *e = (struct openssl_engine *) self;
+    if (cert == NULL) return TLS_ERR;
+    *cert = NULL;
+
+    X509 *leaf = SSL_get1_peer_certificate(e->ssl);
+    if (leaf == NULL) {
+        UM_LOG(VERB, "peer presented no certificate");
+        return TLS_ERR;
+    }
+
+    X509_STORE *store = X509_STORE_new();
+    X509_STORE_add_cert(store, leaf); // takes its own reference
+    X509_free(leaf);
+
+    // on the server side SSL_get_peer_cert_chain() excludes the peer's leaf,
+    // hence the explicit add above; duplicate adds are a no-op
+    STACK_OF(X509) *chain = SSL_get0_verified_chain(e->ssl);
+    if (chain == NULL) {
+        chain = SSL_get_peer_cert_chain(e->ssl);
+    }
+    for (int i = 0; chain != NULL && i < sk_X509_num(chain); i++) {
+        X509_STORE_add_cert(store, sk_X509_value(chain, i));
+    }
+
+    struct cert_s *c = tlsuv__calloc(1, sizeof(*c));
+    cert_init(c);
+    c->cert = store;
+    *cert = (tlsuv_certificate_t) c;
+    return 0;
 }
 
 static int tls_write(tlsuv_engine_t self, const char *data, size_t data_len) {

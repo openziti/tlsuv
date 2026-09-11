@@ -168,6 +168,7 @@ static struct cert_s cert_api = {
 };
 
 static tls_context mbedtls_context_api = {
+        // .new_server_engine: TLS server engines are OpenSSL-only
         .version = mbedtls_version,
         .strerror = mbedtls_error,
         .new_engine = new_mbedtls_engine,

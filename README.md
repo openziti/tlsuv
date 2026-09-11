@@ -67,6 +67,12 @@ of `tls_engine` for individual connections
 - `tls_engine` is an object for handling handshake and encryption for a single connection.
 Similar in purpose to `mbedtls_ssl_ctx` or `SSL` in OpenSSL
 
+Both interfaces carry optional members that may be `NULL` when an implementation does not provide them,
+so always check before calling. `tls_context::new_server_engine()` (creating a TLS engine for an already
+accepted connection) and `tls_engine::get_peer_cert()` are currently implemented by the OpenSSL backend
+only. Server support is engine-level: the application owns the listening socket and the accept loop,
+and `tlsuv_stream_t` has no listen/accept API.
+
 ## Building standalone 
 See [development](HACKING.md) instruction for building this project standalone 
 for checking out samples, or contributing.
