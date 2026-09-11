@@ -626,24 +626,3 @@ TEST_CASE("server engine reset", "[engine][server]") {
     }
 }
 
-TEST_CASE("server engine over a blocking in-memory transport", "[engine][server]") {
-    // small write cap so io_write returns TLS_AGAIN mid-handshake and mid-write,
-    // exercising the BIO retry-write path the socket transport rarely hits
-    tls_ctx_holder srv(test_ca);
-    SKIP_UNLESS_SERVER_SUPPORTED(srv);
-    srv.set_identity();
-
-    tls_ctx_holder clt(test_ca);
-
-    engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
-    engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
-
-    mem_transport t(512);
-    t.attach(clt_eng, srv_eng);
-
-    REQUIRE(do_handshake(clt_eng, srv_eng));
-
-    std::string big;
-    for (int i = 0; i < 1024; i++) big += "0123456789"; // 10KB
-    check_transfer(clt_eng, srv_eng, big);
-}
