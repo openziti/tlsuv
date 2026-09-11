@@ -22,12 +22,13 @@
 #include <tlsuv/tls_engine.h>
 #include <ncrypt.h>
 
-#define PK_HEADER  "-----BEGIN PRIVATE KEY-----\n"
+#define PK_HDR "-----BEGIN PRIVATE KEY-----"
+#define PK_HEADER PK_HDR "\n"
 #define PK_FOOTER "-----END PRIVATE KEY-----\n"
 
-#define EC_PK_HEADER  "-----BEGIN EC PRIVATE KEY-----\n"
+#define EC_PK_HEADER  "-----BEGIN EC PRIVATE KEY-----"
 
-#define RSA_PK_HEADER  "-----BEGIN RSA PRIVATE KEY-----\n"
+#define RSA_PK_HEADER  "-----BEGIN RSA PRIVATE KEY-----"
 
 #define PUB_HEADER  "-----BEGIN PUBLIC KEY-----\n"
 #define PUB_FOOTER "-----END PUBLIC KEY-----\n"
@@ -158,15 +159,23 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
     DWORD skip;
     BYTE *der = NULL;
 
-    if (CryptStringToBinaryA(data, (DWORD)data_len,
+    const char *pem = data;
+    size_t pem_len = data_len;
+    char *file_data = win32_read_file(data, &pem_len);
+    if (file_data != NULL) {
+        pem = file_data;
+    }
+
+    if (CryptStringToBinaryA(pem, (DWORD)pem_len,
                              CRYPT_STRING_BASE64HEADER, NULL, &der_len,
                              &skip, NULL)) {
         der = tlsuv__malloc(der_len);
-        CryptStringToBinaryA(data, (DWORD)data_len,
+        CryptStringToBinaryA(pem, (DWORD)pem_len,
                                   CRYPT_STRING_BASE64HEADER, der, &der_len,
                                   &skip, NULL);
     } else {
         LOG_LAST_ERROR(ERR, "failed to decode PEM data");
+        tlsuv__free(file_data);
         return -1;
     }
 
@@ -175,8 +184,8 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
     SECURITY_STATUS status = ERROR_SUCCESS;
     NCryptOpenStorageProvider(&ph, MS_KEY_STORAGE_PROVIDER, 0);
 
-    const char *header = data + skip;
-    if (strncmp(header, PK_HEADER, sizeof(PK_HEADER) -1) == 0) {
+    const char *header = pem + skip;
+    if (strncmp(header, PK_HDR, sizeof(PK_HDR) - 1) == 0) {
         status = NCryptImportKey(
             ph, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, NULL,
             &kh, der, der_len,
@@ -195,6 +204,7 @@ extern int win32crypto_load_key(tlsuv_private_key_t *key, const char *data, size
 
 finish:
     tlsuv__free(der);
+    tlsuv__free(file_data);
     if (status != ERROR_SUCCESS) {
         UM_LOG(ERR, "failed to parse private key info: %s", win32_error(status));
     }

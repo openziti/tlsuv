@@ -161,21 +161,49 @@ static int verify_cert_ca(const struct tlsuv_certificate_s * c, void *v_ctx) {
     return -1;
 }
 
-static SECURITY_STATUS verify_server_cert(struct win32crypto_engine_s *engine)
-{
-    PCCERT_CONTEXT server_cert = NULL;
-    SECURITY_STATUS rc;
+// Retrieves the peer certificate chain. On a server the peer is the client, and
+// SEC_E_NO_CREDENTIALS means it presented no certificate.
+static SECURITY_STATUS get_peer_chain(struct win32crypto_engine_s* engine, PCCERT_CONTEXT* chain) {
+    *chain = NULL;
+    if (engine->handshake_st != TLS_HS_COMPLETE) {
+        return SEC_E_INVALID_HANDLE;
+    }
+    return QueryContextAttributes(&engine->ctxt_handle, SECPKG_ATTR_REMOTE_CERT_CHAIN, chain);
+}
 
-    rc = QueryContextAttributes(&engine->ctxt_handle, SECPKG_ATTR_REMOTE_CERT_CHAIN, &server_cert);
+static SECURITY_STATUS verify_peer_cert(struct win32crypto_engine_s* engine) {
+    PCCERT_CONTEXT peer_cert = NULL;
+    SECURITY_STATUS rc = get_peer_chain(engine, &peer_cert);
     if (rc != SEC_E_OK) {
-        LOG_LAST_ERROR(ERR, "failed to get server cert");
+        // client certificates are optional: a client that sent none still
+        // completes the handshake, and there is nothing to run the callback on
+        if (engine->is_server && rc == SEC_E_NO_CREDENTIALS) {
+            UM_LOG(VERB, "client did not present a certificate");
+            return SEC_E_OK;
+        }
+        LOG_ERROR(ERR, rc, "failed to get peer cert");
         return rc;
     }
 
-    tlsuv_certificate_t crt = (tlsuv_certificate_t)win32_new_cert(server_cert, server_cert->hCertStore);
+    tlsuv_certificate_t crt = (tlsuv_certificate_t)win32_new_cert(peer_cert, peer_cert->hCertStore);
     int verified = engine->cert_verify_f(crt, engine->verify_ctx);
     crt->free(crt);
     return  verified == 0 ? ERROR_SUCCESS : TRUST_E_FAIL;
+}
+
+static int engine_get_peer_cert(tlsuv_engine_t self, tlsuv_certificate_t* cert) {
+    struct win32crypto_engine_s* engine = (struct win32crypto_engine_s*)self;
+    *cert = NULL;
+
+    PCCERT_CONTEXT peer_cert = NULL;
+    SECURITY_STATUS rc = get_peer_chain(engine, &peer_cert);
+    if (rc != SEC_E_OK || peer_cert == NULL) {
+        LOG_ERROR(VERB, rc, "no peer certificate");
+        return TLS_ERR;
+    }
+
+    *cert = (tlsuv_certificate_t)win32_new_cert(peer_cert, peer_cert->hCertStore);
+    return 0;
 }
 
 static tls_handshake_state handshake_1(struct win32crypto_engine_s *engine) {
@@ -252,26 +280,60 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         engine->handshake_st == TLS_HS_ERROR)
         return engine->handshake_st;
 
-    if (engine->handshake_st == TLS_HS_BEFORE) {
+    // a client speaks first; a server has nothing to say until it hears a
+    // ClientHello, so it falls through to the read below
+    if (!engine->is_server && engine->handshake_st == TLS_HS_BEFORE) {
         return handshake_1(engine);
     }
 
-    u_long req_flags =
+    // the security context is created by the first call that processes input,
+    // which for a server engine is the ClientHello
+    bool first = !SecIsValidHandle(&engine->ctxt_handle);
+
+    u_long req_flags;
+    if (engine->is_server) {
+        req_flags =
+            ASC_REQ_CONFIDENTIALITY |
+            ASC_REQ_REPLAY_DETECT |
+            ASC_REQ_SEQUENCE_DETECT |
+            ASC_REQ_EXTENDED_ERROR |
+            ASC_REQ_STREAM;
+        if (engine->request_client_cert) {
+            // requests, but does not require: a client that sends no certificate
+            // still completes the handshake
+            req_flags |= ASC_REQ_MUTUAL_AUTH;
+        }
+    } else {
+        req_flags =
             ISC_REQ_USE_SUPPLIED_CREDS |
             ISC_REQ_CONFIDENTIALITY |
             ISC_REQ_REPLAY_DETECT |
             ISC_REQ_SEQUENCE_DETECT |
             ISC_REQ_STREAM;
+    }
     u_long ret_flags = 0;
-    if (engine->status == SEC_I_CONTINUE_NEEDED ||
-        engine->status == SEC_E_INCOMPLETE_MESSAGE) {
+
+    // read only when there is nothing buffered to work with, or when the last
+    // call reported the buffered record is still short
+    if (engine->inbound_len == 0 || engine->status == SEC_E_INCOMPLETE_MESSAGE) {
+        size_t space = sizeof(engine->inbound) - engine->inbound_len;
+        if (space == 0) {
+            UM_LOG(ERR, "handshake message larger than %zu bytes", sizeof(engine->inbound));
+            engine->handshake_st = TLS_HS_ERROR;
+            return engine->handshake_st;
+        }
+
         UM_LOG(VERB, "trying to read");
         ssize_t read = engine->read_fn(engine->io,
-                                      engine->inbound + engine->inbound_len,
-                                      sizeof(engine->inbound) - engine->inbound_len);
+                                       engine->inbound + engine->inbound_len,
+                                       space);
         if (read > 0) {
             engine->inbound_len += read;
             UM_LOG(TRACE, "read %zd bytes of handshake data", read);
+        } else if (read == TLS_AGAIN) {
+            // the peer has not sent its next flight yet, try again later
+            engine->handshake_st = TLS_HS_CONTINUE;
+            return engine->handshake_st;
         } else {
             UM_LOG(ERR, "failed to read handshake data: %zd", read);
             engine->handshake_st = TLS_HS_ERROR;
@@ -279,36 +341,60 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         }
     }
 
-    SecBuffer inbuf[2] = { {
+    SecBuffer inbuf[3] = { {
                                    .BufferType = SECBUFFER_TOKEN,
                                    .pvBuffer = engine->inbound,
-                                   .cbBuffer = engine->inbound_len,
-                           },
-                           {
-                                   .BufferType = SECBUFFER_EMPTY,
+                                   .cbBuffer = (unsigned long)engine->inbound_len,
+        },
+        {
+            .BufferType = SECBUFFER_EMPTY,
+            .pvBuffer = NULL,
+            .cbBuffer = 0,
+        },
+        {
+            .BufferType = SECBUFFER_EMPTY,
                                    .pvBuffer = NULL,
                                    .cbBuffer = 0,
                            }};
 
     SecBufferDesc inbuf_desc = { SECBUFFER_VERSION, 2, inbuf };
 
+    // a server advertises its supported protocols with the call that processes
+    // the ClientHello; Schannel picks the one to answer with
+    if (engine->is_server && first && engine->protocols) {
+        inbuf[2].BufferType = SECBUFFER_APPLICATION_PROTOCOLS;
+        inbuf[2].pvBuffer = engine->protocols;
+        inbuf[2].cbBuffer = (unsigned long)engine->protocols_len;
+        inbuf_desc.cBuffers = 3;
+    }
+
     char alert_buf[1024];
     SecBuffer outbuf[3] = {
-            { .BufferType = SECBUFFER_TOKEN, .pvBuffer = engine->outbound, .cbBuffer = sizeof(engine->outbound) },
-            { .BufferType = SECBUFFER_ALERT, .pvBuffer = alert_buf, .cbBuffer = sizeof(alert_buf) },
+        {.BufferType = SECBUFFER_TOKEN, .pvBuffer = engine->outbound, .cbBuffer = sizeof(engine->outbound)},
+        {.BufferType = SECBUFFER_ALERT, .pvBuffer = alert_buf, .cbBuffer = sizeof(alert_buf) },
             { .BufferType = SECBUFFER_EMPTY },
     };
     SecBufferDesc outbuf_desc = { SECBUFFER_VERSION, 2, outbuf };
 
     UM_LOG(TRACE, "processing %d bytes", inbuf[0].cbBuffer);
     log_tls_message(engine, "<<<", inbuf[0].pvBuffer, inbuf[0].cbBuffer);
-    engine->status = InitializeSecurityContextA(
-        &engine->cred_handle, &engine->ctxt_handle, NULL,
-        req_flags, 0, 0,
-        &inbuf_desc,
-        0,
-        NULL,
-        &outbuf_desc, &ret_flags, NULL);
+    if (engine->is_server) {
+        engine->status = AcceptSecurityContext(
+            &engine->cred_handle,
+            first ? NULL : &engine->ctxt_handle,
+            &inbuf_desc,
+            req_flags, 0,
+            first ? &engine->ctxt_handle : NULL,
+            &outbuf_desc, &ret_flags, NULL);
+    } else {
+        engine->status = InitializeSecurityContextA(
+            &engine->cred_handle, &engine->ctxt_handle, NULL,
+            req_flags, 0, 0,
+            &inbuf_desc,
+            0,
+            NULL,
+            &outbuf_desc, &ret_flags, NULL);
+    }
 
     if (engine->status == SEC_E_INCOMPLETE_MESSAGE) {
         UM_LOG(VERB, "TLS message incomplete");
@@ -328,13 +414,6 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
     switch (engine->status) {
         case SEC_E_OK:
             engine->handshake_st = TLS_HS_COMPLETE;
-            if (engine->cert_verify_f &&
-                (engine->status = verify_server_cert(engine)) != SEC_E_OK) {
-                LOG_ERROR(ERR, engine->status, "failed to verify server certificate");
-                engine->handshake_st = TLS_HS_ERROR;
-                return engine->handshake_st;
-            }
-            QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_STREAM_SIZES, &engine->sizes);
             break;
         case SEC_I_CONTINUE_NEEDED:
             engine->handshake_st = TLS_HS_CONTINUE;
@@ -345,6 +424,8 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
             break;
     }
 
+    // flush before verifying: the peer needs this flight to finish its own
+    // handshake, and an alert produced above has to reach it too
     for (int i = 0; i < 3; i++) {
         if (outbuf[i].BufferType == SECBUFFER_TOKEN && outbuf[i].cbBuffer > 0) {
             log_tls_message(engine, ">>>", outbuf[i].pvBuffer, outbuf[i].cbBuffer);
@@ -356,11 +437,21 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
             }
         }
     }
+
+    if (engine->handshake_st == TLS_HS_COMPLETE) {
+        if (engine->cert_verify_f &&
+            (engine->status = verify_peer_cert(engine)) != SEC_E_OK) {
+            LOG_ERROR(ERR, engine->status, "failed to verify peer certificate");
+            engine->handshake_st = TLS_HS_ERROR;
+            return engine->handshake_st;
+        }
+        QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_STREAM_SIZES, &engine->sizes);
+    }
     return engine->handshake_st;
 }
 
-static void engine_set_protocols(tlsuv_engine_t self, const char **protocols, int len) {
-    struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
+static void engine_set_protocols(tlsuv_engine_t self, const char** protocols, int len) {
+    struct win32crypto_engine_s* engine = (struct win32crypto_engine_s*)self;
     tlsuv__free(engine->protocols);
     engine->protocols = NULL;
     engine->protocols_len = 0;
@@ -406,23 +497,33 @@ static const char* engine_get_protocol(tlsuv_engine_t self) {
     }
 
     if (engine->alpn.ProtoNegoStatus == SecApplicationProtocolNegotiationStatus_Success) {
-        return engine->alpn.ProtocolId;
+        return (const char*)engine->alpn.ProtocolId;
     }
 
-    if (QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_APPLICATION_PROTOCOL, &engine->alpn) != SEC_E_OK) {
-        LOG_LAST_ERROR(ERR, "failed to get ALPN");
-        return NULL;
+    SECURITY_STATUS rc = QueryContextAttributesA(&engine->ctxt_handle,
+                                                 SECPKG_ATTR_APPLICATION_PROTOCOL, &engine->alpn);
+    if (rc != SEC_E_OK) {
+        LOG_ERROR(ERR, rc, "failed to get ALPN");
+        return "";
     }
 
-    if (engine->alpn.ProtoNegoStatus != SecApplicationProtocolNegotiationStatus_None) {
-        return engine->alpn.ProtocolId;
+    // anything short of Success (None, or SelectedClientOnly on a client whose
+    // offer the server did not acknowledge) means no protocol was negotiated
+    if (engine->alpn.ProtoNegoStatus != SecApplicationProtocolNegotiationStatus_Success) {
+        return "";
     }
 
-    return "";
+    // ProtocolId is a fixed size array and is not NUL terminated
+    if (engine->alpn.ProtocolIdSize >= sizeof(engine->alpn.ProtocolId)) {
+        UM_LOG(ERR, "invalid ALPN protocol length: %d", engine->alpn.ProtocolIdSize);
+        return "";
+    }
+    engine->alpn.ProtocolId[engine->alpn.ProtocolIdSize] = 0;
+    return (const char*)engine->alpn.ProtocolId;
 }
 
 static int engine_close(tlsuv_engine_t self) {
-    struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
+    struct win32crypto_engine_s* engine = (struct win32crypto_engine_s*)self;
     DWORD shut = SCHANNEL_SHUTDOWN;
     SECURITY_STATUS rc;
     ApplyControlToken(&engine->ctxt_handle, &(SecBufferDesc){
@@ -448,11 +549,19 @@ static int engine_close(tlsuv_engine_t self) {
     };
 
     u_long flags;
-    rc = InitializeSecurityContextA(
-        &engine->cred_handle, &engine->ctxt_handle, engine->hostname,
-        ISC_REQ_STREAM | ISC_REQ_CONFIDENTIALITY,
-        0, 0, NULL, 0,
-        &engine->ctxt_handle, &outbuf_desc, &flags, NULL);
+    if (engine->is_server) {
+        rc = AcceptSecurityContext(
+            &engine->cred_handle, &engine->ctxt_handle, NULL,
+            ASC_REQ_STREAM | ASC_REQ_CONFIDENTIALITY,
+            0,
+            &engine->ctxt_handle, &outbuf_desc, &flags, NULL);
+    } else {
+        rc = InitializeSecurityContextA(
+            &engine->cred_handle, &engine->ctxt_handle, engine->hostname,
+            ISC_REQ_STREAM | ISC_REQ_CONFIDENTIALITY,
+            0, 0, NULL, 0,
+            &engine->ctxt_handle, &outbuf_desc, &flags, NULL);
+    }
     if (rc != ERROR_SUCCESS) {
         LOG_ERROR(ERR, rc, "close result flags[0x%lX]", flags);
     }
@@ -589,7 +698,7 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
 
         if (engine->inbound_len == 0) {
             *out = p - data;
-            return read > 0 ? TLS_OK : (int)read;
+            return *out > 0 ? TLS_OK : (int)read;
         }
 
         SecBuffer bufs[4] = {
@@ -685,39 +794,59 @@ static struct tlsuv_engine_s api = {
     .strerror = engine_strerror,
     .reset = engine_reset,
     .free = engine_free,
+    .get_peer_cert = engine_get_peer_cert,
 };
 
-struct win32crypto_engine_s *new_win32engine(
-    const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
-    int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
-    void *verify_ctx)
-{
-    struct win32crypto_engine_s *engine = tlsuv__calloc(1, sizeof(*engine));
+// common part of both engine flavours: allocation, and picking how the peer
+// certificate gets verified (explicit callback, else the CA bundle when one is
+// set, else nothing)
+static struct win32crypto_engine_s* engine_alloc(
+    bool is_server, HCERTSTORE ca,
+    int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
+    void* verify_ctx) {
+    struct win32crypto_engine_s* engine = tlsuv__calloc(1, sizeof(*engine));
     engine->api = api;
+    engine->is_server = is_server;
     engine->handshake_st = TLS_HS_BEFORE;
-    engine->hostname = hostname ? tlsuv__strdup(hostname) : NULL;
 
-    char subj[256] = {};
-    if (own_cert) {
-        CertNameToStrA(X509_ASN_ENCODING, &own_cert->pCertInfo->Subject, CERT_NAME_ATTR_TYPE, subj, sizeof(subj));
-    }
-    UM_LOG(INFO, "creating client engine host[%s] subject[%s]", engine->hostname, subj);
+    // a zeroed handle passes SecIsValidHandle(), so mark both explicitly unset
+    SecInvalidateHandle(&engine->cred_handle);
+    SecInvalidateHandle(&engine->ctxt_handle);
 
     engine->ca = ca;
-    DWORD flags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_MEMORY_STORE_CERT ;
-    if ((ca == NULL || ca == INVALID_HANDLE_VALUE) && cert_verify_f == NULL) {
-        flags |= SCH_CRED_AUTO_CRED_VALIDATION;
-    } else if (cert_verify_f) {
+    if (cert_verify_f) {
         engine->cert_verify_f = cert_verify_f;
         engine->verify_ctx = verify_ctx;
-        flags |= SCH_CRED_MANUAL_CRED_VALIDATION;
-    } else {
+    } else if (ca != NULL && ca != INVALID_HANDLE_VALUE) {
         engine->cert_verify_f = verify_cert_ca;
         engine->verify_ctx = engine;
-        flags |= SCH_CRED_MANUAL_CRED_VALIDATION;
     }
+    return engine;
+}
 
-    PCCERT_CONTEXT certs[1] = { own_cert, };
+static void cert_subject(PCCERT_CONTEXT cert, char* subj, size_t len) {
+    *subj = 0;
+    if (cert) {
+        CertNameToStrA(X509_ASN_ENCODING, &cert->pCertInfo->Subject, CERT_NAME_ATTR_TYPE, subj, (DWORD)len);
+    }
+}
+
+struct win32crypto_engine_s* new_win32engine(
+    const char* hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
+    int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
+    void* verify_ctx) {
+    struct win32crypto_engine_s* engine = engine_alloc(false, ca, cert_verify_f, verify_ctx);
+    engine->hostname = hostname ? tlsuv__strdup(hostname) : NULL;
+
+    char subj[256];
+    cert_subject(own_cert, subj, sizeof(subj));
+    UM_LOG(INFO, "creating client engine host[%s] subject[%s]", engine->hostname, subj);
+
+    DWORD flags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_MEMORY_STORE_CERT;
+    // engine_alloc() set a verifier iff there is something to verify against
+    flags |= engine->cert_verify_f ? SCH_CRED_MANUAL_CRED_VALIDATION : SCH_CRED_AUTO_CRED_VALIDATION;
+
+    PCCERT_CONTEXT certs[1] = {own_cert,};
     SCHANNEL_CRED credentials = {
         .dwVersion = SCHANNEL_CRED_VERSION,
         .dwFlags = flags,
@@ -734,6 +863,66 @@ struct win32crypto_engine_s *new_win32engine(
                               NULL);
     if (rc != ERROR_SUCCESS) {
         LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result");
+    }
+    return engine;
+}
+
+struct win32crypto_engine_s *new_win32_server_engine(
+    HCERTSTORE ca, PCCERT_CONTEXT own_cert,
+    int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
+    void *verify_ctx)
+{
+    if (own_cert == NULL || own_cert == INVALID_HANDLE_VALUE) {
+        UM_LOG(ERR, "server engine requires server credentials");
+        return NULL;
+    }
+
+    struct win32crypto_engine_s *engine = engine_alloc(true, ca, cert_verify_f, verify_ctx);
+    // nothing to verify a client certificate against means there is no point
+    // asking for one
+    engine->request_client_cert = engine->cert_verify_f != NULL;
+
+    char subj[256];
+    cert_subject(own_cert, subj, sizeof(subj));
+    UM_LOG(INFO, "creating server engine subject[%s] client_auth[%s]",
+           subj, engine->request_client_cert ? "requested" : "off");
+
+    PCCERT_CONTEXT certs[1] = { own_cert, };
+    SCHANNEL_CRED credentials = {
+        .dwVersion = SCHANNEL_CRED_VERSION,
+        // client certificates are validated by verify_peer_cert(), not by
+        // Schannel, and are never mapped to a Windows account
+        .dwFlags = SCH_CRED_MEMORY_STORE_CERT |
+                   SCH_CRED_MANUAL_CRED_VALIDATION |
+                   SCH_CRED_NO_SYSTEM_MAPPER,
+        .grbitEnabledProtocols = SP_PROT_TLS1_2_SERVER | SP_PROT_TLS1_3_SERVER,
+        .cCreds = 1,
+        .paCred = certs,
+    };
+
+    SECURITY_STATUS rc = AcquireCredentialsHandleA(NULL,
+                              (TCHAR *)(UNISP_NAME),
+                              SECPKG_CRED_INBOUND, NULL,
+                              &credentials, NULL, NULL,
+                              &engine->cred_handle,
+                              NULL);
+    if (rc != ERROR_SUCCESS) {
+        // TLS 1.3 server support needs the newer SCH_CREDENTIALS structure on
+        // some Windows versions; fall back to TLS 1.2 rather than fail outright
+        LOG_ERROR(WARN, rc, "AcquireCredentialsHandleA(TLS1.2+TLS1.3) result");
+        credentials.grbitEnabledProtocols = SP_PROT_TLS1_2_SERVER;
+        rc = AcquireCredentialsHandleA(NULL,
+                                       (TCHAR *)(UNISP_NAME),
+                                       SECPKG_CRED_INBOUND, NULL,
+                                       &credentials, NULL, NULL,
+                                       &engine->cred_handle,
+                                       NULL);
+    }
+
+    if (rc != ERROR_SUCCESS) {
+        LOG_ERROR(ERR, rc, "failed to acquire server credentials");
+        engine_free(&engine->api);
+        return NULL;
     }
     return engine;
 }

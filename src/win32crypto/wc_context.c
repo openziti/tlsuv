@@ -137,26 +137,11 @@ static int load_cert_internal(HCERTSTORE *storep, PCCERT_CONTEXT *crt, const cha
     }
 
     const char *pem = buf;
-    WIN32_FIND_DATA file_data;
-    HANDLE pem_file = FindFirstFileA(buf, &file_data);
-    FindClose(pem_file);
-    if (pem_file != INVALID_HANDLE_VALUE) {
-        if (file_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            UM_LOG(ERR, "file[%s] is a directory", buf);
-            return -1;
-        }
-
-        pem = (const char*)tlsuv__malloc(file_data.nFileSizeLow);
-        buf_len = file_data.nFileSizeLow;
-
-        pem_file = CreateFileA(buf, GENERIC_READ, FILE_SHARE_READ, NULL,
-                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (!ReadFile(pem_file, (LPVOID)pem, file_data.nFileSizeLow, NULL, NULL)) {
-            LOG_LAST_ERROR(ERR, "failed to read file[%s]", buf);
-            tlsuv__free((void*)pem);
-            return -1;
-        }
-        CloseHandle(pem_file);
+    size_t file_len;
+    char *file_data = win32_read_file(buf, &file_len);
+    if (file_data != NULL) {
+        pem = file_data;
+        buf_len = file_len;
     }
 
     HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_MEMORY,
@@ -440,10 +425,24 @@ static tlsuv_engine_t new_win32_engine(tls_context *ctx, const char *hostname) {
         hostname, c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx);
 }
 
+static tlsuv_engine_t new_win32_server(tls_context* ctx) {
+    struct win32tls* c = (struct win32tls*)ctx;
+
+    if (c->own_cert == NULL || c->own_cert == INVALID_HANDLE_VALUE) {
+        UM_LOG(ERR, "server engine requires server credentials: "
+               "call tls_context->set_own_cert() first");
+        return NULL;
+    }
+
+    return (tlsuv_engine_t)new_win32_server_engine(
+        c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx);
+}
+
 static tls_context win32tls_context_api = {
         .version = tls_lib_version,
         .strerror = (const char *(*)(long)) win32_error,
         .new_engine = new_win32_engine,
+        .new_server_engine = new_win32_server,
         .free_ctx = tls_free_ctx,
         .set_ca_bundle = set_ca_bundle,
         .set_own_cert = set_own_cert,

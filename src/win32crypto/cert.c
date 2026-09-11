@@ -24,6 +24,40 @@
 #include <bcrypt.h>
 #include <ncrypt.h>
 
+char* win32_read_file(const char *path, size_t *out_len) {
+    WIN32_FIND_DATA file_data;
+    HANDLE find = FindFirstFileA(path, &file_data);
+    if (find == INVALID_HANDLE_VALUE) {
+        return NULL;
+    }
+    FindClose(find);
+
+    if (file_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        UM_LOG(ERR, "file[%s] is a directory", path);
+        return NULL;
+    }
+
+    HANDLE f = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (f == INVALID_HANDLE_VALUE) {
+        LOG_LAST_ERROR(ERR, "failed to open file[%s]", path);
+        return NULL;
+    }
+
+    char *buf = tlsuv__malloc(file_data.nFileSizeLow);
+    DWORD read = 0;
+    if (!ReadFile(f, buf, file_data.nFileSizeLow, &read, NULL)) {
+        LOG_LAST_ERROR(ERR, "failed to read file[%s]", path);
+        CloseHandle(f);
+        tlsuv__free(buf);
+        return NULL;
+    }
+    CloseHandle(f);
+
+    *out_len = file_data.nFileSizeLow;
+    return buf;
+}
+
 static void free_cert(tlsuv_certificate_t cert) {
     win32_cert_t *c = (win32_cert_t *) cert;
     if (c->store) {
