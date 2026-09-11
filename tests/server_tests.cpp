@@ -412,17 +412,24 @@ TEST_CASE("server engine ALPN", "[engine][server]") {
         CHECK_THAT(clt_eng->get_alpn(clt_eng), Catch::Matchers::Equals("bar"));
     }
 
-    WHEN("no overlap completes without ALPN: " << t->name()) {
+    WHEN("no overlap: " << t->name()) {
         const char *srv_protos[] = {"bar"};
         const char *clt_protos[] = {"foo"};
         srv_eng->set_protocols(srv_eng, srv_protos, 1);
         clt_eng->set_protocols(clt_eng, clt_protos, 1);
 
         t->attach(clt_eng, srv_eng);
+#if defined(TEST_win32crypto)
+        // Schannel treats a fully disjoint ALPN offer as a fatal handshake error
+        // (SEC_E_APPLICATION_PROTOCOL_MISMATCH) rather than completing without a
+        // negotiated protocol like the other backends do.
+        REQUIRE_FALSE(do_handshake(clt_eng, srv_eng));
+#else
         REQUIRE(do_handshake(clt_eng, srv_eng));
 
         CHECK_THAT(srv_eng->get_alpn(srv_eng), Catch::Matchers::Equals(""));
         CHECK_THAT(clt_eng->get_alpn(clt_eng), Catch::Matchers::Equals(""));
+#endif
     }
 
     WHEN("server offers none: " << t->name()) {
