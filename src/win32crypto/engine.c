@@ -698,7 +698,7 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
 
         if (engine->inbound_len == 0) {
             *out = p - data;
-            return read > 0 ? TLS_OK : (int)read;
+            return *out > 0 ? TLS_OK : (int)read;
         }
 
         SecBuffer bufs[4] = {

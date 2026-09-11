@@ -22,15 +22,15 @@
 #include <tlsuv/tls_engine.h>
 #include <ncrypt.h>
 
-#define PK_HEADER  "-----BEGIN PRIVATE KEY-----\n"
-#define PK_FOOTER "-----END PRIVATE KEY-----\n"
+#define PK_HEADER  "-----BEGIN PRIVATE KEY-----"
+#define PK_FOOTER "-----END PRIVATE KEY-----"
 
-#define EC_PK_HEADER  "-----BEGIN EC PRIVATE KEY-----\n"
+#define EC_PK_HEADER  "-----BEGIN EC PRIVATE KEY-----"
 
-#define RSA_PK_HEADER  "-----BEGIN RSA PRIVATE KEY-----\n"
+#define RSA_PK_HEADER  "-----BEGIN RSA PRIVATE KEY-----"
 
-#define PUB_HEADER  "-----BEGIN PUBLIC KEY-----\n"
-#define PUB_FOOTER "-----END PUBLIC KEY-----\n"
+#define PUB_HEADER  "-----BEGIN PUBLIC KEY-----"
+#define PUB_FOOTER "-----END PUBLIC KEY-----"
 
 static struct win32crypto_private_key_s* new_private_key(NCRYPT_PROV_HANDLE ph, NCRYPT_KEY_HANDLE kh);
 
