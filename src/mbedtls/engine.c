@@ -131,6 +131,8 @@ static int mbedtls_reset(tlsuv_engine_t engine);
 
 static const char *mbedtls_version(void);
 
+static enum tls_fips_status mbedtls_fips_status(tls_context* ctx, char* module, size_t modulelen);
+
 static const char *mbedtls_eng_error(tlsuv_engine_t engine);
 
 static void mbedtls_free(tlsuv_engine_t engine);
@@ -170,6 +172,7 @@ static struct cert_s cert_api = {
 static tls_context mbedtls_context_api = {
         // .new_server_engine: TLS server engines are OpenSSL-only
         .version = mbedtls_version,
+        .fips_status = mbedtls_fips_status,
         .strerror = mbedtls_error,
         .new_engine = new_mbedtls_engine,
         .free_ctx = mbedtls_free_ctx,
@@ -202,6 +205,12 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *ca, siz
 
 static const char* mbedtls_version(void) {
     return MBEDTLS_VERSION_STRING_FULL;
+}
+
+static enum tls_fips_status mbedtls_fips_status(tls_context* ctx, char* module, size_t modulelen) {
+    // mbedTLS has no FIPS validated mode
+    if (module && modulelen > 0) *module = 0;
+    return TLS_FIPS_UNSUPPORTED;
 }
 
 const char *mbedtls_error(long code) {

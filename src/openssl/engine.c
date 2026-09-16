@@ -28,6 +28,9 @@
 #include <openssl/ssl.h>
 #include <openssl/types.h>
 #include <openssl/crypto.h>
+#include <openssl/core_names.h>
+#include <openssl/params.h>
+#include <openssl/provider.h>
 
 #include "keys.h"
 #include "../keychain.h"
@@ -114,6 +117,7 @@ static int tls_close(tlsuv_engine_t self);
 static int tls_reset(tlsuv_engine_t self);
 
 static const char* tls_lib_version();
+static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen);
 static const char *tls_eng_error(tlsuv_engine_t self);
 
 static void tls_free(tlsuv_engine_t self);
@@ -146,6 +150,7 @@ static X509_STORE *load_system_certs();
 
 static tls_context openssl_context_api = {
         .version = tls_lib_version,
+        .fips_status = tls_fips_status,
         .strerror = (const char *(*)(long)) tls_error,
         .new_engine = new_openssl_engine,
         .new_server_engine = new_openssl_server_engine,
@@ -213,6 +218,53 @@ static const char* tls_lib_version() {
     snprintf(version, sizeof(version), "%s%s",
              OpenSSL_version(OPENSSL_VERSION), fips ? " [FIPS]" : "");
     return version;
+}
+
+struct fips_module_s {
+    char* buf;
+    size_t buflen;
+};
+
+// called for each provider that is already active in the library context,
+// so it has none of the load/unload side effects of OSSL_PROVIDER_try_load()
+static int fips_module_cb(OSSL_PROVIDER* prov, void* arg) {
+    struct fips_module_s* mod = arg;
+    const char* name = NULL;
+    const char* vers = NULL;
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_construct_utf8_ptr(OSSL_PROV_PARAM_NAME, (char**)&name, 0),
+        OSSL_PARAM_construct_utf8_ptr(OSSL_PROV_PARAM_VERSION, (char**)&vers, 0),
+        OSSL_PARAM_construct_end(),
+    };
+
+    if (!OSSL_PROVIDER_get_params(prov, params) || name == NULL) {
+        return 1; // keep looking
+    }
+
+    if (strstr(name, "FIPS") == NULL && strstr(name, "fips") == NULL) {
+        return 1; // keep looking
+    }
+
+    snprintf(mod->buf, mod->buflen, "%s%s%s", name, vers ? " " : "", vers ? vers : "");
+    return 0; // found it, stop
+}
+
+static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen) {
+    if (module && modulelen > 0) *module = 0;
+
+    // the default properties only say that fips=yes was *requested*:
+    // the provider still has to be there for that request to mean anything
+    if (!EVP_default_properties_is_fips_enabled(global_ctx) ||
+        !OSSL_PROVIDER_available(global_ctx, "fips")) {
+        return TLS_FIPS_DISABLED;
+    }
+
+    if (module && modulelen > 0) {
+        struct fips_module_s mod = {.buf = module, .buflen = modulelen};
+        OSSL_PROVIDER_do_all(global_ctx, fips_module_cb, &mod);
+    }
+
+    return TLS_FIPS_ENABLED;
 }
 
 const char *tls_error(unsigned long code) {
