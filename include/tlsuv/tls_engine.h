@@ -222,6 +222,12 @@ struct tlsuv_certificate_s {
     TLSUV_CERT_API
 };
 
+enum tls_fips_status {
+    TLS_FIPS_UNSUPPORTED = -1, /* backend has no FIPS mode, or cannot report it */
+    TLS_FIPS_DISABLED = 0, /* backend supports FIPS, but it is not active */
+    TLS_FIPS_ENABLED = 1, /* FIPS validated crypto is in effect */
+};
+
 struct tls_context_s {
     /* creates new TLS engine for a host */
     tlsuv_engine_t (*new_engine)(tls_context *ctx, const char *host);
@@ -380,6 +386,24 @@ struct tls_context_s {
      * @return new server engine, or NULL on error / when unsupported
      */
     tlsuv_engine_t (*new_server_engine)(tls_context *ctx);
+
+    /**
+     * Reports whether the TLS backend is operating in FIPS mode.
+     *
+     * this method must be implemented by every backend and is never NULL,
+     * so a compliance check cannot be silently skipped.
+     * Backends with no FIPS mode of their own report [TLS_FIPS_UNSUPPORTED].
+     *
+     * @param ctx TLS context
+     * @param module (out, optional) buffer receiving the name and version of the
+     *        FIPS module, e.g. "OpenSSL FIPS Provider 3.1.2". May be NULL, and
+     *        modulelen may be 0. The result is NUL terminated and truncated to
+     *        fit. It is only filled in when [TLS_FIPS_ENABLED] is returned and
+     *        the backend can identify its module, and is set to "" otherwise.
+     * @param modulelen size of the module buffer
+     * @return one of [enum tls_fips_status]
+     */
+    enum tls_fips_status (*fips_status)(tls_context* ctx, char* module, size_t modulelen);
 };
 
 typedef tls_context *(*tls_context_factory)(const char* ca, size_t ca_len);

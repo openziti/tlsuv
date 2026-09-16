@@ -93,6 +93,24 @@ static const char* tls_lib_version() {
     return version;
 }
 
+static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen) {
+    if (module && modulelen > 0) *module = 0;
+
+    BOOLEAN fips = FALSE;
+    if (!BCRYPT_SUCCESS(BCryptGetFipsAlgorithmMode(&fips)) || !fips) {
+        return TLS_FIPS_DISABLED;
+    }
+
+    // CNG has no equivalent of OpenSSL's provider name/version parameters.
+    // The NCrypt version reported by tls_lib_version() describes the key
+    // storage provider, not the validated module, so it is not used here.
+    if (module && modulelen > 0) {
+        snprintf(module, modulelen, "Windows CNG");
+    }
+
+    return TLS_FIPS_ENABLED;
+}
+
 static int parse_pkcs7_certs(tlsuv_certificate_t *ctx, const char *data, size_t len) {
     if (data == NULL || len == 0) {
         UM_LOG(ERR, "no data to parse");
@@ -440,6 +458,7 @@ static tlsuv_engine_t new_win32_server(tls_context* ctx) {
 
 static tls_context win32tls_context_api = {
         .version = tls_lib_version,
+        .fips_status = tls_fips_status,
         .strerror = (const char *(*)(long)) win32_error,
         .new_engine = new_win32_engine,
         .new_server_engine = new_win32_server,

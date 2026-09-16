@@ -91,6 +91,7 @@ static int tls_close(tlsuv_engine_t self);
 static int tls_reset(tlsuv_engine_t self);
 
 static const char* tls_lib_version();
+static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen);
 static const char* tls_eng_error(tlsuv_engine_t self);
 
 static void tls_free(tlsuv_engine_t self);
@@ -118,7 +119,8 @@ static BIO_METHOD* BIO_s_engine(void);
 static tls_context openssl_context_api = {
         // .new_server_engine: TLS server engines are OpenSSL-only
     .version = tls_lib_version,
-    .strerror = (const char *(*)(long))tls_error,
+    .fips_status = tls_fips_status,
+        .strerror = (const char *(*)(long))tls_error,
     .new_engine = new_boringssl_engine,
     .free_ctx = tls_free_ctx,
     .set_ca_bundle = set_ca_bundle,
@@ -157,6 +159,28 @@ int configure_boringssl() {
 
 static const char* tls_lib_version() {
     return "BoringSSL";
+}
+
+static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen) {
+    if (module && modulelen > 0) *module = 0;
+
+    // BoringSSL has no runtime switch: FIPS_mode() reports whether the linked
+    // libcrypto was built as the BoringCrypto module (BORINGSSL_FIPS)
+    if (!FIPS_mode()) {
+        return TLS_FIPS_DISABLED;
+    }
+
+    if (module && modulelen > 0) {
+        // FIPS_version() is 0 unless this is a validated release build
+        uint32_t v = FIPS_version();
+        if (v) {
+            snprintf(module, modulelen, "%s %u", FIPS_module_name(), v);
+        } else {
+            snprintf(module, modulelen, "%s", FIPS_module_name());
+        }
+    }
+
+    return TLS_FIPS_ENABLED;
 }
 
 const char* tls_error(unsigned long code) {

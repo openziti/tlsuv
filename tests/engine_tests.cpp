@@ -128,6 +128,45 @@ TEST_CASE("implementation test", "[engine]") {
     tls->free_ctx(tls);
 }
 
+TEST_CASE (
+"fips status"
+,
+"[engine]"
+)
+ {
+    tls_context *tls = default_tls_context(nullptr, 0);
+
+    // every backend implements this one, so a compliance check can never be
+    // skipped by accident
+    REQUIRE(tls->fips_status != nullptr);
+
+    // NULL/0 buffer is always legal
+    auto rc = tls->fips_status(tls, nullptr, 0);
+
+#if defined(TEST_mbedtls)
+    CHECK (rc== TLS_FIPS_UNSUPPORTED);
+#else
+    CHECK(rc != TLS_FIPS_UNSUPPORTED);
+#endif
+
+    char mod[128];
+    memset(mod, 'x', sizeof(mod));
+    CHECK(tls->fips_status(tls, mod, sizeof(mod)) == rc);
+    if (rc == TLS_FIPS_ENABLED) {
+        INFO("FIPS module: " << mod);
+        CHECK(strlen(mod) > 0);
+    } else {
+        CHECK(mod[0] == 0);
+    }
+
+#if defined(TEST_openssl) || defined(TEST_win32crypto)
+    // version() reports FIPS as free text; the two must not disagree
+    CHECK ((strstr(tls->version(), "FIPS") != nullptr) == (rc== TLS_FIPS_ENABLED));
+#endif
+
+    tls->free_ctx(tls);
+}
+
 TEST_CASE("verify with cert", "[engine]") {
     auto certpem = R"(-----BEGIN CERTIFICATE-----
 MIIEbDCCA1SgAwIBAgISBNRhfTk2toXqBr7/p9Sa3HQUMA0GCSqGSIb3DQEBCwUA
