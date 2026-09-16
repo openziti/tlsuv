@@ -39,19 +39,24 @@ struct openssl_ctx {
     tls_context api;
     SSL_CTX* ctx;
 
-    // own client cert
+    // own client/server cert
     EVP_PKEY* pkey;
     X509_STORE* store;
 
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx);
     void* verify_ctx;
-    unsigned char* alpn_protocols;
 };
 
 struct openssl_engine {
     struct tlsuv_engine_s api;
     SSL* ssl;
+    bool is_server;
     char* alpn;
+
+    // server engines only: ALPN protocol list in wire format. alpn_select_cb
+    // hands BoringSSL a pointer into this buffer, so it must outlive the handshake.
+    unsigned char* alpn_protocols;
+    size_t alpn_protocols_len;
 
     BIO* bio;
     io_ctx io;
@@ -72,6 +77,7 @@ static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t key,
 static int set_ca_bundle(tls_context* tls, const char* ca, size_t ca_len);
 
 tlsuv_engine_t new_boringssl_engine(tls_context* ctx, const char* host);
+tlsuv_engine_t new_boringssl_server_engine(tls_context* ctx);
 static void set_io(tlsuv_engine_t, io_ctx, io_read, io_write);
 static void set_io_fd(tlsuv_engine_t, tlsuv_sock_t);
 static void set_protocols(tlsuv_engine_t self, const char** protocols, int len);
@@ -112,16 +118,19 @@ static void info_cb(const SSL* s, int where, int ret);
 
 static int tls_set_partial_vfy(tls_context* ctx, int allow);
 
+static int alpn_select_cb(SSL* ssl, const uint8_t** out, uint8_t* outlen,
+                          const uint8_t* in, unsigned int inlen, void* arg);
+
 static int tls_set_cert_internal(SSL* ssl, X509_STORE* store, EVP_PKEY* pkey);
 
 static BIO_METHOD* BIO_s_engine(void);
 
 static tls_context openssl_context_api = {
-        // .new_server_engine: TLS server engines are OpenSSL-only
     .version = tls_lib_version,
     .fips_status = tls_fips_status,
         .strerror = (const char *(*)(long))tls_error,
     .new_engine = new_boringssl_engine,
+    .new_server_engine = new_boringssl_server_engine,
     .free_ctx = tls_free_ctx,
     .set_ca_bundle = set_ca_bundle,
     .set_own_cert = tls_set_own_cert,
@@ -337,7 +346,9 @@ static int set_ca_bundle(tls_context* tls, const char* ca, size_t ca_len) {
 }
 
 static void init_ssl_context(struct openssl_ctx* c, const char* cabuf, size_t cabuf_len) {
-    const SSL_METHOD* method = TLS_client_method();
+    // a single SSL_CTX serves both roles; the role is fixed per-SSL with
+    // SSL_set_connect_state()/SSL_set_accept_state()
+    const SSL_METHOD* method = TLS_method();
     SSL_CTX* ctx = SSL_CTX_new(method);
     if (ctx == NULL) {
         ERR_print_errors_fp(stderr);
@@ -346,6 +357,14 @@ static void init_ssl_context(struct openssl_ctx* c, const char* cabuf, size_t ca
     }
     SSL_CTX_set_app_data(ctx, c);
     c->ctx = ctx;
+
+    // BoringSSL has no per-SSL ALPN select callback. This one is only ever
+    // invoked for SSL objects in accept state, and finds the per-engine
+    // protocol list through SSL_get_app_data().
+    SSL_CTX_set_alpn_select_cb(ctx, alpn_select_cb, NULL);
+    // TLS_method() enables the server session cache, but tlsuv implements no
+    // session resumption - don't grow a cache nothing reads.
+    SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
 
     set_ca_bundle((tls_context*)c, cabuf, cabuf_len);
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
@@ -564,6 +583,42 @@ tlsuv_engine_t new_boringssl_engine(tls_context* ctx, const char* host) {
     return &engine->api;
 }
 
+tlsuv_engine_t new_boringssl_server_engine(tls_context* ctx) {
+    struct openssl_ctx* context = (openssl_ctx*)ctx;
+
+    if (context->pkey == NULL || context->store == NULL) {
+        UM_LOG(ERR, "server engine requires server credentials: "
+               "call tls_context->set_own_cert() first");
+        return NULL;
+    }
+
+    struct openssl_engine* engine = tlsuv__calloc(1, sizeof(struct openssl_engine));
+    engine->api = openssl_engine_api;
+    engine->is_server = true;
+
+    engine->ssl = SSL_new(context->ctx);
+    if (engine->ssl == NULL) {
+        UM_LOG(ERR, "failed to create SSL: %s", tls_error(ERR_get_error()));
+        tlsuv__free(engine);
+        return NULL;
+    }
+
+    SSL_set_accept_state(engine->ssl);
+    SSL_set_app_data(engine->ssl, engine);
+
+    if (tls_set_cert_internal(engine->ssl, context->store, context->pkey) != 0) {
+        UM_LOG(ERR, "failed to set server cert/key pair");
+        SSL_free(engine->ssl);
+        tlsuv__free(engine);
+        return NULL;
+    }
+
+    // disable for now: maybe add engine->set_client_auth()
+    SSL_set_verify(engine->ssl, SSL_VERIFY_NONE, NULL);
+
+    return &engine->api;
+}
+
 static void set_io(tlsuv_engine_t self, io_ctx io, io_read rdf, io_write wrtf) {
     struct openssl_engine* e = (struct openssl_engine*)self;
     assert(e->bio == NULL);
@@ -603,12 +658,55 @@ static void set_protocols(tlsuv_engine_t self, const char** protocols, int len) 
     for (int i = 0; i < len; i++) {
         size_t plen = strlen(protocols[i]);
         *p++ = (unsigned char)plen;
-        strncpy((char*)p, protocols[i], plen);
+        memcpy(p, protocols[i], plen);
         p += plen;
     }
     *p = 0;
-    SSL_set_alpn_protos(e->ssl, alpn_protocols, strlen((char*)alpn_protocols));
-    tlsuv__free(alpn_protocols);
+
+    if (e->is_server) {
+        // kept for the lifetime of the engine: alpn_select_cb returns a pointer
+        // into this buffer and BoringSSL requires it to stay valid
+        tlsuv__free(e->alpn_protocols);
+        e->alpn_protocols = alpn_protocols;
+        e->alpn_protocols_len = protolen;
+    } else {
+        SSL_set_alpn_protos(e->ssl, alpn_protocols, (unsigned int)protolen);
+        tlsuv__free(alpn_protocols);
+    }
+}
+
+// Selects the first protocol from the server's supported list that the client
+// also offered. Deliberately hand-rolled: SSL_select_next_proto() falls back to
+// the client's first protocol when there is no overlap, which would negotiate
+// something we do not support.
+static int alpn_select_cb(SSL* ssl, const uint8_t** out, uint8_t* outlen,
+                          const uint8_t* in, unsigned int inlen, void* arg) {
+    struct openssl_engine* e = SSL_get_app_data(ssl);
+    if (e == NULL || e->alpn_protocols == NULL) {
+        return SSL_TLSEXT_ERR_NOACK; // no ALPN configured, proceed without it
+    }
+
+    const uint8_t* sp = e->alpn_protocols;
+    const uint8_t* s_end = sp + e->alpn_protocols_len;
+    while (sp < s_end) {
+        uint8_t slen = *sp++;
+        if (slen == 0 || sp + slen > s_end) break; // malformed list
+        for (const uint8_t* cp = in; cp < in + inlen;) {
+            uint8_t clen = *cp++;
+            if (clen == 0 || cp + clen > in + inlen) break;
+            if (clen == slen && memcmp(cp, sp, slen) == 0) {
+                *out = sp; // stable: owned by the engine
+                *outlen = slen;
+                UM_LOG(VERB, "ALPN selected %.*s", (int)slen, (char*)sp);
+                return SSL_TLSEXT_ERR_OK;
+            }
+            cp += clen;
+        }
+        sp += slen;
+    }
+
+    UM_LOG(VERB, "no mutually supported ALPN protocol");
+    return SSL_TLSEXT_ERR_NOACK; // continue without ALPN rather than aborting
 }
 
 static int cert_verify_cb(X509_STORE_CTX* certs, void* ctx) {
@@ -658,9 +756,6 @@ static void tls_set_cert_verify(tls_context * ctx,
 
 static void tls_free_ctx(tls_context* ctx) {
     struct openssl_ctx* c = (struct openssl_ctx*)ctx;
-    if (c->alpn_protocols) {
-        tlsuv__free(c->alpn_protocols);
-    }
 
     EVP_PKEY_free(c->pkey);
     X509_STORE_free(c->store);
@@ -674,11 +769,24 @@ static int tls_reset(tlsuv_engine_t self) {
 
     e->bio = NULL;
 
+    tlsuv__free(e->alpn);
+    e->alpn = NULL;
+
     if (!SSL_clear(e->ssl)) {
         int err = SSL_get_error(e->ssl, 0);
         UM_LOG(ERR, "error resetting TSL enging: %d(%s)", err, tls_error(err));
         return -1;
     }
+
+    // SSL_clear() is documented to retain the connect/accept state; be explicit
+    if (e->is_server) {
+        SSL_set_accept_state(e->ssl);
+    } else {
+        SSL_set_connect_state(e->ssl);
+    }
+
+    // the engine's supported ALPN protocols do not change between connections,
+    // so e->alpn_protocols is intentionally kept
     return 0;
 }
 
@@ -689,6 +797,7 @@ static void tls_free(tlsuv_engine_t self) {
     if (e->alpn) {
         tlsuv__free(e->alpn);
     }
+    tlsuv__free(e->alpn_protocols);
     tlsuv__free(e);
 }
 
@@ -868,7 +977,9 @@ static const char* tls_get_alpn(tlsuv_engine_t self) {
 
     tlsuv__free(eng->alpn);
     eng->alpn = tlsuv__calloc(1, protolen + 1);
-    strncpy(eng->alpn, (const char*)proto, protolen);
+    if (protolen > 0) {
+        memcpy(eng->alpn, proto, protolen);
+    }
     return eng->alpn;
 }
 

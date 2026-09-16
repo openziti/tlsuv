@@ -69,9 +69,10 @@ Similar in purpose to `mbedtls_ssl_ctx` or `SSL` in OpenSSL
 
 Both interfaces carry optional members that may be `NULL` when an implementation does not provide them,
 so always check before calling. `tls_context::new_server_engine()` (creating a TLS engine for an already
-accepted connection) and `tls_engine::get_peer_cert()` are currently implemented by the OpenSSL and
-win32crypto (Schannel) backends. Server support is engine-level: the application owns the listening socket
-and the accept loop, and `tlsuv_stream_t` has no listen/accept API.
+accepted connection) is currently implemented by the OpenSSL, BoringSSL, and win32crypto (Schannel)
+backends; `tls_engine::get_peer_cert()` by the OpenSSL and win32crypto backends. Server support is
+engine-level: the application owns the listening socket and the accept loop, and `tlsuv_stream_t` has no
+listen/accept API.
 
 ## Building standalone 
 See [development](HACKING.md) instruction for building this project standalone 
