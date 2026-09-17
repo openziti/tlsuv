@@ -73,6 +73,9 @@ int main(int argc, char **argv) {
     printf("ip: %s\n", ip);
 
     tls_context *tls = default_tls_context(NULL, 0);
+
+    printf("TLS: %s\n", tls->version());
+
     tlsuv_engine_t engine = tls->new_engine(tls, HOST);
     const char *alpn[] = { "http/1.1" };
     engine->set_protocols(engine, alpn, 1);
@@ -119,7 +122,7 @@ int main(int argc, char **argv) {
 
     const char *req = "GET " PATH " HTTP/1.1\n"
                       "Accept: */*\n"
-                      "Accept-Enconding: plain\n"
+                      "Accept-Encoding: plain\n"
                       "Connection: keep-alive\n"
                       "Host: " HOST "\n"
                       "User-Agent: HTTPie/1.0.2\n"
@@ -132,6 +135,7 @@ int main(int argc, char **argv) {
 
     int read_res = 0;
     do {
+        resp_read = 0;
         fprintf(stderr, "reading(%d)...\n", read_res);
         read_res = engine->read(engine, resp, &resp_read, sizeof(resp));
         fprintf(stderr, "read(%d,%zd)...\n", read_res, resp_read);

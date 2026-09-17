@@ -49,6 +49,10 @@ jobs:
             tls: mbedtls
             target: arm64-osx
             http: ON
+          - image: macOS
+            tls: applesec
+            target: arm64-osx
+            http: ON
           - image: windows
             tls: openssl
             target: x64-windows-static-md
