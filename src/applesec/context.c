@@ -19,6 +19,7 @@
 #include "um_debug.h"
 #include "util.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -163,6 +164,7 @@ static void tls_free_ctx(tls_context* ctx) {
         unlink(c->tmp_keychain_path);
         tlsuv__free(c->tmp_keychain_path);
     }
+    memset_s(c->tmp_keychain_pw, sizeof(c->tmp_keychain_pw), 0, sizeof(c->tmp_keychain_pw));
     tlsuv__free(c);
 }
 
@@ -1034,7 +1036,8 @@ static int make_identity(struct sectransport_ctx* c, struct sectransport_priv_ke
 
         // random passphrase; the keychain never outlives the context
         uint8_t pw[32];
-        char pwhex[sizeof(pw) * 2 + 1];
+        char *pwhex = c->tmp_keychain_pw;
+        _Static_assert(sizeof(c->tmp_keychain_pw) == sizeof(pw) * 2 + 1, "passphrase buffer size");
         if (SecRandomCopyBytes(kSecRandomDefault, sizeof(pw), pw) != errSecSuccess) {
             UM_LOG(ERR, "failed to generate keychain passphrase");
             return -1;
@@ -1042,6 +1045,7 @@ static int make_identity(struct sectransport_ctx* c, struct sectransport_priv_ke
         for (size_t i = 0; i < sizeof(pw); i++) {
             snprintf(pwhex + i * 2, 3, "%02x", pw[i]);
         }
+        memset_s(pw, sizeof(pw), 0, sizeof(pw));
 
         SecKeychainRef kc = NULL;
         OSStatus rc = SecKeychainCreate(path, (UInt32)strlen(pwhex), pwhex, false, NULL, &kc);
@@ -1051,8 +1055,28 @@ static int make_identity(struct sectransport_ctx* c, struct sectransport_priv_ke
         }
         SecKeychainSetUserInteractionAllowed(false);
 
+        // new keychains lock on sleep: a later import (cert renewal, context
+        // reconfiguration) would then fail with errSecAuthFailed
+        SecKeychainSettings settings = {
+            .version = SEC_KEYCHAIN_SETTINGS_VERS1,
+            .lockOnSleep = false,
+            .useLockInterval = false,
+            .lockInterval = INT_MAX,
+        };
+        rc = SecKeychainSetSettings(kc, &settings);
+        if (rc != errSecSuccess) {
+            UM_LOG(WARN, "failed to disable temp keychain auto-lock: %s", applesec_error(rc));
+        }
+
         c->tmp_keychain = kc;
         c->tmp_keychain_path = tlsuv__strdup(path);
+    }
+
+    // it may still have been locked explicitly (e.g. `security lock-keychain -a`)
+    OSStatus unlock_rc = SecKeychainUnlock(c->tmp_keychain, (UInt32)strlen(c->tmp_keychain_pw),
+                                           c->tmp_keychain_pw, true);
+    if (unlock_rc != errSecSuccess) {
+        UM_LOG(WARN, "failed to unlock temp keychain: %s", applesec_error(unlock_rc));
     }
 
     // the key has to go in as PEM/DER; use the bytes it was loaded from, or
@@ -1070,6 +1094,13 @@ static int make_identity(struct sectransport_ctx* c, struct sectransport_priv_ke
     OSStatus rc = import_key(pem, c->tmp_keychain, &items);
     if (pem != key->pem) CFRelease(pem);
     if (items) CFRelease(items);
+
+    // same key as a previous set_own_cert (e.g. certificate renewed, key kept): it is
+    // already in the keychain, and SecIdentityCreateWithCertificate() will find it
+    if (rc == errSecDuplicateItem) {
+        UM_LOG(DEBG, "private key already in temp keychain");
+        rc = errSecSuccess;
+    }
 
     if (rc != errSecSuccess) {
         UM_LOG(ERR, "failed to import private key into keychain: %s", applesec_error(rc));

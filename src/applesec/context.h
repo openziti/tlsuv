@@ -39,6 +39,8 @@ struct sectransport_ctx {
     // file keychain backing ssl_chain[0]; deleted with the context
     SecKeychainRef tmp_keychain;
     char *tmp_keychain_path;
+    // random passphrase of tmp_keychain, kept to unlock it before each import
+    char tmp_keychain_pw[65];
 
     int (*cert_verify_f)(const struct tlsuv_certificate_s *cert, void *v_ctx);
     void *verify_ctx;

@@ -215,6 +215,29 @@ TEST_CASE("load multi-cert PEM with and without NUL", "[engine]") {
     tls->free_ctx(tls);
 }
 
+// e.g. a renewed certificate installed with the same key, on a long-lived context
+TEST_CASE("set_own_cert repeatedly on one context", "[engine]") {
+    auto cert_pem = read_pem(pem_path_str(TEST_SERVER_CERT));
+    auto key_pem = read_pem(pem_path_str(TEST_SERVER_KEY));
+
+    tls_context *tls = default_tls_context(nullptr, 0);
+    REQUIRE(tls != nullptr);
+
+    for (int i = 0; i < 3; i++) {
+        INFO("attempt " << i);
+        tlsuv_certificate_t cert = nullptr;
+        tlsuv_private_key_t pk = nullptr;
+        REQUIRE(tls->load_cert(&cert, cert_pem.c_str(), cert_pem.size()) == 0);
+        REQUIRE(tls->load_key(&pk, key_pem.c_str(), key_pem.size()) == 0);
+        CHECK(tls->set_own_cert(tls, pk, cert) == 0);
+        tls->set_own_cert(tls, nullptr, nullptr);
+        pk->free(pk);
+        cert->free(cert);
+    }
+
+    tls->free_ctx(tls);
+}
+
 TEST_CASE("verify with cert", "[engine]") {
     auto certpem = R"(-----BEGIN CERTIFICATE-----
 MIIEbDCCA1SgAwIBAgISBNRhfTk2toXqBr7/p9Sa3HQUMA0GCSqGSIb3DQEBCwUA
