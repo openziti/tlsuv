@@ -34,7 +34,7 @@ struct sectransport_ctx {
     // anchors for SecTrustSetAnchorCertificates()
     CFArrayRef ca_bundle;
 
-    // [SecIdentityRef, SecCertificateRef...] as SSLSetCertificate() wants it
+    // [SecIdentityRef, intermediate SecCertificateRef...]; nw-engine.c turns it into a sec_identity_t
     CFArrayRef ssl_chain;
     // file keychain backing ssl_chain[0]; deleted with the context
     SecKeychainRef tmp_keychain;
@@ -67,9 +67,7 @@ struct sectransport_cert {
 
 extern const char *applesec_error(OSStatus code);
 
-// engine.c
-extern tlsuv_engine_t applesec_new_engine(tls_context *ctx, const char *hostname);
-
+// nw-engine.c
 extern tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host);
 
 // context.c, used by the engine to hand the peer chain to a verify callback.

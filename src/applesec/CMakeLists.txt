@@ -1,4 +1,4 @@
-# Apple Security.framework / SecureTransport backend.
+# Apple Network.framework backend (Security.framework for keys and certificates).
 #
 # NOTE: src/apple/keychain.c is deliberately NOT listed here. It is the
 # platform keychain provider and is compiled directly into the `tlsuv`
@@ -8,7 +8,6 @@
 add_library(applesec-impl OBJECT
         context.c
         context.h
-        engine.c
         nw-engine.c
 )
 
@@ -17,9 +16,8 @@ target_include_directories(applesec-impl
         PRIVATE ${PROJECT_SOURCE_DIR}/src
 )
 
-# SecureTransport (SSLContextRef) and SecKeychain are formally deprecated,
-# but SecureTransport is the only Apple API that lets the caller drive the
-# TLS state machine over its own IO, which is what tlsuv_engine_t requires.
+# SecKeychain is formally deprecated, but context.c still needs a file keychain:
+# SecIdentityCreateWithCertificate() only pairs a certificate with a keychain key.
 target_compile_options(applesec-impl PRIVATE -Wno-deprecated-declarations)
 
 target_link_libraries(applesec-impl

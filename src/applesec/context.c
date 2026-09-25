@@ -27,7 +27,6 @@
 #include <Security/SecImportExport.h>
 #include <Security/SecKeychain.h>
 #include <Security/Security.h>
-#include <Security/SecureTransport.h>
 
 static tls_context ctx_api;
 static struct tlsuv_private_key_s sec_key_api;
@@ -155,7 +154,9 @@ static void tls_free_ctx(tls_context* ctx) {
 
 static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen) {
     // corecrypto holds FIPS 140 validations, but there is no public API to query
-    if (module && modulelen > 0) *module = 0;
+    if (module) {
+        snprintf(module, modulelen, "Apple corecrypto");
+    }
     return TLS_FIPS_ENABLED;
 }
 
@@ -994,7 +995,7 @@ static bool cert_matches_key(SecCertificateRef cert, SecKeyRef pub) {
     return eq;
 }
 
-// SSLSetCertificate() needs a SecIdentityRef, and the only public way to make
+// the TLS client identity needs a SecIdentityRef, and the only public way to make
 // one is SecIdentityCreateWithCertificate(), which pairs a certificate with a
 // private key *that lives in a keychain*. So put both in a throwaway file
 // keychain that is deleted with the context.
