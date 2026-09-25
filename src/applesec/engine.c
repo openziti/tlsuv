@@ -106,7 +106,6 @@ struct applenw_engine_s {
     nw_connection_t connection;
 
     pthread_mutex_t decode_mutex;
-    pthread_cond_t decode_cond;
     bool reading_conn;
     bool conn_eof;
     uint8_t decoded[32 * 1024];
@@ -363,7 +362,6 @@ static void engine_dealloc(struct applenw_engine_s *e) {
     dispatch_release((dispatch_object_t)e->outbound_buf);
     pthread_mutex_destroy(&e->outbound_mutex);
     pthread_mutex_destroy(&e->decode_mutex);
-    pthread_cond_destroy(&e->decode_cond);
     tlsuv__free(e);
 }
 
@@ -729,7 +727,6 @@ static bool process_decoded(struct applenw_engine_s *e, dispatch_data_t dd, nw_c
             });
     }
     if (e->decoded_len > 0) {
-        pthread_cond_signal(&e->decode_cond);
         wake(e);
     }
     pthread_mutex_unlock(&e->decode_mutex);
@@ -781,24 +778,6 @@ static int engine_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t
                               ^(dispatch_data_t dd, nw_content_context_t ctx, bool done, nw_error_t er){
                                   process_decoded(e, dd, ctx, done, er);
                               });
-    }
-
-    if (e->decoded_len == 0 && *out_bytes == 0) {
-        UM_LOG(TRACE, "engine[%p] waiting for decode", e);
-        struct timespec wait = {
-            .tv_nsec = 10 * NSEC_PER_USEC,
-        };
-        pthread_cond_timedwait_relative_np(&e->decode_cond, &e->decode_mutex, &wait);
-
-        if (e->decoded_len > 0) {
-            size_t to_copy = MIN(e->decoded_len, maxout);
-            memcpy(out, e->decoded, to_copy);
-            memmove(e->decoded, e->decoded + to_copy, e->decoded_len - to_copy);
-            e->decoded_len -= to_copy;
-
-            *out_bytes = to_copy;
-            rc = e->decoded_len > 0 ? TLS_MORE_AVAILABLE : TLS_OK;
-        }
     }
 
     int result = TLS_OK;
@@ -1069,7 +1048,6 @@ tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host) {
 
     pthread_mutex_init(&e->outbound_mutex, NULL);
     pthread_mutex_init(&e->decode_mutex, NULL);
-    pthread_cond_init(&e->decode_cond, NULL);
 
     return (tlsuv_engine_t) e;
 }
