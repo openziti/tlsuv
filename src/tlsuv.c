@@ -417,10 +417,13 @@ static void process_outbound(tlsuv_stream_t *clt) {
         TLS_LOG(TRACE, "processing %zu queued write requests", clt->queue_len);
     } else if (async_load(&clt->async_out) > 0) {
         TLS_LOG(TRACE, "flushing TLS pending data[%zd]", async_load(&clt->async_out));
-        int rc = clt->tls_engine->write(clt->tls_engine, 0, 0);
+        int rc = clt->tls_engine->write(clt->tls_engine, NULL, 0);
         if (rc != TLS_AGAIN) {
             async_store(&clt->async_out, 0);
         }
+        // if we get TLS_ERR here it means something is wrong with the socket
+        // there is no callback to notify the application
+        // but the read side should get corresponding error
     }
     while (!TAILQ_EMPTY(&clt->queue)) {
         req = TAILQ_FIRST(&clt->queue);
