@@ -35,6 +35,19 @@ static struct tlsuv_certificate_s sec_cert_api;
 
 static int load_file(const char* path, char** content, size_t* l);
 
+// Callers may count the terminating NUL in the length (mbedTLS requires that for PEM,
+// OpenSSL ignores it), but SecItemImport() rejects PEM followed by NUL bytes with
+// errSecUnknownFormat. Only PEM is trimmed: DER may legitimately end in 0x00.
+static size_t pem_trimmed_len(const char* buf, size_t len) {
+    if (len == 0 || memmem(buf, len, "-----BEGIN ", strlen("-----BEGIN ")) == NULL) {
+        return len;
+    }
+    while (len > 0 && buf[len - 1] == '\0') {
+        len--;
+    }
+    return len;
+}
+
 const char* applesec_error(OSStatus code) {
     static char errorbuf[1024];
     CFStringRef err = SecCopyErrorMessageString(code, NULL);
@@ -101,6 +114,7 @@ static int load_ca(struct sectransport_ctx* ctx, const char* ca, size_t ca_len) 
         buflen = file_len;
     }
 
+    buflen = pem_trimmed_len(buf, buflen);
     SecExternalItemType type = kSecItemTypeCertificate;
     SecExternalFormat fmt = kSecFormatUnknown;
     CFDataRef bundle = CFDataCreate(kCFAllocatorDefault, (const uint8_t*)buf, (CFIndex)buflen);
@@ -603,6 +617,7 @@ static int load_key(tlsuv_private_key_t* key_ref, const char* keystr, size_t len
         buflen = file_len;
     }
 
+    buflen = pem_trimmed_len(buf, buflen);
     CFDataRef data = CFDataCreate(kCFAllocatorDefault, (const uint8_t*)buf, (CFIndex)buflen);
     free(file_buf);
 
@@ -929,6 +944,7 @@ static int load_cert(tlsuv_certificate_t* cert, const char* certstr, size_t len)
         buflen = file_len;
     }
 
+    buflen = pem_trimmed_len(buf, buflen);
     SecExternalItemType type = kSecItemTypeCertificate;
     SecExternalFormat fmt = kSecFormatUnknown;
     CFDataRef data = CFDataCreate(kCFAllocatorDefault, (const uint8_t*)buf, (CFIndex)buflen);
