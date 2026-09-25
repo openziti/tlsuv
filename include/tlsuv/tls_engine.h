@@ -181,6 +181,8 @@ struct tlsuv_engine_s {
      *         the handshake has not completed, or the operation is unsupported
      */
     int (*get_peer_cert)(tlsuv_engine_t self, tlsuv_certificate_t *cert);
+
+    void (*setup_async)(tlsuv_engine_t self, void(*async_cb)(void *ctx, size_t in, size_t out), void *ctx);
 };
 
 typedef struct tls_context_s tls_context;

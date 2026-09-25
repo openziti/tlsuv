@@ -270,7 +270,7 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
     UM_LOG(DEBG, "connecting to '%s:%d'", host, port);
 
     if (ws->src) {
-        tlsuv_tls_link_init(&ws->tls_link, ws->tls->new_engine(ws->tls, host), tls_hs_cb);
+        tlsuv_tls_link_init(&ws->tls_link, ws->loop, ws->tls->new_engine(ws->tls, host), tls_hs_cb);
         return ws->src->connect(ws->src, host, portstr, src_connect_cb, req);
     }
 

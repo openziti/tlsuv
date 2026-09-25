@@ -14,6 +14,7 @@
 
 #include <catch2/catch_all.hpp>
 #include "fixtures.h"
+#include "http_capture.h"
 
 #include <compression.h>
 #include <cstring>
@@ -55,28 +56,6 @@ std::string testServerURL(const string& type) {
 static const tlsuv_connector_t *proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", "13128");
 
 
-class resp_capture {
-public:
-    tlsuv_http_body_cb body_cb;
-
-    explicit resp_capture(tlsuv_http_body_cb cb) : body_cb(cb), status("not set"), code(-666) {}
-
-    resp_capture() : resp_capture(nullptr) {}
-
-    string http_version;
-    ssize_t code;
-    string status;
-    map<string, string> headers;
-
-    string body;
-    string req_body;
-
-    int resp_body_end_called{};
-    int req_body_cb_called{};
-
-    uv_timeval64_t resp_start{};
-    uv_timeval64_t resp_endtime{};
-};
 
 void req_body_cb(tlsuv_http_req_t *req, char *chunk, ssize_t status) {
     auto rc = static_cast<resp_capture *>(req->data);
@@ -196,7 +175,7 @@ TEST_CASE("http_tests", "[http]") {
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
     UvLoopTest test;
-    tlsuv_http_t clt;
+    tlsuv_http_t clt{};
 
     std::string testType = scheme + '(' + (connector ? "proxy" : "direct") + ")";
     tlsuv_set_global_connector(connector);
@@ -277,10 +256,8 @@ TEST_CASE("http_tests", "[http]") {
 
         test.run();
 
-        THEN("request should complete") {
-            REQUIRE(resp.code == HTTP_STATUS_OK);
-            REQUIRE(resp.resp_body_end_called);
-        }
+        REQUIRE(resp.code == HTTP_STATUS_OK);
+        REQUIRE(resp.resp_body_end_called);
         REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
         size_t body_len = resp.body.size();
         size_t content_len = strtol(resp.headers["Content-Length"].c_str(), nullptr, 10);
@@ -463,7 +440,7 @@ TEST_CASE("client_cert_test","[http]") {
                       "GTH3fhaM/pZZGdIC75x/69Y=\n"
                       "-----END PRIVATE KEY-----";
         tlsuv_private_key_t pk = nullptr;
-        int rc = tls->load_key(&pk, key, strlen(key) + 1);
+        int rc = tls->load_key(&pk, key, strlen(key));
         REQUIRE(rc == 0);
         REQUIRE(pk != nullptr);
 
@@ -1680,4 +1657,3 @@ TEST_CASE("http_proxy_connector", "[http]") {
     proxy_conn->free((tlsuv_connector_t*)proxy_conn);
     test.run();
 }
-
