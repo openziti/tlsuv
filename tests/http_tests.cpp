@@ -196,7 +196,7 @@ TEST_CASE("http_tests", "[http]") {
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
 
     UvLoopTest test;
-    tlsuv_http_t clt;
+    tlsuv_http_t clt{};
 
     std::string testType = scheme + '(' + (connector ? "proxy" : "direct") + ")";
     tlsuv_set_global_connector(connector);
@@ -277,10 +277,8 @@ TEST_CASE("http_tests", "[http]") {
 
         test.run();
 
-        THEN("request should complete") {
-            REQUIRE(resp.code == HTTP_STATUS_OK);
-            REQUIRE(resp.resp_body_end_called);
-        }
+        REQUIRE(resp.code == HTTP_STATUS_OK);
+        REQUIRE(resp.resp_body_end_called);
         REQUIRE_THAT(resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
         size_t body_len = resp.body.size();
         size_t content_len = strtol(resp.headers["Content-Length"].c_str(), nullptr, 10);

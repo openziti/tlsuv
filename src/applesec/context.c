@@ -127,7 +127,7 @@ tls_context* new_applesec_ctx(const char* ca, size_t ca_len) {
     struct sectransport_ctx* ctx = tlsuv__calloc(1, sizeof(*ctx));
     ctx->api = ctx_api;
 
-    UM_LOG(INFO, "using %s; note SecureTransport tops out at TLS 1.2", ctx->api.version());
+    UM_LOG(INFO, "using %s", ctx->api.version());
 
     load_ca(ctx, ca, ca_len);
 
@@ -135,7 +135,6 @@ tls_context* new_applesec_ctx(const char* ca, size_t ca_len) {
 }
 
 int configure_applesec(void) {
-    // Security.framework has no config file/provider concept
     return 0;
 }
 
@@ -157,14 +156,14 @@ static void tls_free_ctx(tls_context* ctx) {
 static const char* tls_lib_version(void) {
     static char version[64] = {0};
     if (*version == 0) {
-        CFBundleRef secBundle = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.security"));
+        CFBundleRef secBundle = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.Network"));
         CFStringRef id = secBundle ? CFBundleGetIdentifier(secBundle) : NULL;
         CFDictionaryRef info = secBundle ? CFBundleGetInfoDictionary(secBundle) : NULL;
         CFStringRef v1 = info ? CFDictionaryGetValue(info, CFSTR("CFBundleShortVersionString")) : NULL;
         CFStringRef v2 = info ? CFDictionaryGetValue(info, CFSTR("CFBundleVersion")) : NULL;
 
         CFMutableStringRef v = CFStringCreateMutable(kCFAllocatorDefault, 64);
-        CFStringAppend(v, id ? id : CFSTR("com.apple.security"));
+        CFStringAppend(v, id ? id : CFSTR("com.apple.Network"));
         if (v1) {
             CFStringAppend(v, CFSTR(" "));
             CFStringAppend(v, v1);
@@ -1128,7 +1127,7 @@ static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t pk, tlsuv_cert
 static tls_context ctx_api = {
     .version = tls_lib_version,
     .strerror = tls_strerror,
-    .new_engine = applesec_new_engine,
+    .new_engine = applenw_new_engine,
     .free_ctx = tls_free_ctx,
     .set_ca_bundle = tls_set_ca_bundle,
     .set_own_cert = tls_set_own_cert,
