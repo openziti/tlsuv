@@ -140,25 +140,80 @@ static tls_handshake_state engine_handshake_state(tlsuv_engine_t self) {
     return engine->handshake_st;
 }
 
+#define MAX_VERIFY_DEPTH 10
+
+static bool cert_is_ca(PCCERT_CONTEXT c) {
+    PCERT_EXTENSION ext = CertFindExtension(szOID_BASIC_CONSTRAINTS2,
+                                            c->pCertInfo->cExtension, c->pCertInfo->rgExtension);
+    if (ext == NULL) {
+        return false;
+    }
+    CERT_BASIC_CONSTRAINTS2_INFO info = {0};
+    DWORD len = sizeof(info);
+    return CryptDecodeObjectEx(X509_ASN_ENCODING, X509_BASIC_CONSTRAINTS2,
+                               ext->Value.pbData, ext->Value.cbData, 0, NULL, &info, &len) && info.fCA;
+}
+
+// Returns a CA certificate from store whose key verifies subject's signature and that is inside
+// its validity period, or NULL. CertGetIssuerCertificateFromStore matches on the issuer name and
+// returns a candidate even when the signature does not verify, leaving the flag set, so every
+// candidate with that name is checked.
+static PCCERT_CONTEXT verified_issuer(HCERTSTORE store, PCCERT_CONTEXT subject) {
+    PCCERT_CONTEXT iss = NULL;
+    for (;;) {
+        DWORD flags = CERT_STORE_SIGNATURE_FLAG;
+        // frees the previous candidate
+        iss = CertGetIssuerCertificateFromStore(store, subject, iss, &flags);
+        if (iss == NULL) {
+            return NULL;
+        }
+        if (flags == 0 && cert_is_ca(iss) && CertVerifyTimeValidity(NULL, iss->pCertInfo) == 0) {
+            return iss;
+        }
+    }
+}
+
+// Accepts the peer chain only if it reaches a certificate in the CA bundle through verified
+// signatures, with every certificate on the way inside its validity period and every issuer a CA.
+// A bundle certificate that verifies the chain ends it, so an intermediate in the bundle is a
+// trust anchor, as with the OpenSSL backend's partial-chain setting.
 static int verify_cert_ca(const struct tlsuv_certificate_s * c, void *v_ctx) {
     struct win32crypto_engine_s *engine = v_ctx;
     win32_cert_t *cert = (win32_cert_t*)c;
 
-    PCCERT_CONTEXT peer_cert = CertDuplicateCertificateContext(cert->cert);
-    do {
-        DWORD check = CERT_STORE_SIGNATURE_FLAG;
-        PCCERT_CONTEXT local_iss = CertGetIssuerCertificateFromStore(engine->ca, peer_cert, NULL, &check);
-        if (local_iss) {
-            CertFreeCertificateContext(peer_cert);
-            CertFreeCertificateContext(local_iss);
-            return 0;
+    int rc = -1;
+    PCCERT_CONTEXT cur = CertDuplicateCertificateContext(cert->cert);
+    for (int depth = 0; cur != NULL && depth < MAX_VERIFY_DEPTH; depth++) {
+        if (CertVerifyTimeValidity(NULL, cur->pCertInfo) != 0) {
+            UM_LOG(WARN, "certificate in the peer chain is outside its validity period");
+            break;
         }
-
-        check = 0;
-        peer_cert = CertGetIssuerCertificateFromStore(peer_cert->hCertStore, peer_cert, peer_cert, &check);
-    } while (peer_cert);
-
-    return -1;
+        // a certificate that is itself in the bundle is trusted as is; the issuer lookup below
+        // cannot find it, because it returns nothing for a self-signed subject
+        PCCERT_CONTEXT same = CertFindCertificateInStore(engine->ca, X509_ASN_ENCODING, 0,
+                                                         CERT_FIND_EXISTING, cur, NULL);
+        if (same != NULL) {
+            CertFreeCertificateContext(same);
+            rc = 0;
+            break;
+        }
+        PCCERT_CONTEXT anchor = verified_issuer(engine->ca, cur);
+        if (anchor != NULL) {
+            CertFreeCertificateContext(anchor);
+            rc = 0;
+            break;
+        }
+        PCCERT_CONTEXT next = verified_issuer(cur->hCertStore, cur);
+        CertFreeCertificateContext(cur);
+        cur = next;
+    }
+    if (cur != NULL) {
+        CertFreeCertificateContext(cur);
+    }
+    if (rc != 0) {
+        UM_LOG(WARN, "peer certificate chain does not verify against the CA bundle");
+    }
+    return rc;
 }
 
 // Retrieves the peer certificate chain. On a server the peer is the client, and
