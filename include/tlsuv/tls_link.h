@@ -16,6 +16,8 @@
 #ifndef TLSUV_TLS_LINK_H
 #define TLSUV_TLS_LINK_H
 
+#include <stdbool.h>
+
 typedef struct tls_link_s tls_link_t;
 typedef void (*tls_handshake_cb)(tls_link_t *l, int status);
 typedef struct ssl_buf_s ssl_buf_t;
