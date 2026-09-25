@@ -645,6 +645,66 @@ TEST_CASE_METHOD(UvLoopTest, "stream/global proxy", "[stream]") {
 }
 
 
+TEST_CASE("stream ALPN negotiation", "[stream]") {
+    // 8443: Go net/http TLS server, advertises [h2, http/1.1] and picks by its own preference
+    // 7443: TLS echo server, no ALPN configured
+    struct alpn_case {
+        const char *name;
+        int port;
+        std::vector<const char*> offer;
+        const char *expected; // nullptr: nothing negotiated
+    };
+    auto tc = GENERATE(
+            alpn_case{"http/1.1 among unknown", 8443, {"foo", "bar", "http/1.1"}, "http/1.1"},
+            alpn_case{"h2 only", 8443, {"h2"}, "h2"},
+            alpn_case{"server preference wins", 8443, {"http/1.1", "h2"}, "h2"},
+            alpn_case{"nothing offered", 8443, {}, nullptr},
+            alpn_case{"server without ALPN", 7443, {"foo", "http/1.1"}, nullptr}
+    );
+    INFO(tc.name);
+
+    UvLoopTest test;
+    tlsuv_stream_t s;
+    tlsuv_stream_init(test.loop, &s, testServerTLS());
+    if (!tc.offer.empty()) {
+        tlsuv_stream_set_protocols(&s, (int) tc.offer.size(), tc.offer.data());
+    }
+
+    struct connect_res {
+        bool called;
+        int status;
+        std::string proto;
+        bool has_proto;
+    } res{};
+
+    uv_connect_t cr;
+    cr.data = &res;
+    REQUIRE(tlsuv_stream_connect(&cr, &s, TEST_SERVER, tc.port, [](uv_connect_t *r, int status) {
+        auto res = (connect_res *) r->data;
+        res->called = true;
+        res->status = status;
+        if (status == 0) {
+            auto p = tlsuv_stream_get_protocol((tlsuv_stream_t *) r->handle);
+            res->has_proto = p != nullptr && *p != '\0';
+            if (res->has_proto) res->proto = p;
+        }
+    }) == 0);
+
+    test.run(UNTIL(res.called));
+    REQUIRE(res.status == 0);
+
+    if (tc.expected) {
+        REQUIRE(res.has_proto);
+        CHECK_THAT(res.proto, Catch::Matchers::Equals(tc.expected));
+    } else {
+        // backends report "no ALPN" as either NULL or ""
+        CHECK_FALSE(res.has_proto);
+    }
+
+    tlsuv_stream_close(&s, (uv_close_cb) tlsuv_stream_free);
+    test.run();
+}
+
 TEST_CASE("connect to address", "[stream]") {
     UvLoopTest test;
 
