@@ -586,6 +586,49 @@ static const char* engine_get_alpn(tlsuv_engine_t self) {
     return res;
 }
 
+// the chain the peer sent, leaf first, as recorded by Network.framework
+static int engine_get_peer_cert(tlsuv_engine_t self, tlsuv_certificate_t *cert) {
+    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    if (cert == NULL) return TLS_ERR;
+    *cert = NULL;
+
+    if (e->connection == NULL || e->hs_state != TLS_HS_COMPLETE) {
+        return TLS_ERR;
+    }
+
+    nw_protocol_definition_t definition = nw_protocol_copy_tls_definition();
+    nw_protocol_metadata_t metadata = nw_connection_copy_protocol_metadata(e->connection, definition);
+    nw_release(definition);
+    if (metadata == NULL) {
+        return TLS_ERR;
+    }
+
+    sec_protocol_metadata_t sec_metadata = nw_tls_copy_sec_protocol_metadata(metadata);
+    nw_release(metadata);
+    if (sec_metadata == NULL) {
+        return TLS_ERR;
+    }
+
+    CFMutableArrayRef chain = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+    sec_protocol_metadata_access_peer_certificate_chain(sec_metadata, ^(sec_certificate_t c) {
+        SecCertificateRef ref = sec_certificate_copy_ref(c);
+        if (ref) {
+            CFArrayAppendValue(chain, ref);
+            CFRelease(ref);
+        }
+    });
+    sec_release(sec_metadata);
+
+    if (CFArrayGetCount(chain) == 0) {
+        UM_LOG(VERB, "peer presented no certificate");
+        CFRelease(chain);
+        return TLS_ERR;
+    }
+
+    *cert = applesec_cert_new(chain); // takes ownership
+    return 0;
+}
+
 static int engine_close(tlsuv_engine_t self) {
     struct applenw_engine_s *e = (struct applenw_engine_s *) self;
     stop_io(e);
@@ -873,6 +916,7 @@ static struct tlsuv_engine_s applenw_engine_api = {
         .handshake_state = engine_handshake_state,
         .handshake = engine_handshake,
         .get_alpn = engine_get_alpn,
+        .get_peer_cert = engine_get_peer_cert,
         .close = engine_close,
         .write = engine_write,
         .read = engine_read,

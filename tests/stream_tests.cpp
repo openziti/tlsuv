@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <cstring>
+#include <string>
 #include <tlsuv/tlsuv.h>
 #include <uv.h>
 
@@ -703,6 +704,102 @@ TEST_CASE("stream ALPN negotiation", "[stream]") {
 
     tlsuv_stream_close(&s, (uv_close_cb) tlsuv_stream_free);
     test.run();
+}
+
+// base64 body of a PEM, whitespace and armour stripped, for comparing encodings
+static std::string pem_body(const std::string &pem) {
+    std::string out;
+    bool in_body = false;
+    size_t pos = 0;
+    while (pos < pem.size()) {
+        size_t eol = pem.find('\n', pos);
+        if (eol == std::string::npos) eol = pem.size();
+        std::string line = pem.substr(pos, eol - pos);
+        pos = eol + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.rfind("-----BEGIN", 0) == 0) { in_body = true; continue; }
+        if (line.rfind("-----END", 0) == 0) break; // first certificate only
+        if (in_body) out += line;
+    }
+    return out;
+}
+
+TEST_CASE("stream peer certificate", "[stream]") {
+    UvLoopTest test;
+
+    // the test server issues its own localhost certificate at startup, so compare
+    // against the leaf the TLS stack handed to the verify callback in this handshake
+    static std::string verified_leaf;
+    verified_leaf.clear();
+    tls_context *tls = default_tls_context(nullptr, 0);
+    tls->set_cert_verify(tls, [](const struct tlsuv_certificate_s *cert, void *) -> int {
+        char *pem = nullptr;
+        size_t len = 0;
+        if (cert->to_pem(cert, 0, &pem, &len) == 0) {
+            verified_leaf = pem_body(std::string(pem, len));
+            free(pem);
+        }
+        return 0;
+    }, nullptr);
+
+    // not every backend implements it (e.g. mbedtls)
+    {
+        tlsuv_engine_t eng = tls->new_engine(tls, "localhost");
+        bool supported = eng->get_peer_cert != nullptr;
+        if (supported) {
+            tlsuv_certificate_t c = nullptr;
+            INFO("before handshake");
+            CHECK(eng->get_peer_cert(eng, &c) == TLS_ERR);
+            CHECK(c == nullptr);
+        }
+        eng->free(eng);
+        if (!supported) {
+            tls->free_ctx(tls);
+            SKIP("get_peer_cert is not implemented");
+        }
+    }
+
+    tlsuv_stream_t s;
+    tlsuv_stream_init(test.loop, &s, tls);
+
+    struct connect_res {
+        bool called;
+        int status;
+    } res{};
+    uv_connect_t cr;
+    cr.data = &res;
+    REQUIRE(tlsuv_stream_connect(&cr, &s, "localhost", 8443, [](uv_connect_t *r, int status) {
+        auto res = (connect_res *) r->data;
+        res->called = true;
+        res->status = status;
+    }) == 0);
+    test.run(UNTIL(res.called));
+    REQUIRE(res.status == 0);
+    REQUIRE_FALSE(verified_leaf.empty());
+
+    tlsuv_certificate_t peer = nullptr;
+    REQUIRE(s.tls_engine->get_peer_cert(s.tls_engine, &peer) == 0);
+    REQUIRE(peer != nullptr);
+
+    char *pem = nullptr;
+    size_t pem_len = 0;
+    REQUIRE(peer->to_pem(peer, 0, &pem, &pem_len) == 0);
+    std::string leaf(pem, pem_len);
+    free(pem);
+    CHECK(pem_body(leaf) == verified_leaf);
+
+    // the exported leaf is a usable certificate
+    tlsuv_certificate_t reloaded = nullptr;
+    CHECK(tls->load_cert(&reloaded, leaf.c_str(), leaf.size()) == 0);
+    if (reloaded) reloaded->free(reloaded);
+
+    struct tm exp{};
+    CHECK(peer->get_expiration(peer, &exp) == 0);
+    peer->free(peer);
+
+    tlsuv_stream_close(&s, nullptr);
+    test.run();
+    tls->free_ctx(tls);
 }
 
 TEST_CASE("connect to address", "[stream]") {

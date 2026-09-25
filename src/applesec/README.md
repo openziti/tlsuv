@@ -168,7 +168,9 @@ Set up in `applenw_new_engine()` with `sec_protocol_options_set_verify_block`:
 - **neither**: Network.framework's default evaluation against the system trust store.
 
 Minimum protocol version is TLS 1.2; ALPN is set with `set_protocols`, and the
-negotiated protocol is copied into the engine (`engine_get_alpn`).
+negotiated protocol is copied into the engine (`engine_get_alpn`). After the
+handshake, `get_peer_cert` returns the chain the server sent (leaf first), read
+from the connection's TLS metadata.
 
 ## Keys, certificates and the client identity (`context.c`)
 
@@ -209,7 +211,7 @@ negotiated protocol is copied into the engine (`engine_get_alpn`).
   keychains are unavailable on iOS; `context.c` would need a keychain-free
   key/certificate layer (e.g. data-protection keychain items + `kSecClassIdentity`)
   to run there. `engine.c` uses only APIs that exist on iOS.
-- Not implemented: server engines (`new_server_engine`), `get_peer_cert`,
+- Not implemented: server engines (`new_server_engine`),
   `allow_partial_chain`, CSR generation, PKCS#11 and platform keychain keys
   (keys must be extractable to go into the temporary keychain).
 - `engine_reset()` only resets the handshake state; it does not tear down the
@@ -223,6 +225,7 @@ negotiated protocol is copied into the engine (`engine_get_alpn`).
 
 The regular suites run against this backend (`all_tests` built with
 `TLSUV_TLSLIB=applesec`). Backend-specific coverage includes
-`stream ALPN negotiation`, `load multi-cert PEM with and without NUL`,
+`stream ALPN negotiation`, `stream peer certificate`,
+`load multi-cert PEM with and without NUL`,
 `set_own_cert repeatedly on one context` and `https over custom src`
 (the `tls_link` path).
