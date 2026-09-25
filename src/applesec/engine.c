@@ -33,6 +33,10 @@
 #include <sys/poll.h>
 
 static int engine_flush(tlsuv_engine_t self);
+
+// max plaintext handed to NW but not yet sent, plus ciphertext not yet flushed to
+// the peer; engine_write() accepts no more than this is in flight
+#define NW_WRITE_LIMIT (256 * 1024)
 struct applenw_engine_s;
 static void set_error(struct applenw_engine_s *e, CFErrorRef err);
 static CFErrorRef posix_error(int code);
@@ -120,6 +124,10 @@ struct applenw_engine_s {
     dispatch_data_t outbound_buf;
     // size of outbound_buf: modified under outbound_mutex, read by wake() without it
     _Atomic size_t outbound_len;
+    // plaintext passed to nw_connection_send() whose completion has not run yet
+    _Atomic size_t nw_pending;
+    // engine_write() turned a writer away (fully or partially): wake it when space frees up
+    _Atomic bool write_blocked;
 
     void (*async_cb)(void *async_ctx, size_t in, size_t out);
     void *async_ctx;
@@ -710,24 +718,53 @@ static int engine_write(tlsuv_engine_t self, const char *data, size_t data_len) 
         return 0;
     }
 
-    if (data_len > INT32_MAX) {
-        data_len = INT32_MAX;
+    // NW encrypts asynchronously, so an empty outbound_buf does not mean the peer
+    // keeps up: bound what is in flight, not just what is already encrypted
+    size_t in_flight = e->nw_pending + e->outbound_len;
+    if (in_flight >= NW_WRITE_LIMIT) {
+        e->write_blocked = true;
+        // a send completion may have freed space between the check and the flag
+        in_flight = e->nw_pending + e->outbound_len;
+        if (in_flight >= NW_WRITE_LIMIT) {
+            UM_LOG(TRACE, "engine[%p] write limit reached: %zu in flight", e, in_flight);
+            return TLS_AGAIN;
+        }
+        e->write_blocked = false;
     }
 
-    UM_LOG(DEBG, "engine[%p] write: %zd\n", e, data_len);
-    dispatch_data_t dd = dispatch_data_create(data, data_len, e->queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    size_t n = MIN(data_len, NW_WRITE_LIMIT - in_flight);
+    if (n < data_len) {
+        // the caller queues the rest and waits for a wakeup
+        e->write_blocked = true;
+    }
+    e->nw_pending += n;
+
+    UM_LOG(DEBG, "engine[%p] write: %zu/%zu", e, n, data_len);
+    dispatch_data_t dd = dispatch_data_create(data, n, e->queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
     nw_connection_send(e->connection, dd, NW_CONNECTION_DEFAULT_STREAM_CONTEXT, false, ^(nw_error_t error) {
         // ECANCELED: engine_free() cancelled the connection, `e` may be gone
-        if (error && nw_error_get_error_code(error) != ECANCELED) {
+        if (error && nw_error_get_error_code(error) == ECANCELED) {
+            return;
+        }
+
+        e->nw_pending -= n;
+        if (error) {
             UM_LOG(WARN, "send failed: %d", nw_error_get_error_code(error));
             // report through read/write; the stream still owns the engine, so don't cancel here
             set_error(e, nw_error_copy_cf_error(error));
+            wake(e);
+            return;
+        }
+
+        // hysteresis: wake a blocked writer once half the window is free
+        if (e->write_blocked && e->nw_pending + e->outbound_len < NW_WRITE_LIMIT / 2 &&
+            atomic_exchange(&e->write_blocked, false)) {
             wake(e);
         }
     });
     dispatch_release((dispatch_object_t)dd);
 
-    return (int)data_len;
+    return (int) n;
 }
 
 static bool process_decoded(struct applenw_engine_s *e, dispatch_data_t dd, nw_content_context_t ctx, bool done, nw_error_t er){

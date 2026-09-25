@@ -216,9 +216,12 @@ from the connection's TLS metadata.
   (keys must be extractable to go into the temporary keychain).
 - `engine_reset()` only resets the handshake state; it does not tear down the
   `nw_connection_t`, so an engine cannot be reused for a new handshake.
-- Plaintext written with `engine_write()` is buffered by Network.framework;
-  backpressure comes from `engine_write()` returning `TLS_AGAIN` while previous
-  ciphertext is still unflushed, so roughly one write's worth is in flight.
+- Backpressure: Network.framework encrypts asynchronously, so `engine_write()`
+  bounds plaintext not yet sent by NW plus ciphertext not yet flushed to the peer
+  (`NW_WRITE_LIMIT`, 256 KiB). Beyond that it accepts a partial write or returns
+  `TLS_AGAIN`, and wakes the owner once half the window is free. For such async
+  engines `tlsuv_stream_t` does not poll `UV_WRITABLE` for queued writes (the
+  socket is writable while the engine is full); it retries on the wakeup.
 - Each connection costs a loopback TCP connection and a dispatch queue.
 
 ## Tests
