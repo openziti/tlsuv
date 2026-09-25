@@ -16,6 +16,7 @@
 //
 
 #include <pthread.h>
+#include <stdatomic.h>
 
 #include "context.h"
 #include <os/lock.h>
@@ -78,7 +79,8 @@ struct tls_frame {
 struct applenw_engine_s {
     struct tlsuv_engine_s api;
 
-    tls_handshake_state hs_state;
+    // written on e->queue (state handler, accept block), read on the loop thread
+    _Atomic(tls_handshake_state) hs_state;
 
     bool io_is_socket;
     io_ctx io;
@@ -109,6 +111,7 @@ struct applenw_engine_s {
     nw_parameters_t protocol_parameters;
     dispatch_io_t tls_channel;
     CFErrorRef error;
+    char err_buf[256];
     CFTypeRef ca;
     sec_identity_t identity;
     int(* cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx);
@@ -388,10 +391,11 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
     assert(e->read_f != NULL);
     assert(e->write_f != NULL);
 
-    UM_LOG(INFO, "engine_handshake: %d", e->hs_state);
+    tls_handshake_state state = e->hs_state;
+    UM_LOG(TRACE, "engine_handshake: %d", state);
 
-    if (e->hs_state == TLS_HS_ERROR || e->hs_state == TLS_HS_COMPLETE) {
-        return e->hs_state;
+    if (state == TLS_HS_ERROR || state == TLS_HS_COMPLETE) {
+        return state;
     }
 
     if (e->connection) {
@@ -399,11 +403,11 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         do {
             rc = read_inbound_frame(e);
             if (rc == TLS_OK) {
-                UM_LOG(INFO, "engine_handshake: received frame: %d len: %d", e->inbound_frame.frame[0], e->inbound_frame.len);
+                UM_LOG(TRACE, "engine_handshake: received frame: %d len: %d", e->inbound_frame.frame[0], e->inbound_frame.len);
                 forward_frame(e);
 
                 bool more = discard_inbound_frame(e);
-                UM_LOG(INFO, "engine_handshake: more: %d, %zd", more, e->inbound_len);
+                UM_LOG(TRACE, "engine_handshake: more: %d, %zd", more, e->inbound_len);
                 if (!more) {
                     break;
                 }
@@ -416,8 +420,9 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
             }
         } while (rc == TLS_OK);
 
-        if (e->hs_state != TLS_HS_CONTINUE) {
-            return e->hs_state;
+        state = e->hs_state;
+        if (state != TLS_HS_CONTINUE) {
+            return state;
         }
 
         if (!e->io_is_socket) {
@@ -429,7 +434,7 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
             if (poll(&pfd, 1, 10) == 1) {
                 char hs_buf[32 * 1024];
                 ssize_t hs_bytes = read(e->tls_sock, hs_buf, sizeof(hs_buf));
-                UM_LOG(INFO, "tls_io read: %zd", hs_bytes);
+                UM_LOG(TRACE, "tls_io read: %zd", hs_bytes);
                 e->write_f(e->io, hs_buf, hs_bytes);
             }
         }
@@ -467,9 +472,12 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
                 handshake_failed(e, nw_error_copy_cf_error(error));
             }
             switch (state) {
-            case nw_connection_state_preparing:
-                e->hs_state = TLS_HS_CONTINUE;
+            case nw_connection_state_preparing: {
+                // don't clobber TLS_HS_ERROR set by a failed accept
+                tls_handshake_state expected = TLS_HS_BEFORE;
+                atomic_compare_exchange_strong(&e->hs_state, &expected, TLS_HS_CONTINUE);
                 break;
+            }
             case nw_connection_state_ready:
                 e->hs_state = TLS_HS_COMPLETE;
                 UM_LOG(DEBG, "Handshake completed successfully!");
@@ -478,7 +486,7 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
                 }
                 break;
             case nw_connection_state_failed:
-                UM_LOG(INFO, "Connection failed");
+                UM_LOG(DEBG, "Connection failed");
                 break;
             case nw_connection_state_cancelled:
                 engine_dealloc(e);
@@ -722,14 +730,21 @@ static int engine_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t
 }
 
 static const char* engine_strerror(tlsuv_engine_t self) {
-    static char err_buf[256];
     struct applenw_engine_s *e = (struct applenw_engine_s *) self;
-    if (e->error == NULL) return NULL;
+    const char *res = NULL;
 
-    CFStringRef msg = CFErrorCopyDescription(e->error);
-    CFStringGetCString(msg, err_buf, sizeof(err_buf), kCFStringEncodingUTF8);
-    CFRelease(msg);
-    return err_buf;
+    // e->error is replaced by set_error() on e->queue
+    pthread_mutex_lock(&e->decode_mutex);
+    if (e->error != NULL) {
+        CFStringRef msg = CFErrorCopyDescription(e->error);
+        if (!CFStringGetCString(msg, e->err_buf, sizeof(e->err_buf), kCFStringEncodingUTF8)) {
+            snprintf(e->err_buf, sizeof(e->err_buf), "error %ld", (long) CFErrorGetCode(e->error));
+        }
+        CFRelease(msg);
+        res = e->err_buf;
+    }
+    pthread_mutex_unlock(&e->decode_mutex);
+    return res;
 }
 
 static int engine_reset(tlsuv_engine_t self) {
