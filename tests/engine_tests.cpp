@@ -18,6 +18,7 @@ limitations under the License.
 #include "tlsuv/tlsuv.h"
 
 #include <cstring>
+#include <fstream>
 #include <tlsuv/tls_engine.h>
 #include <uv.h>
 
@@ -167,6 +168,50 @@ TEST_CASE (
     CHECK ((strstr(tls->version(), "FIPS") != nullptr) == (rc== TLS_FIPS_ENABLED));
 #endif
 
+    tls->free_ctx(tls);
+}
+
+#define pem_path_str_(x) #x
+#define pem_path_str(x) pem_path_str_(x)
+
+static std::string read_pem(const char *path) {
+    std::ifstream f(path, std::ios::binary);
+    REQUIRE(f.good());
+    return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+}
+
+// callers may count the terminating NUL in the length (mbedTLS requires it for PEM);
+// every backend has to accept multi-cert PEM either way
+TEST_CASE("load multi-cert PEM with and without NUL", "[engine]") {
+    auto chain = read_pem(pem_path_str(TEST_SERVER_CERT)) + read_pem(pem_path_str(TEST_SERVER_CA));
+    auto key = read_pem(pem_path_str(TEST_SERVER_KEY));
+    auto with_nul = GENERATE(false, true);
+    INFO("length includes NUL: " << with_nul);
+    size_t chain_len = chain.size() + (with_nul ? 1 : 0);
+    size_t key_len = key.size() + (with_nul ? 1 : 0);
+
+    tls_context *tls = default_tls_context(chain.c_str(), chain_len);
+    REQUIRE(tls != nullptr);
+    CHECK(tls->set_ca_bundle(tls, chain.c_str(), chain_len) == 0);
+
+    tlsuv_certificate_t cert = nullptr;
+    REQUIRE(tls->load_cert(&cert, chain.c_str(), chain_len) == 0);
+
+    char *pem = nullptr;
+    size_t pem_len = 0;
+    REQUIRE(cert->to_pem(cert, 1, &pem, &pem_len) == 0);
+    int count = 0;
+    for (const char *p = pem; (p = strstr(p, "BEGIN CERTIFICATE")) != nullptr; p++) count++;
+    CHECK(count == 2);
+    free(pem);
+
+    tlsuv_private_key_t pk = nullptr;
+    REQUIRE(tls->load_key(&pk, key.c_str(), key_len) == 0);
+    CHECK(tls->set_own_cert(tls, pk, cert) == 0);
+
+    tls->set_own_cert(tls, nullptr, nullptr);
+    pk->free(pk);
+    cert->free(cert);
     tls->free_ctx(tls);
 }
 
