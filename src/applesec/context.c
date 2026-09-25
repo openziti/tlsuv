@@ -153,6 +153,12 @@ static void tls_free_ctx(tls_context* ctx) {
     tlsuv__free(c);
 }
 
+static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen) {
+    // corecrypto holds FIPS 140 validations, but there is no public API to query
+    if (module && modulelen > 0) *module = 0;
+    return TLS_FIPS_ENABLED;
+}
+
 static const char* tls_lib_version(void) {
     static char version[64] = {0};
     if (*version == 0) {
@@ -1136,6 +1142,7 @@ static tls_context ctx_api = {
     .generate_key = gen_key,
     .load_key = load_key,
     .load_cert = load_cert,
+    .fips_status = tls_fips_status,
     // not supported by this backend:
     // .allow_partial_chain
     // .generate_csr_to_pem      -- Security has no CSR API
