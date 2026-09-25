@@ -37,7 +37,7 @@ endif ()
 
 set(supported_tls_libs openssl mbedtls win32crypto boringssl)
 if (APPLE)
-    # Security.framework/SecureTransport backend: opt-in only, `openssl`
+    # Network.framework backend: opt-in only, `openssl`
     # remains the default on macOS.
     list(APPEND supported_tls_libs applesec)
 endif ()
