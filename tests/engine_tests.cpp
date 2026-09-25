@@ -192,7 +192,10 @@ TEST_CASE("load multi-cert PEM with and without NUL", "[engine]") {
 
     tls_context *tls = default_tls_context(chain.c_str(), chain_len);
     REQUIRE(tls != nullptr);
-    CHECK(tls->set_ca_bundle(tls, chain.c_str(), chain_len) == 0);
+    // optional: not every backend implements it (e.g. mbedtls)
+    if (tls->set_ca_bundle) {
+        CHECK(tls->set_ca_bundle(tls, chain.c_str(), chain_len) == 0);
+    }
 
     tlsuv_certificate_t cert = nullptr;
     REQUIRE(tls->load_cert(&cert, chain.c_str(), chain_len) == 0);
