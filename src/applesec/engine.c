@@ -33,6 +33,10 @@
 #include <sys/poll.h>
 
 static int engine_flush(tlsuv_engine_t self);
+struct applenw_engine_s;
+static void set_error(struct applenw_engine_s *e, CFErrorRef err);
+static CFErrorRef posix_error(int code);
+static void wake(struct applenw_engine_s *e);
 
 static inline void log_frame(const char *dir, const char *bytes, size_t len) {
     const char *end = bytes + len;
@@ -127,6 +131,8 @@ struct applenw_engine_s {
     char err_buf[256];
     // negotiated ALPN protocol, owned by the engine (ALPN names are at most 255 bytes)
     char alpn[256];
+
+    CFMutableArrayRef policies;
     CFTypeRef ca;
     sec_identity_t identity;
     int(* cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx);
@@ -168,14 +174,25 @@ static ssize_t engine_socket_read(void *io, char *buf, size_t len) {
 static ssize_t engine_socket_write(void *io, const char *buf, size_t len) {
     struct applenw_engine_s *e = (struct applenw_engine_s *) io;
     ssize_t res = send(e->sock, buf, len, 0);
-    UM_LOG(TRACE, "engine_socket_write: %zd/%zd", res, len);
     if (res == -1) {
         int err = errno;
-        if (err == EWOULDBLOCK) {
-            return TLS_AGAIN;
+        UM_LOG(TRACE, "engine_socket_write: %zd/%zd errno=%d", res, len, err);
+        switch (err) {
+            case EWOULDBLOCK:
+            // tlsuv_stream_connect_addr() hands over a socket whose connect() may
+            // still be in progress; retry once it is writable (same as OpenSSL's
+            // BIO_sock_non_fatal_error)
+            case ENOTCONN:
+            case EINPROGRESS:
+            case EALREADY:
+                return TLS_AGAIN;
+            default:
+                UM_LOG(WARN, "write to peer failed: %s", strerror(err));
+                set_error(e, posix_error(err));
+                return TLS_ERR;
         }
-        return TLS_ERR;
     }
+    UM_LOG(TRACE, "engine_socket_write: %zd/%zd", res, len);
     return res;
 }
 
@@ -342,6 +359,7 @@ static void stop_io(struct applenw_engine_s *e) {
 
 static void engine_dealloc(struct applenw_engine_s *e) {
     if (e->error) CFRelease(e->error);
+    if (e->policies) CFRelease(e->policies);
     dispatch_release((dispatch_object_t)e->outbound_buf);
     pthread_mutex_destroy(&e->outbound_mutex);
     pthread_mutex_destroy(&e->decode_mutex);
@@ -582,7 +600,8 @@ static int engine_flush(tlsuv_engine_t self) {
 
     pthread_mutex_lock(&e->outbound_mutex);
     dispatch_data_t buf = e->outbound_buf;
-    if (dispatch_data_get_size(buf) > 0) {
+    bool had_data = dispatch_data_get_size(buf) > 0;
+    if (had_data) {
         __block size_t total = 0;
         bool complete = dispatch_data_apply(buf, ^bool(dispatch_data_t slice, size_t offset, const void *b, size_t len) {
             ssize_t wrote = e->write_f(e->io, b, len);
@@ -612,6 +631,11 @@ static int engine_flush(tlsuv_engine_t self) {
         if (e->sock != -1) {
             shutdown(e->sock, SHUT_WR);
         }
+    }
+
+    // drained: tell the stream, so it stops polling for writability
+    if (had_data && result == TLS_OK) {
+        wake(e);
     }
 
     pthread_mutex_unlock(&e->outbound_mutex);
@@ -760,7 +784,7 @@ static int engine_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t
     }
 
     if (e->decoded_len == 0 && *out_bytes == 0) {
-        UM_LOG(DEBG, "engine[%p] waiting for decode", e);
+        UM_LOG(TRACE, "engine[%p] waiting for decode", e);
         struct timespec wait = {
             .tv_nsec = 10 * NSEC_PER_USEC,
         };
@@ -874,6 +898,49 @@ static struct tlsuv_engine_s applenw_engine_api = {
         .setup_async = engine_setup_async,
 };
 
+// Apple's SSL server policy caps certificate lifetime (825 days, check key
+// "OtherTrustValidityPeriod") even for private CAs. Ziti controllers use long-lived
+// certificates and the other backends don't enforce the cap, so when the chain is
+// anchored to the configured CA bundle, a failure is tolerated if that cap is the
+// only check that failed. Hostname, EKU, key size, expiry etc. are still enforced.
+// "StatusCodes" accompanies every failure and carries no check of its own.
+// The TrustResultDetails keys are not public API: anything unrecognised is a failure.
+static bool only_validity_cap_failed(SecTrustRef trust) {
+    bool cap_failed = false;
+    bool other_failed = false;
+
+    CFDictionaryRef result = SecTrustCopyResult(trust);
+    CFArrayRef details = result ? CFDictionaryGetValue(result, CFSTR("TrustResultDetails")) : NULL;
+    if (details == NULL || CFGetTypeID(details) != CFArrayGetTypeID()) {
+        if (result) CFRelease(result);
+        return false;
+    }
+
+    for (CFIndex i = 0; i < CFArrayGetCount(details) && !other_failed; i++) {
+        CFDictionaryRef checks = CFArrayGetValueAtIndex(details, i);
+        if (CFGetTypeID(checks) != CFDictionaryGetTypeID()) {
+            other_failed = true;
+            break;
+        }
+        CFIndex n = CFDictionaryGetCount(checks);
+        if (n == 0) continue;
+
+        const void **keys = tlsuv__calloc(n, sizeof(*keys));
+        CFDictionaryGetKeysAndValues(checks, keys, NULL);
+        for (CFIndex k = 0; k < n; k++) {
+            CFStringRef keyName = (CFStringRef)keys[k];
+            if (CFEqual(keys[k], CFSTR("OtherTrustValidityPeriod"))) {
+                cap_failed = true;
+            } else if (!CFEqual(keys[k], CFSTR("StatusCodes"))) {
+                other_failed = true;
+            }
+        }
+        tlsuv__free(keys);
+    }
+    CFRelease(result);
+    return cap_failed && !other_failed;
+}
+
 // ctx->ssl_chain is [SecIdentityRef, intermediates...] (built by tls_set_own_cert).
 // sec_identity_create_with_certificates() takes the chain to send, leaf first.
 static sec_identity_t new_client_identity(struct sectransport_ctx *ctx) {
@@ -921,6 +988,25 @@ tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host) {
     e->queue = dispatch_queue_create_with_target(
         "tlsuv.queue", DISPATCH_QUEUE_SERIAL, global);
 
+    // no host (e.g. tlsuv_stream_connect_addr() without a hostname): the SSL policy
+    // then skips the name check
+    CFStringRef hostname = host ? CFStringCreateWithCString(kCFAllocatorDefault, host,
+                                                            kCFStringEncodingUTF8) : NULL;
+    // `true` = we are evaluating a server certificate
+    SecPolicyRef ssl_policy = SecPolicyCreateSSL(true, hostname);
+    SecPolicyRef x509_policy = SecPolicyCreateBasicX509();
+
+    CFMutableArrayRef policies =
+            CFArrayCreateMutable(kCFAllocatorDefault, 2, &kCFTypeArrayCallBacks);
+    CFArrayAppendValue(policies, ssl_policy);
+    CFArrayAppendValue(policies, x509_policy);
+
+    CFRelease(ssl_policy);
+    CFRelease(x509_policy);
+    if (hostname) CFRelease(hostname);
+
+    e->policies = policies;
+
     e->protocol_parameters = nw_parameters_create_secure_tcp(
         ^(nw_protocol_options_t opts){
             sec_protocol_options_t sec_options = nw_tls_copy_sec_protocol_options(opts);
@@ -948,10 +1034,16 @@ tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host) {
                 sec_protocol_options_set_verify_block(sec_options,
                     ^(sec_protocol_metadata_t metadata, sec_trust_t trust_ref, sec_protocol_verify_complete_t complete){
                         SecTrustRef ref = sec_trust_copy_ref(trust_ref);
+                        SecTrustSetPolicies(ref, e->policies);
                         SecTrustSetAnchorCertificates(ref, e->ca);
                         SecTrustSetAnchorCertificatesOnly(ref, true);
                         CFErrorRef err = NULL;
                         if (SecTrustEvaluateWithError(ref, &err)) {
+                            complete(true);
+                        } else if (only_validity_cap_failed(ref)) {
+                            UM_LOG(DEBG, "accepting server certificate over Apple's max validity period"
+                                         " (anchored to configured CA bundle)");
+                            if (err) CFRelease(err);
                             complete(true);
                         } else {
                             char msg[256] = "unknown error";
