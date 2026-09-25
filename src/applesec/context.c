@@ -153,7 +153,9 @@ static void tls_free_ctx(tls_context* ctx) {
 }
 
 static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen) {
-    // corecrypto holds FIPS 140 validations, but there is no public API to query
+    // Network.framework/Security.framework crypto is using Apple corecrypto, which holds
+    // FIPS 140 validations and per Apple always runs in FIPS mode: there is no
+    // non-FIPS mode to switch to, hence no API to query, so report it unconditionally
     if (module) {
         snprintf(module, modulelen, "Apple corecrypto");
     }
