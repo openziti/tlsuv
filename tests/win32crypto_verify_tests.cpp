@@ -77,7 +77,8 @@ void run_handshake(tlsuv_engine_t clt, tlsuv_engine_t srv, tls_handshake_state &
     }
 }
 
-int reject_client_cert(const struct tlsuv_certificate_s *, void *ctx) {
+// a verify callback that returns the int its context points to
+int verify_returns(const struct tlsuv_certificate_s *, void *ctx) {
     return *static_cast<int *>(ctx);
 }
 
@@ -180,7 +181,9 @@ void delete_persisted_key(X509 *x) {
 // Returns the client's final handshake state.
 tls_handshake_state client_handshake_with(const std::string &bundle_pem,
                                           const std::string &server_key_pem,
-                                          const std::string &server_cert_pem) {
+                                          const std::string &server_cert_pem,
+                                          const char *host = "localhost",
+                                          const int *verify_result = nullptr) {
     tls_context *srv = default_tls_context(nullptr, 0);
     tlsuv_private_key_t key = nullptr;
     tlsuv_certificate_t cert = nullptr;
@@ -188,11 +191,15 @@ tls_handshake_state client_handshake_with(const std::string &bundle_pem,
     REQUIRE(srv->load_cert(&cert, server_cert_pem.c_str(), server_cert_pem.size()) == 0);
     REQUIRE(srv->set_own_cert(srv, key, cert) == 0);
 
-    // a CA bundle and no verify callback: the backend's own chain check runs
+    // a CA bundle and, unless verify_result is set, no verify callback: the backend's own chain
+    // check runs
     tls_context *clt = default_tls_context(bundle_pem.c_str(), bundle_pem.size());
+    if (verify_result) {
+        clt->set_cert_verify(clt, verify_returns, (void *) verify_result);
+    }
 
     tlsuv_engine_t srv_eng = srv->new_server_engine(srv);
-    tlsuv_engine_t clt_eng = clt->new_engine(clt, "localhost");
+    tlsuv_engine_t clt_eng = clt->new_engine(clt, host);
     REQUIRE(srv_eng != nullptr);
     REQUIRE(clt_eng != nullptr);
 
@@ -257,7 +264,8 @@ PCCERT_CONTEXT to_ctx(X509 *x) {
     return ctx;
 }
 
-// Mints an end-entity certificate with an explicit EKU string (e.g. "clientAuth").
+// Mints an end-entity certificate signed by TestCA with an explicit SAN (e.g. "DNS:localhost") and
+// EKU (e.g. "clientAuth"). A NULL san or eku leaves that extension out.
 x509_ptr issue_leaf_eku(EVP_PKEY *key, const char *subject, const char *san,
                         EVP_PKEY *signer, X509 *signer_cert, const char *eku) {
     x509_ptr x{X509_new()};
@@ -273,9 +281,31 @@ x509_ptr issue_leaf_eku(EVP_PKEY *key, const char *subject, const char *san,
     add_ext(x.get(), nullptr, NID_subject_key_identifier, "hash");
     add_ext(x.get(), signer_cert, NID_authority_key_identifier, "keyid:always");
     add_ext(x.get(), nullptr, NID_basic_constraints, "critical,CA:FALSE");
-    add_ext(x.get(), nullptr, NID_subject_alt_name, san);
-    add_ext(x.get(), nullptr, NID_ext_key_usage, eku);
+    if (san) add_ext(x.get(), nullptr, NID_subject_alt_name, san);
+    if (eku) add_ext(x.get(), nullptr, NID_ext_key_usage, eku);
     add_ext(x.get(), nullptr, NID_key_usage, "critical,digitalSignature,keyEncipherment");
+    REQUIRE(X509_sign(x.get(), signer, EVP_sha256()) > 0);
+    return x;
+}
+
+// Mints a CA certificate with explicit basic constraints (e.g. "critical,CA:TRUE,pathlen:0") and key
+// usage (e.g. "critical,digitalSignature"). signer_cert NULL makes it self-signed.
+x509_ptr issue_ca(EVP_PKEY *key, const char *subject, const char *issuer_cn,
+                  EVP_PKEY *signer, X509 *signer_cert, const char *bc, const char *ku) {
+    x509_ptr x{X509_new()};
+    X509_set_version(x.get(), 2);
+    ASN1_INTEGER_set(X509_get_serialNumber(x.get()), (long) (uintptr_t) key & 0x7fffffff);
+    X509_gmtime_adj(X509_getm_notBefore(x.get()), -86400);
+    X509_gmtime_adj(X509_getm_notAfter(x.get()), 3650L * 86400);
+    X509_set_pubkey(x.get(), key);
+    X509_NAME *sub = X509_get_subject_name(x.get());
+    X509_NAME_add_entry_by_txt(sub, "CN", MBSTRING_ASC, (const unsigned char *) subject, -1, -1, 0);
+    X509_NAME *iss = X509_get_issuer_name(x.get());
+    X509_NAME_add_entry_by_txt(iss, "CN", MBSTRING_ASC, (const unsigned char *) issuer_cn, -1, -1, 0);
+    add_ext(x.get(), nullptr, NID_subject_key_identifier, "hash");
+    add_ext(x.get(), signer_cert, NID_authority_key_identifier, "keyid:always");
+    add_ext(x.get(), nullptr, NID_basic_constraints, bc);
+    add_ext(x.get(), nullptr, NID_key_usage, ku);
     REQUIRE(X509_sign(x.get(), signer, EVP_sha256()) > 0);
     return x;
 }
@@ -441,6 +471,22 @@ TEST_CASE("win32crypto server rejects a client cert the trusted CA did not sign"
         delete_persisted_key(clt_cert.get());
     }
 
+    SECTION("a serverAuth-only client cert is accepted, as in the OpenSSL backend") {
+        pkey_ptr clt_leaf = gen_key();
+        x509_ptr clt_cert = issue_leaf_eku(clt_leaf.get(), "client", "DNS:client",
+                                           ca.key.get(), ca.cert.get(), "serverAuth");
+        CHECK(run(to_pem(clt_leaf.get()), to_pem(clt_cert.get())) == TLS_HS_COMPLETE);
+        delete_persisted_key(clt_cert.get());
+    }
+
+    SECTION("a clientAuth client cert with no SAN is accepted") {
+        pkey_ptr clt_leaf = gen_key();
+        x509_ptr clt_cert = issue_leaf_eku(clt_leaf.get(), "Xq3mN8pLr", nullptr,
+                                           ca.key.get(), ca.cert.get(), "clientAuth");
+        CHECK(run(to_pem(clt_leaf.get()), to_pem(clt_cert.get())) == TLS_HS_COMPLETE);
+        delete_persisted_key(clt_cert.get());
+    }
+
     SECTION("a forged client cert naming the CA as issuer is rejected") {
         pkey_ptr attacker = gen_key();
         pkey_ptr clt_leaf = gen_key();
@@ -493,34 +539,163 @@ TEST_CASE("win32crypto does not trust an issuer+serial copy of a bundle certific
     delete_persisted_key(forged.get());
 }
 
-// Documents two preexisting gaps that verify_cert_ca does not close (same advisory, separate
-// findings): it never checks the peer hostname, and it never checks the extended key usage. Both
-// are expected to be accepted on main and on this fix; a behaviour-based fix that adds an SSL policy
-// check would flip these to rejected.
-TEST_CASE("win32crypto verify_cert_ca checks neither hostname nor EKU", "[verify][win32crypto]") {
+// The chain walk alone accepts any certificate the bundle CA signed. In OpenZiti every enrolled
+// identity holds one, so the client must also check the name it connected to, or any identity can
+// impersonate the controller or a router with its own client certificate. The extended key usage is
+// not checked, as in the OpenSSL backend (X509_PURPOSE_ANY): e2ee-tls peers present identity
+// certificates, which carry only clientAuth, as TLS servers.
+TEST_CASE("win32crypto client checks the server hostname but not extended key usage", "[verify][win32crypto]") {
     if (!is_win32crypto()) {
         SKIP("not a win32crypto build");
     }
     ca_fixture ca;
 
-    SECTION("a valid CA-signed leaf for a different hostname is accepted") {
+    auto handshake = [&](const char *subject, const char *san, const char *eku, const char *host) {
         pkey_ptr leaf = gen_key();
-        // client connects to "localhost"; this leaf is only valid for other.example
-        x509_ptr cert = issue_leaf_eku(leaf.get(), "other.example", "DNS:other.example",
-                                       ca.key.get(), ca.cert.get(), "serverAuth,clientAuth");
-        auto st = client_handshake_with(ca.bundle, to_pem(leaf.get()), to_pem(cert.get()));
-        INFO("wrong-hostname leaf handshake state (2=COMPLETE,3=ERROR): " << (int) st);
-        CHECK(st == TLS_HS_COMPLETE);
+        x509_ptr cert = issue_leaf_eku(leaf.get(), subject, san, ca.key.get(), ca.cert.get(), eku);
+        auto st = client_handshake_with(ca.bundle, to_pem(leaf.get()), to_pem(cert.get()), host);
+        delete_persisted_key(cert.get());
+        return st;
+    };
+
+    SECTION("a CA-signed leaf for a different hostname is rejected") {
+        CHECK(handshake("other.example", "DNS:other.example", "serverAuth,clientAuth", "localhost") == TLS_HS_ERROR);
+    }
+
+    SECTION("a clientAuth-only leaf with a matching name is accepted") {
+        CHECK(handshake("localhost", "DNS:localhost", "clientAuth", "localhost") == TLS_HS_COMPLETE);
+    }
+
+    SECTION("an enrolled identity certificate presented for a named server is rejected") {
+        // shaped like an OpenZiti identity certificate: CN is the identity id, no SAN, clientAuth only;
+        // its name cannot match the host
+        CHECK(handshake("Xq3mN8pLr", nullptr, "clientAuth", "localhost") == TLS_HS_ERROR);
+    }
+
+    SECTION("e2ee-tls: with no host, an enrolled identity certificate is accepted") {
+        CHECK(handshake("Xq3mN8pLr", nullptr, "clientAuth", nullptr) == TLS_HS_COMPLETE);
+    }
+
+    SECTION("a leaf with no extended key usage and a matching name is accepted") {
+        CHECK(handshake("localhost", "DNS:localhost", nullptr, "localhost") == TLS_HS_COMPLETE);
+    }
+
+    SECTION("a serverAuth-only leaf with a matching name is accepted") {
+        CHECK(handshake("localhost", "DNS:localhost", "serverAuth", "localhost") == TLS_HS_COMPLETE);
+    }
+
+    SECTION("an IP address SAN matches a connection to that address") {
+        CHECK(handshake("router", "IP:127.0.0.1", "serverAuth", "127.0.0.1") == TLS_HS_COMPLETE);
+    }
+
+    SECTION("an IP address SAN does not match a connection to another address") {
+        CHECK(handshake("router", "IP:127.0.0.1", "serverAuth", "127.0.0.2") == TLS_HS_ERROR);
+    }
+
+    SECTION("a wildcard SAN matches a single label") {
+        CHECK(handshake("wild", "DNS:*.example.test", "serverAuth", "ctrl.example.test") == TLS_HS_COMPLETE);
+    }
+
+    SECTION("a wildcard SAN does not match two labels") {
+        CHECK(handshake("wild", "DNS:*.example.test", "serverAuth", "a.ctrl.example.test") == TLS_HS_ERROR);
+    }
+
+    SECTION("with no SAN, the subject CN matches, as with the OpenSSL backend") {
+        CHECK(handshake("localhost", nullptr, "serverAuth", "localhost") == TLS_HS_COMPLETE);
+    }
+
+    SECTION("partial chain: the name is still checked when the bundle holds only the intermediate") {
+        pkey_ptr inter = gen_key();
+        pkey_ptr leaf = gen_key();
+        x509_ptr inter_cert = issue_cert(inter.get(), "TestSubCA", "TestCA",
+                                         ca.key.get(), ca.cert.get(), true, -1, 3650);
+        x509_ptr leaf_cert = issue_cert(leaf.get(), "localhost", "TestSubCA",
+                                        inter.get(), inter_cert.get(), false, -1, 365);
+        std::string bundle = to_pem(inter_cert.get());
+        CHECK(client_handshake_with(bundle, to_pem(leaf.get()), to_pem(leaf_cert.get()), "other.example")
+              == TLS_HS_ERROR);
+        delete_persisted_key(leaf_cert.get());
+    }
+}
+
+// A CA:TRUE certificate is only an authorized issuer within its own constraints: without the
+// keyCertSign key usage it cannot sign certificates, and a pathLen limits how many CAs may follow it.
+TEST_CASE("win32crypto enforces issuer key usage and path length", "[verify][win32crypto]") {
+    if (!is_win32crypto()) {
+        SKIP("not a win32crypto build");
+    }
+    const char *ca_ku = "critical,digitalSignature,keyCertSign";
+
+    SECTION("an intermediate without keyCertSign cannot sign the leaf, rejected") {
+        ca_fixture ca;
+        pkey_ptr inter = gen_key();
+        pkey_ptr leaf = gen_key();
+        x509_ptr inter_cert = issue_ca(inter.get(), "TestSubCA", "TestCA", ca.key.get(), ca.cert.get(),
+                                       "critical,CA:TRUE", "critical,digitalSignature");
+        x509_ptr leaf_cert = issue_cert(leaf.get(), "localhost", "TestSubCA",
+                                        inter.get(), inter_cert.get(), false, -1, 365);
+        std::string chain = to_pem(leaf_cert.get()) + to_pem(inter_cert.get());
+        CHECK(client_handshake_with(ca.bundle, to_pem(leaf.get()), chain) == TLS_HS_ERROR);
+        delete_persisted_key(leaf_cert.get());
+    }
+
+    SECTION("a pathLen:0 root cannot have a subordinate CA, rejected") {
+        pkey_ptr root = gen_key();
+        pkey_ptr inter = gen_key();
+        pkey_ptr leaf = gen_key();
+        x509_ptr root_cert = issue_ca(root.get(), "TestCA", "TestCA", root.get(), nullptr,
+                                      "critical,CA:TRUE,pathlen:0", ca_ku);
+        x509_ptr inter_cert = issue_ca(inter.get(), "TestSubCA", "TestCA", root.get(), root_cert.get(),
+                                       "critical,CA:TRUE", ca_ku);
+        x509_ptr leaf_cert = issue_cert(leaf.get(), "localhost", "TestSubCA",
+                                        inter.get(), inter_cert.get(), false, -1, 365);
+        std::string chain = to_pem(leaf_cert.get()) + to_pem(inter_cert.get());
+        CHECK(client_handshake_with(to_pem(root_cert.get()), to_pem(leaf.get()), chain) == TLS_HS_ERROR);
+        delete_persisted_key(leaf_cert.get());
+    }
+
+    SECTION("control: a pathLen:1 root with one subordinate CA, accepted") {
+        pkey_ptr root = gen_key();
+        pkey_ptr inter = gen_key();
+        pkey_ptr leaf = gen_key();
+        x509_ptr root_cert = issue_ca(root.get(), "TestCA", "TestCA", root.get(), nullptr,
+                                      "critical,CA:TRUE,pathlen:1", ca_ku);
+        x509_ptr inter_cert = issue_ca(inter.get(), "TestSubCA", "TestCA", root.get(), root_cert.get(),
+                                       "critical,CA:TRUE,pathlen:0", ca_ku);
+        x509_ptr leaf_cert = issue_cert(leaf.get(), "localhost", "TestSubCA",
+                                        inter.get(), inter_cert.get(), false, -1, 365);
+        std::string chain = to_pem(leaf_cert.get()) + to_pem(inter_cert.get());
+        CHECK(client_handshake_with(to_pem(root_cert.get()), to_pem(leaf.get()), chain) == TLS_HS_COMPLETE);
+        delete_persisted_key(leaf_cert.get());
+    }
+}
+
+// A custom verify callback replaces the backend's own checks, as in the OpenSSL backend, even when a
+// CA bundle is also set: its answer is final in both directions.
+TEST_CASE("win32crypto custom verify callback overrides the CA bundle check", "[verify][win32crypto]") {
+    if (!is_win32crypto()) {
+        SKIP("not a win32crypto build");
+    }
+    ca_fixture ca;
+    const int accept = 0;
+    const int reject = -1;
+
+    SECTION("a callback that accepts admits a leaf the bundle CA did not sign") {
+        pkey_ptr attacker = gen_key();
+        pkey_ptr leaf = gen_key();
+        x509_ptr cert = issue_cert(leaf.get(), "localhost", "TestCA",
+                                   attacker.get(), nullptr, false, -1, 365);
+        CHECK(client_handshake_with(ca.bundle, to_pem(leaf.get()), to_pem(cert.get()), "other.example", &accept)
+              == TLS_HS_COMPLETE);
         delete_persisted_key(cert.get());
     }
 
-    SECTION("a clientAuth-only leaf presented as a server certificate is accepted") {
+    SECTION("a callback that rejects refuses a leaf the bundle CA signed") {
         pkey_ptr leaf = gen_key();
-        x509_ptr cert = issue_leaf_eku(leaf.get(), "localhost", "DNS:localhost",
-                                       ca.key.get(), ca.cert.get(), "clientAuth");
-        auto st = client_handshake_with(ca.bundle, to_pem(leaf.get()), to_pem(cert.get()));
-        INFO("clientAuth-only server cert handshake state (2=COMPLETE,3=ERROR): " << (int) st);
-        CHECK(st == TLS_HS_COMPLETE);
+        x509_ptr cert = issue_cert(leaf.get(), "localhost", "TestCA",
+                                   ca.key.get(), ca.cert.get(), false, -1, 365);
+        CHECK(client_handshake_with(ca.bundle, to_pem(leaf.get()), to_pem(cert.get()), "localhost", &reject)
+              == TLS_HS_ERROR);
         delete_persisted_key(cert.get());
     }
 }

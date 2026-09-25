@@ -142,6 +142,11 @@ static tls_handshake_state engine_handshake_state(tlsuv_engine_t self) {
 
 #define MAX_VERIFY_DEPTH 10
 
+// SSL_EXTRA_CERT_CHAIN_POLICY_PARA check flag, defined in wininet.h
+#ifndef SECURITY_FLAG_IGNORE_UNKNOWN_CA
+#define SECURITY_FLAG_IGNORE_UNKNOWN_CA 0x00000100
+#endif
+
 static bool cert_is_ca(PCCERT_CONTEXT c) {
     PCERT_EXTENSION ext = CertFindExtension(szOID_BASIC_CONSTRAINTS2,
                                             c->pCertInfo->cExtension, c->pCertInfo->rgExtension);
@@ -173,10 +178,83 @@ static PCCERT_CONTEXT verified_issuer(HCERTSTORE store, PCCERT_CONTEXT subject) 
     }
 }
 
+// Checks the peer certificate against the SSL chain policy: a client requires a name matching the
+// host it connected to. The extended key usage is not checked, as with X509_PURPOSE_ANY in the
+// OpenSSL backend: e2ee-tls peers present identity certificates, which carry only clientAuth, as TLS
+// servers. Trust is decided by the chain walk in verify_cert_ca, so the policy ignores an unknown root. The
+// policy also enforces what the walk does not: the issuers' keyCertSign key usage and path lengths.
+static int verify_peer_policy(struct win32crypto_engine_s *engine, PCCERT_CONTEXT leaf) {
+    int rc = -1;
+    HCERTSTORE stores = NULL;
+    PCCERT_CHAIN_CONTEXT chain = NULL;
+    wchar_t *server_name = NULL;
+
+    // the chain is only built for the policy check; the bundle helps it reach the anchor
+    stores = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0, 0, NULL);
+    if (stores == NULL ||
+        !CertAddStoreToCollection(stores, leaf->hCertStore, 0, 0) ||
+        !CertAddStoreToCollection(stores, engine->ca, 0, 0)) {
+        LOG_ERROR(WARN, GetLastError(), "failed to set up the peer chain policy check");
+        goto done;
+    }
+
+    // no requested usage: the extended key usage is not checked
+    CERT_CHAIN_PARA chain_para = { .cbSize = sizeof(chain_para) };
+    DWORD chain_flags = CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL | CERT_CHAIN_DISABLE_AUTH_ROOT_AUTO_UPDATE;
+    if (!CertGetCertificateChain(NULL, leaf, NULL, stores, &chain_para, chain_flags, NULL, &chain)) {
+        LOG_ERROR(WARN, GetLastError(), "failed to build the peer chain for the policy check");
+        goto done;
+    }
+
+    // no host means no name check, as with SSL_set1_host() in the OpenSSL backend
+    if (!engine->is_server && engine->hostname != NULL && engine->hostname[0] != '\0') {
+        int len = MultiByteToWideChar(CP_UTF8, 0, engine->hostname, -1, NULL, 0);
+        server_name = len > 0 ? tlsuv__calloc(len, sizeof(wchar_t)) : NULL;
+        if (server_name == NULL ||
+            MultiByteToWideChar(CP_UTF8, 0, engine->hostname, -1, server_name, len) != len) {
+            UM_LOG(WARN, "failed to convert host[%s] for the policy check", engine->hostname);
+            goto done;
+        }
+    }
+
+    SSL_EXTRA_CERT_CHAIN_POLICY_PARA ssl_para = {
+        .cbSize = sizeof(ssl_para),
+        .dwAuthType = engine->is_server ? AUTHTYPE_CLIENT : AUTHTYPE_SERVER,
+        .fdwChecks = SECURITY_FLAG_IGNORE_UNKNOWN_CA,
+        .pwszServerName = server_name,
+    };
+    CERT_CHAIN_POLICY_PARA policy_para = {
+        .cbSize = sizeof(policy_para),
+        .pvExtraPolicyPara = &ssl_para,
+    };
+    CERT_CHAIN_POLICY_STATUS status = { .cbSize = sizeof(status) };
+    if (!CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL, chain, &policy_para, &status)) {
+        LOG_ERROR(WARN, GetLastError(), "failed to run the peer chain policy check");
+        goto done;
+    }
+    if (status.dwError != 0) {
+        LOG_ERROR(WARN, status.dwError, "peer certificate fails the SSL policy for host[%s]",
+                  engine->is_server ? "<client>" : (engine->hostname ? engine->hostname : "<none>"));
+        goto done;
+    }
+    rc = 0;
+
+done:
+    tlsuv__free(server_name);
+    if (chain != NULL) {
+        CertFreeCertificateChain(chain);
+    }
+    if (stores != NULL) {
+        CertCloseStore(stores, 0);
+    }
+    return rc;
+}
+
 // Accepts the peer chain only if it reaches a certificate in the CA bundle through verified
 // signatures, with every certificate on the way inside its validity period and every issuer a CA.
 // A bundle certificate that verifies the chain ends it, so an intermediate in the bundle is a
-// trust anchor, as with the OpenSSL backend's partial-chain setting.
+// trust anchor, as with the OpenSSL backend's partial-chain setting. The peer certificate must
+// then also pass verify_peer_policy.
 static int verify_cert_ca(const struct tlsuv_certificate_s * c, void *v_ctx) {
     struct win32crypto_engine_s *engine = v_ctx;
     win32_cert_t *cert = (win32_cert_t*)c;
@@ -212,8 +290,9 @@ static int verify_cert_ca(const struct tlsuv_certificate_s * c, void *v_ctx) {
     }
     if (rc != 0) {
         UM_LOG(WARN, "peer certificate chain does not verify against the CA bundle");
+        return rc;
     }
-    return rc;
+    return verify_peer_policy(engine, cert->cert);
 }
 
 // Retrieves the peer certificate chain. On a server the peer is the client, and
