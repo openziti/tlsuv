@@ -57,6 +57,7 @@ endif ()
 if (TLSUV_HTTP)
     list(APPEND test_srcs
             http_tests.cpp
+            src_tests.cpp
             ws_tests.cpp
             compression_tests.cpp
     )

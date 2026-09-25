@@ -27,6 +27,9 @@ static int tls_write(uv_link_t *link, uv_link_t *source, const uv_buf_t bufs[],
                      unsigned int nbufs, uv_stream_t *send_handle, uv_link_write_cb cb, void *arg);
 static void tls_close(uv_link_t *link, uv_link_t *source, uv_link_close_cb cb);
 static void tls_link_flush_io(tls_link_t *, uv_link_write_cb , void *);
+static void tls_process_handshake(tls_link_t *tls);
+static void tls_process_app_data(tls_link_t *tls);
+static void tls_detach_engine(tls_link_t *tls);
 
 static const uv_link_methods_t tls_methods = {
     .close = tls_close,
@@ -62,6 +65,7 @@ static int tls_read_start(uv_link_t *l) {
 
     uv_link_default_read_start(l);
 
+    tls->hs_reported = false;
     st = tls->engine->handshake(tls->engine);
     UM_LOG(TRACE, "TLS(%p) started handshake(st = %d)", tls, st);
     tls_link_flush_io(tls, NULL, NULL);
@@ -99,56 +103,107 @@ static void tls_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *b) {
         }
 
         UM_LOG(TRACE, "TLS(%p) continuing handshake(%zd bytes received)", tls, nread);
-        tls_handshake_state st = tls->engine->handshake(tls->engine);
-        tls_link_flush_io(tls, NULL, NULL);
-
-        if (st == TLS_HS_COMPLETE) {
-            UM_LOG(TRACE, "TLS(%p) handshake completed", tls);
-            tls->hs_cb(tls, TLS_HS_COMPLETE);
-        } else if (st == TLS_HS_ERROR) {
-            const char *err = NULL;
-            if (tls->engine->strerror) {
-                err = tls->engine->strerror(tls->engine);
-            }
-            UM_LOG(ERR, "TLS(%p) handshake error %s", tls, err);
-            tls->hs_cb(tls, st);
-            uv_link_propagate_read_cb(l, UV_ECONNABORTED, NULL);
+        tls_process_handshake(tls);
+    } else if (hs_state == TLS_HS_COMPLETE && !tls->hs_reported) {
+        // completed without handshake() saying so (async engine)
+        tls_process_handshake(tls);
+        if (tls->hs_reported) {
+            tls_process_app_data(tls);
         }
     } else if (hs_state == TLS_HS_COMPLETE) {
         UM_LOG(TRACE, "TLS(%p) processing %zd bytes", tls, nread);
-
-        enum TLS_RESULT rc = TLS_MORE_AVAILABLE;
-        while(rc == TLS_MORE_AVAILABLE) {
-            uv_buf_t buf;
-            uv_link_propagate_alloc_cb(l, 64 * 1024, &buf);
-
-            if (buf.base == NULL || buf.len == 0) {
-                uv_link_propagate_read_cb(l, UV_ENOBUFS, &buf);
-                break;
-            }
-
-            size_t read_len;
-            rc = tls->engine->read(tls->engine, buf.base, (size_t *)&read_len, buf.len);
-            UM_LOG(VERB, "TLS(%p) produced %zd application byte (rc=%d)", tls, read_len, rc);
-
-            if (read_len > 0) {
-                uv_link_propagate_read_cb(l, (ssize_t)read_len, &buf);
-                continue;
-            }
-
-            if (rc == TLS_AGAIN) {
-                uv_link_propagate_read_cb(l, 0, &buf);
-            } else if (rc == TLS_EOF) {
-                uv_link_propagate_read_cb(l, UV_EOF, &buf);
-            } else if (rc == TLS_ERR) {
-                uv_link_propagate_read_cb(l, UV_ECONNABORTED, &buf);
-            } else {
-                UM_LOG(ERR, "aborting after unexpected TLS engine result: %d", rc);
-                uv_link_propagate_read_cb(l, UV_ECONNABORTED, &buf);
-            }
-        }
+        tls_process_app_data(tls);
     } else {
         UM_LOG(WARN, "SHOULD NOT BE here hs_state = %d", hs_state);
+    }
+}
+
+static void tls_process_handshake(tls_link_t *tls) {
+    uv_link_t *l = (uv_link_t *) tls;
+    tls_handshake_state st = tls->engine->handshake(tls->engine);
+    tls_link_flush_io(tls, NULL, NULL);
+
+    if (st == TLS_HS_COMPLETE) {
+        UM_LOG(TRACE, "TLS(%p) handshake completed", tls);
+        tls->hs_reported = true;
+        tls->hs_cb(tls, TLS_HS_COMPLETE);
+    } else if (st == TLS_HS_ERROR) {
+        const char *err = NULL;
+        if (tls->engine->strerror) {
+            err = tls->engine->strerror(tls->engine);
+        }
+        UM_LOG(ERR, "TLS(%p) handshake error %s", tls, err);
+        tls->hs_cb(tls, st);
+        uv_link_propagate_read_cb(l, UV_ECONNABORTED, NULL);
+    }
+}
+
+static void tls_process_app_data(tls_link_t *tls) {
+    uv_link_t *l = (uv_link_t *) tls;
+    enum TLS_RESULT rc = TLS_MORE_AVAILABLE;
+    while(rc == TLS_MORE_AVAILABLE) {
+        uv_buf_t buf;
+        uv_link_propagate_alloc_cb(l, 64 * 1024, &buf);
+
+        if (buf.base == NULL || buf.len == 0) {
+            uv_link_propagate_read_cb(l, UV_ENOBUFS, &buf);
+            break;
+        }
+
+        size_t read_len;
+        rc = tls->engine->read(tls->engine, buf.base, (size_t *)&read_len, buf.len);
+        UM_LOG(VERB, "TLS(%p) produced %zd application byte (rc=%d)", tls, read_len, rc);
+
+        if (read_len > 0) {
+            uv_link_propagate_read_cb(l, (ssize_t)read_len, &buf);
+            continue;
+        }
+
+        if (rc == TLS_AGAIN) {
+            uv_link_propagate_read_cb(l, 0, &buf);
+        } else if (rc == TLS_EOF) {
+            uv_link_propagate_read_cb(l, UV_EOF, &buf);
+        } else if (rc == TLS_ERR) {
+            uv_link_propagate_read_cb(l, UV_ECONNABORTED, &buf);
+        } else {
+            UM_LOG(ERR, "aborting after unexpected TLS engine result: %d", rc);
+            uv_link_propagate_read_cb(l, UV_ECONNABORTED, &buf);
+        }
+    }
+
+    // an async engine may have flushed ciphertext into ssl_out while reading
+    tls_link_flush_io(tls, NULL, NULL);
+}
+
+// the engine notifies from its own thread; only the async handle is touched there
+static void tls_link_notify(void *ctx, size_t in, size_t out) {
+    uv_async_send((uv_async_t *) ctx);
+}
+
+static void tls_link_async_cb(uv_async_t *a) {
+    tls_link_t *tls = a->data;
+    if (tls == NULL || tls->engine == NULL) {
+        return;
+    }
+
+    tls_handshake_state st = tls->engine->handshake_state(tls->engine);
+    UM_LOG(TRACE, "TLS(%p) async wakeup (hs_state = %d)", tls, st);
+    if (st == TLS_HS_CONTINUE || (st == TLS_HS_COMPLETE && !tls->hs_reported)) {
+        tls_process_handshake(tls);
+        // hs_cb may have started a write or closed the link; read on the next wakeup
+    } else if (st == TLS_HS_COMPLETE) {
+        tls_process_app_data(tls);
+    }
+}
+
+// stop engine callbacks into this link. setup_async swaps the callback on the
+// engine's side synchronously, so none can arrive after this returns
+static void tls_detach_engine(tls_link_t *tls) {
+    if (tls->engine && tls->engine->setup_async) {
+        tls->engine->setup_async(tls->engine, NULL, NULL);
+    }
+    if (tls->async) {
+        tls->async->data = NULL;
     }
 }
 
@@ -184,6 +239,7 @@ static int tls_write(uv_link_t *l, uv_link_t *source, const uv_buf_t bufs[],
 static void tls_close(uv_link_t *l, uv_link_t *source, uv_link_close_cb close_cb) {
     UM_LOG(TRACE, "closing TLS link");
     tls_link_t *tls = (tls_link_t *) l;
+    tls_detach_engine(tls);
     close_cb(source);
 }
 
@@ -283,21 +339,37 @@ static ssize_t tls_link_io_read(io_ctx ctx, char *data, size_t max) {
     return (ssize_t)max;
 }
 
-int tlsuv_tls_link_init(tls_link_t *tls, tlsuv_engine_t engine, tls_handshake_cb cb) {
+int tlsuv_tls_link_init(tls_link_t *tls, uv_loop_t *loop, tlsuv_engine_t engine, tls_handshake_cb cb) {
     uv_link_init((uv_link_t *) tls, &tls_methods);
     tls->engine = engine;
     tls->ssl_in = tlsuv__malloc(sizeof(ssl_buf_t));
     WAB_INIT(*tls->ssl_in);
     tls->ssl_out = tlsuv__malloc(sizeof(ssl_buf_t));
     WAB_INIT(*tls->ssl_out);
+    tls->async = NULL;
+    tls->hs_reported = false;
 
     engine->set_io(engine, tls, tls_link_io_read, tls_link_io_write);
     tls->hs_cb = cb;
+
+    if (loop && engine->setup_async) {
+        tls->async = tlsuv__calloc(1, sizeof(*tls->async));
+        uv_async_init(loop, tls->async, tls_link_async_cb);
+        // the parent link's transport keeps the loop alive while the link is in use
+        uv_unref((uv_handle_t *) tls->async);
+        tls->async->data = tls;
+        engine->setup_async(engine, tls_link_notify, tls->async);
+    }
     return 0;
 }
 
 void tlsuv_tls_link_free(tls_link_t *tls) {
     if (tls) {
+        tls_detach_engine(tls);
+        if (tls->async) {
+            uv_close((uv_handle_t *) tls->async, (uv_close_cb) tlsuv__free);
+            tls->async = NULL;
+        }
         tlsuv__free(tls->ssl_out);
         tls->ssl_out = NULL;
         tlsuv__free(tls->ssl_in);
