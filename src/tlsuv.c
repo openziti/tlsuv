@@ -152,7 +152,10 @@ static int start_io(tlsuv_stream_t *clt) {
         return UV_EINVAL;
     }
 
-    if (!TAILQ_EMPTY(&clt->queue) || async_load(&clt->async_out) > 0) {
+    // an async engine may refuse writes while the socket is writable (it buffers
+    // internally), so polling for that would spin; it wakes us via data_async instead
+    bool async_engine = clt->tls_engine && clt->tls_engine->setup_async;
+    if ((!TAILQ_EMPTY(&clt->queue) && !async_engine) || async_load(&clt->async_out) > 0) {
         events |= UV_WRITABLE;
     }
 
@@ -282,7 +285,8 @@ static void data_async_cb(uv_async_t *async) {
     tlsuv_stream_t *clt = container_of(async, tlsuv_stream_t, data_async);
     UM_LOG(DEBG, "async[%p]", async);
     int flags = UV_READABLE;
-    if (async_load(&clt->async_out) > 0) flags |= UV_WRITABLE;
+    // pending ciphertext to flush, or queued writes the engine may now accept
+    if (async_load(&clt->async_out) > 0 || !TAILQ_EMPTY(&clt->queue)) flags |= UV_WRITABLE;
     on_clt_io(&clt->watcher, 0, flags);
 }
 
