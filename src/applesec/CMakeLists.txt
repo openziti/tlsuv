@@ -8,7 +8,7 @@
 add_library(applesec-impl OBJECT
         context.c
         context.h
-        nw-engine.c
+        engine.c
 )
 
 target_include_directories(applesec-impl
