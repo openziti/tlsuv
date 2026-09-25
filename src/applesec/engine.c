@@ -375,7 +375,7 @@ static void engine_dealloc(struct applenw_engine_s *e) {
 
 static void write_to_peer (struct applenw_engine_s *e, dispatch_data_t data) {
     size_t avail = dispatch_data_get_size(data);
-    UM_LOG(DEBG, "tls_to_socket: %zu bytes", avail);
+    UM_LOG(TRACE, "tls_to_socket: %zu bytes", avail);
 
     pthread_mutex_lock(&e->outbound_mutex);
     dispatch_data_t orig = e->outbound_buf;
@@ -388,7 +388,7 @@ static void write_to_peer (struct applenw_engine_s *e, dispatch_data_t data) {
 
 static void tls_to_socket(struct applenw_engine_s *e, int socket) {
     assert(e->tls_channel == NULL);
-    UM_LOG(DEBG, "staring dispatch tls_sock[%d]", socket);
+    UM_LOG(TRACE, "staring dispatch tls_sock[%d]", socket);
     e->tls_channel = dispatch_io_create(DISPATCH_IO_STREAM, socket, e->queue, ^(int er){
         if (er != 0) {
             UM_LOG(ERR, "tls_to_socket: error %d", er);
@@ -739,7 +739,7 @@ static int engine_write(tlsuv_engine_t self, const char *data, size_t data_len) 
     }
     e->nw_pending += n;
 
-    UM_LOG(DEBG, "engine[%p] write: %zu/%zu", e, n, data_len);
+    UM_LOG(TRACE, "engine[%p] write: %zu/%zu", e, n, data_len);
     dispatch_data_t dd = dispatch_data_create(data, n, e->queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
     nw_connection_send(e->connection, dd, NW_CONNECTION_DEFAULT_STREAM_CONTEXT, false, ^(nw_error_t error) {
         // ECANCELED: engine_free() cancelled the connection, `e` may be gone
@@ -852,7 +852,7 @@ static int engine_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t
     // and the remaining plaintext may already be inside NW with no new ciphertext coming
     if (e->error == NULL && !e->reading_conn && !e->conn_eof &&
         e->decoded_len < sizeof(e->decoded)) {
-        UM_LOG(DEBG, "engine[%p] starting decode receive", e);
+        UM_LOG(TRACE, "engine[%p] starting decode receive", e);
         e->reading_conn = true;
         nw_connection_receive(e->connection, 0, sizeof(e->decoded) - e->decoded_len,
                               ^(dispatch_data_t dd, nw_content_context_t ctx, bool done, nw_error_t er){
