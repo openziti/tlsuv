@@ -366,8 +366,13 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
         req->cb(req, 0);
     } else {
         TLS_LOG(TRACE, "waiting for handshake data");
-        // wait for incoming handshake messages
-        uv_poll_start(&clt->watcher, clt->read_events, on_clt_io);
+        // wait for incoming handshake messages, and for writability while an async
+        // engine still has handshake output queued (e.g. socket still connecting)
+        int events = clt->read_events;
+        if (async_load(&clt->async_out) > 0) {
+            events |= UV_WRITABLE;
+        }
+        uv_poll_start(&clt->watcher, events, on_clt_io);
     }
 }
 
