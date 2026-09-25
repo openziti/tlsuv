@@ -383,7 +383,7 @@ static void on_tls_connect(uv_connect_t *req, int status) {
         return;
     }
 
-    CLT_LOG(VERB, "handshake completed on TLS stream[%p]", s);
+    CLT_LOG(VERB, "handshake completed on TLS stream[%p] alpn[%s]", s, tlsuv_stream_get_protocol(s));
     status = tlsuv_stream_read_start(s, tr_alloc_cb, tr_read_cb);
     if (status == 0) {
         c->connected = Connected;
@@ -647,7 +647,7 @@ static void close_connection1(tlsuv_http_t *c, const char *src_fn, int src_line)
 
 static void idle_timeout(uv_timer_t *t) {
     tlsuv_http_t *c = t->data;
-    CLT_LOG(VERB, "idle timeout triggered");
+    CLT_LOG(VERB, "idle timeout triggered timer[%p]", t);
     close_connection(c);
 }
 

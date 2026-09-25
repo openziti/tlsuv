@@ -179,6 +179,8 @@ struct tlsuv_stream_s {
 
     uv_os_sock_t sock;
     uv_poll_t watcher;
+    uv_async_t data_async;
+    int read_events;
 
     TAILQ_HEAD(reqs, tlsuv_write_s) queue;
     size_t queue_len;

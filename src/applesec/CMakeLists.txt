@@ -9,6 +9,7 @@ add_library(applesec-impl OBJECT
         context.c
         context.h
         engine.c
+        nw-engine.c
 )
 
 target_include_directories(applesec-impl
@@ -21,9 +22,11 @@ target_include_directories(applesec-impl
 # TLS state machine over its own IO, which is what tlsuv_engine_t requires.
 target_compile_options(applesec-impl PRIVATE -Wno-deprecated-declarations)
 
-target_link_libraries(applesec-impl PUBLIC
-        "-framework Security"
-        "-framework CoreFoundation"
+target_link_libraries(applesec-impl
+        PUBLIC ${TLSUV_LIBUV_LIB}
+        PUBLIC "-framework Network"
+        PUBLIC "-framework Security"
+        PUBLIC "-framework CoreFoundation"
 )
 
 # context.c reads CA/key/cert files through uv_fs_*, and src/util.h pulls in uv.h

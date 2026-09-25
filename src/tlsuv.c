@@ -51,6 +51,7 @@ typedef struct tlsuv_write_s tlsuv_write_t;
 static void on_clt_io(uv_poll_t *, int, int);
 static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
 static void check_read(uv_idle_t *idle);
+static ssize_t process_inbound(tlsuv_stream_t *clt);
 
 static tls_context *DEFAULT_TLS = NULL;
 static uv_once_t def_tls_once = UV_ONCE_INIT;
@@ -136,7 +137,7 @@ static int start_io(tlsuv_stream_t *clt) {
     }
 
     if (clt->read_cb) {
-        events |= (UV_READABLE | UV_DISCONNECT);
+        events |= clt->read_events;
     }
 
     if (events != 0) {
@@ -204,6 +205,9 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
     }
 
     uv_close((uv_handle_t *) &clt->watcher, on_internal_close);
+    if (clt->data_async.type == UV_ASYNC) {
+        uv_close((uv_handle_t *) &clt->data_async, NULL);
+    }
 
     return 0;
 }
@@ -254,6 +258,12 @@ int tlsuv_stream_set_hostname(tlsuv_stream_t *clt, const char *host) {
     return 0;
 }
 
+static void data_async_cb(uv_async_t *async) {
+    tlsuv_stream_t *clt = container_of(async, tlsuv_stream_t, data_async);
+    UM_LOG(DEBG, "async[%p]", async);
+    on_clt_io(&clt->watcher, 0, UV_READABLE);
+}
+
 static void process_connect(tlsuv_stream_t *clt, int status) {
     assert(clt->conn_req);
     uv_connect_t *req = clt->conn_req;
@@ -299,6 +309,14 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
             clt->tls_engine->set_protocols(clt->tls_engine, clt->alpn_protocols, clt->alpn_count);
         }
         clt->tls_engine->set_io_fd(clt->tls_engine, (tlsuv_sock_t) clt->sock);
+
+        if (clt->tls_engine->setup_async) {
+            if (clt->data_async.type != UV_ASYNC) {
+                UM_LOG(DEBG, "async[%p]", &clt->data_async);
+                uv_async_init(clt->loop, &clt->data_async, data_async_cb);
+            }
+            clt->tls_engine->setup_async(clt->tls_engine, (int(*)(void*))uv_async_send, &clt->data_async);
+        }
     }
 
     int rc = clt->tls_engine->handshake(clt->tls_engine);
@@ -320,7 +338,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     } else {
         TLS_LOG(TRACE, "waiting for handshake data");
         // wait for incoming handshake messages
-        uv_poll_start(&clt->watcher, UV_READABLE | UV_DISCONNECT, on_clt_io);
+        uv_poll_start(&clt->watcher, clt->read_events, on_clt_io);
     }
 }
 
@@ -411,7 +429,10 @@ static void process_outbound(tlsuv_stream_t *clt) {
     }
 }
 
-static void process_inbound(tlsuv_stream_t *clt) {
+// returns the terminal condition reported to read_cb (UV_EOF, UV_ECONNABORTED, UV_ENOBUFS),
+// UV_EAGAIN if the engine ran out of data, or 0 if reading stopped for another reason
+// (read_cb cleared, MAX_INBOUND_ITERATIONS reached)
+static ssize_t process_inbound(tlsuv_stream_t *clt) {
     TLS_LOG(TRACE, "processing inbound data");
 
     // got IO or idle check, can clear the handle
@@ -425,7 +446,7 @@ static void process_inbound(tlsuv_stream_t *clt) {
 
     if (clt->read_cb == NULL) {
         TLS_LOG(TRACE, "no read callback set, skipping read");
-        return;
+        return 0;
     }
 
     int iter = 0;
@@ -477,11 +498,13 @@ static void process_inbound(tlsuv_stream_t *clt) {
         clt->read_cb((uv_stream_t *) clt, (ssize_t) total, &buf);
 
         if (rc == TLS_AGAIN) {
+            code = UV_EAGAIN;
             break;
         }
     }
     TLS_LOG(TRACE, "finished reading after %d iterations: %zd/%s", iter,
             code, code ? uv_strerror((int)code) : "OK");
+    return code;
 }
 
 static void on_clt_io(uv_poll_t *p, int status, int events) {
@@ -518,8 +541,20 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
         process_outbound(clt);
     }
 
+    ssize_t rc = 0;
     if (events & (UV_READABLE | UV_DISCONNECT)) {
-        process_inbound(clt);
+        rc = process_inbound(clt);
+    }
+
+    // kqueue keeps reporting EOF, so stop polling once the socket has nothing more for us:
+    // EOF/error was already delivered, or an async engine drained the socket and will
+    // wake us via data_async. otherwise more bytes may still be in the kernel buffer.
+    if (events & UV_DISCONNECT) {
+        bool terminal = rc < 0 && rc != UV_EAGAIN;
+        bool async_pending = rc == UV_EAGAIN && clt->tls_engine->setup_async != NULL;
+        if (terminal || async_pending) {
+            clt->read_events = 0;
+        }
     }
 
     start_io(clt);
@@ -539,6 +574,7 @@ int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_sock_t fd, u
         TLS_LOG(WARN, "uv_poll_init_socket failed: %s", uv_strerror(rc));
         return rc;
     }
+    clt->read_events = UV_READABLE | UV_DISCONNECT;
 
     clt->conn_req = req;
     req->type = UV_CONNECT;
@@ -779,7 +815,7 @@ int tlsuv_socket_set_blocking(uv_os_sock_t s, bool blocking) {
 void check_read(uv_idle_t *idler) {
     tlsuv_stream_t *clt = idler->data;
     // this will clean up idle handle
-    process_inbound(clt);
+    on_clt_io(&clt->watcher, 0, UV_READABLE);
 }
 
 int tlsuv_stream_peername(const tlsuv_stream_t *clt, struct sockaddr *addr, int *namelen) {
