@@ -120,6 +120,26 @@ void tlsuv_stream_set_connector(tlsuv_stream_t *clt, const tlsuv_connector_t *c)
     clt->connector = c != NULL ? c : tlsuv_global_connector();
 }
 
+// async_in/async_out are written by the engine's notify callback on its own thread
+// and read on the loop thread. They are plain size_t in the public struct (C++ and
+// MSVC C consumers can't take _Atomic there), so every access goes through these.
+#if defined(_MSC_VER)
+static inline size_t async_load(size_t *p) {
+    return (size_t) InterlockedCompareExchangePointer((PVOID volatile *) p, NULL, NULL);
+}
+static inline void async_store(size_t *p, size_t v) {
+    InterlockedExchangePointer((PVOID volatile *) p, (PVOID) v);
+}
+#else
+static inline size_t async_load(size_t *p) {
+    return __atomic_load_n(p, __ATOMIC_ACQUIRE);
+}
+static inline void async_store(size_t *p, size_t v) {
+    __atomic_store_n(p, v, __ATOMIC_RELEASE);
+}
+#endif
+
+
 static int start_io(tlsuv_stream_t *clt) {
     int events = 0;
 
@@ -132,7 +152,7 @@ static int start_io(tlsuv_stream_t *clt) {
         return UV_EINVAL;
     }
 
-    if (!TAILQ_EMPTY(&clt->queue)) {
+    if (!TAILQ_EMPTY(&clt->queue) || async_load(&clt->async_out) > 0) {
         events |= UV_WRITABLE;
     }
 
@@ -261,7 +281,16 @@ int tlsuv_stream_set_hostname(tlsuv_stream_t *clt, const char *host) {
 static void data_async_cb(uv_async_t *async) {
     tlsuv_stream_t *clt = container_of(async, tlsuv_stream_t, data_async);
     UM_LOG(DEBG, "async[%p]", async);
-    on_clt_io(&clt->watcher, 0, UV_READABLE);
+    int flags = UV_READABLE;
+    if (async_load(&clt->async_out) > 0) flags |= UV_WRITABLE;
+    on_clt_io(&clt->watcher, 0, flags);
+}
+
+static void data_notify_cb(void *ctx, size_t in, size_t out) {
+    tlsuv_stream_t *clt = ctx;
+    async_store(&clt->async_in, in);
+    async_store(&clt->async_out, out);
+    uv_async_send(&clt->data_async);
 }
 
 static void process_connect(tlsuv_stream_t *clt, int status) {
@@ -315,7 +344,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
                 UM_LOG(DEBG, "async[%p]", &clt->data_async);
                 uv_async_init(clt->loop, &clt->data_async, data_async_cb);
             }
-            clt->tls_engine->setup_async(clt->tls_engine, (int(*)(void*))uv_async_send, &clt->data_async);
+            clt->tls_engine->setup_async(clt->tls_engine, data_notify_cb, clt);
         }
     }
 
@@ -386,6 +415,12 @@ static void process_outbound(tlsuv_stream_t *clt) {
 
     if (clt->queue_len > 0) {
         TLS_LOG(TRACE, "processing %zu queued write requests", clt->queue_len);
+    } else if (async_load(&clt->async_out) > 0) {
+        TLS_LOG(TRACE, "flushing TLS pending data[%zd]", async_load(&clt->async_out));
+        int rc = clt->tls_engine->write(clt->tls_engine, 0, 0);
+        if (rc != TLS_AGAIN) {
+            async_store(&clt->async_out, 0);
+        }
     }
     while (!TAILQ_EMPTY(&clt->queue)) {
         req = TAILQ_FIRST(&clt->queue);
