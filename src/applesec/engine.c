@@ -857,8 +857,13 @@ static void engine_free(tlsuv_engine_t self) {
 
 static void engine_setup_async(tlsuv_engine_t self, void (*cb)(void *, size_t, size_t), void *async_ctx) {
     struct applenw_engine_s *e = (struct applenw_engine_s *) self;
-    e->async_cb = cb;
-    e->async_ctx = async_ctx;
+    // callbacks are invoked on e->queue (and from engine_flush() on the loop thread,
+    // which is also where this is called): swap them on the queue, so that once this
+    // returns the previous callback/ctx is never used again (the caller may free it)
+    dispatch_sync(e->queue, ^{
+        e->async_cb = cb;
+        e->async_ctx = async_ctx;
+    });
 }
 
 static struct tlsuv_engine_s applenw_engine_api = {

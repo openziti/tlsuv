@@ -289,6 +289,18 @@ static void on_tls_handshake(tls_link_t *tls, int status) {
     }
 }
 
+// tls_link keeps its own reference to the engine: clear it too, so that
+// tlsuv_tls_link_free() does not try to detach from a freed engine
+static void free_engine(tlsuv_http_t *c) {
+    if (c->engine) {
+        if (c->tls_link.engine == c->engine) {
+            c->tls_link.engine = NULL;
+        }
+        c->engine->free(c->engine);
+        c->engine = NULL;
+    }
+}
+
 static void make_links(tlsuv_http_t *c, uv_link_t *conn_src) {
     uv_link_init(&c->http_link, &http_methods);
     c->http_link.data = c;
@@ -300,10 +312,7 @@ static void make_links(tlsuv_http_t *c, uv_link_t *conn_src) {
         }
 
         if (c->host_change) {
-            if (c->engine) {
-                c->engine->free(c->engine);
-            }
-            c->engine = NULL;
+            free_engine(c);
             c->host_change = false;
         }
 
@@ -313,7 +322,7 @@ static void make_links(tlsuv_http_t *c, uv_link_t *conn_src) {
         }
 
         tlsuv_tls_link_free(&c->tls_link);
-        tlsuv_tls_link_init(&c->tls_link, c->engine, on_tls_handshake);
+        tlsuv_tls_link_init(&c->tls_link, c->proc.loop, c->engine, on_tls_handshake);
         c->tls_link.data = c;
 
         uv_link_chain(conn_src, (uv_link_t *) &c->tls_link);
@@ -335,10 +344,7 @@ static void make_links(tlsuv_http_t *c, uv_link_t *conn_src) {
 static void link_close_cb(uv_link_t *l) {
     tlsuv_http_t *clt = l->data;
     if (clt) {
-        if (clt->engine) {
-            clt->engine->free(clt->engine);
-            clt->engine = NULL;
-        }
+        free_engine(clt);
         clt->src->release(clt->src);
         safe_continue(clt);
     }
@@ -751,10 +757,7 @@ int tlsuv_http_close(tlsuv_http_t *clt, tlsuv_http_close_cb close_cb) {
     fail_all_requests(clt, UV_ECANCELED, uv_strerror(UV_ECANCELED));
     close_connection(clt);
 
-    if (clt->engine != NULL) {
-        clt->engine->free(clt->engine);
-        clt->engine = NULL;
-    }
+    free_engine(clt);
     clt->tls = NULL;
     return 0;
 }
