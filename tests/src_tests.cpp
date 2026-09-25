@@ -89,21 +89,22 @@ TEST_CASE("https over custom src", "[http]") {
 
     // small response, then a larger one on the same connection: the latter takes
     // several TLS records and (with async engines) several wakeups to deliver
-    resp_capture small(resp_body_cb);
-    resp_capture large(resp_body_cb);
-    tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &small);
-    tlsuv_http_req(&clt, "GET", "/bytes/100000", resp_capture_cb, &large);
+    // note: not "small" -- windows headers #define small char
+    resp_capture json_resp(resp_body_cb);
+    resp_capture bytes_resp(resp_body_cb);
+    tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &json_resp);
+    tlsuv_http_req(&clt, "GET", "/bytes/100000", resp_capture_cb, &bytes_resp);
 
     // resp_capture starts with code = -666, so wait for the body only (the fixture timeout bounds a hang)
-    test.run(UNTIL(large.resp_body_end_called));
+    test.run(UNTIL(bytes_resp.resp_body_end_called));
 
-    CHECK(small.code == HTTP_STATUS_OK);
-    CHECK(small.resp_body_end_called);
-    CHECK_THAT(small.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
+    CHECK(json_resp.code == HTTP_STATUS_OK);
+    CHECK(json_resp.resp_body_end_called);
+    CHECK_THAT(json_resp.headers["Content-Type"], Catch::Matchers::StartsWith("application/json"));
 
-    REQUIRE(large.code == HTTP_STATUS_OK);
-    CHECK(large.resp_body_end_called);
-    CHECK(large.body.size() == 100000);
+    REQUIRE(bytes_resp.code == HTTP_STATUS_OK);
+    CHECK(bytes_resp.resp_body_end_called);
+    CHECK(bytes_resp.body.size() == 100000);
 
     tlsuv_http_close(&clt, nullptr);
     test.run();
