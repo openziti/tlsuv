@@ -124,7 +124,7 @@ TEST_CASE("implementation test", "[engine]") {
 #elif defined(TEST_boringssl)
     CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("BoringSSL"));
 #elif defined(TEST_applesec)
-    CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("com.apple.security"));
+    CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("com.apple.Network"));
 #else
     FAIL("invalid engine");
 #endif
