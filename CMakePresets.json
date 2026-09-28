@@ -112,6 +112,18 @@
       }
     },
     {
+      "name": "arm64-ios-simulator",
+      "inherits": ["ci-build", "ci-unix", "dev-mode", "vcpkg"],
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "arm64-ios-simulator",
+        "CMAKE_SYSTEM_NAME": "iOS",
+        "CMAKE_OSX_SYSROOT": "iphonesimulator",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "17.0",
+        "CMAKE_CROSSCOMPILING_EMULATOR": "xcrun;simctl;spawn;booted"
+      }
+    },
+    {
       "name": "x64-linux",
       "inherits": ["ci-build", "ci-unix", "vcpkg", "dev-mode"],
       "cacheVariables": {

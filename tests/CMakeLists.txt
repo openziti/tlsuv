@@ -101,6 +101,16 @@ endif ()
 
 target_include_directories(all_tests PRIVATE ../src)
 
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # keychain access (the applesec client identity) needs an access group. The
+    # simulator refuses to spawn a binary whose signature carries entitlements, so
+    # embed them in a section as Xcode does for simulator builds, and ad-hoc sign.
+    target_link_options(all_tests PRIVATE
+            "LINKER:-sectcreate,__TEXT,__entitlements,${CMAKE_CURRENT_SOURCE_DIR}/ios-entitlements.plist")
+    add_custom_command(TARGET all_tests POST_BUILD
+            COMMAND codesign -f -s - $<TARGET_BUNDLE_DIR:all_tests>)
+endif ()
+
 add_custom_target(test-server
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/test_server
         COMMAND go run ./test-server.go -ca ../certs/ca.pem -ca-key ../certs/ca.key
@@ -110,11 +120,20 @@ add_custom_target(test-server
 add_custom_target(run-tests
         BYPRODUCTS ${PROJECT_BINARY_DIR}/Testing/results.xml
         DEPENDS all_tests
-        COMMAND $<TARGET_FILE:all_tests> -r xml -o ${PROJECT_BINARY_DIR}/Testing/results.xml)
+        COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} $<TARGET_FILE:all_tests> -r xml -o ${PROJECT_BINARY_DIR}/Testing/results.xml)
 
 include(CTest)
+# Emulated tests (iOS simulator) need the NAME/COMMAND form, the only one that
+# applies CMAKE_CROSSCOMPILING_EMULATOR; with a multi-config generator it also
+# needs `ctest -C <config>`, so other builds keep the plain form. The report path
+# is absolute because an emulated test does not run in this directory.
 macro(mk_test tag)
-    add_test(${tag}_tests all_tests [${tag}] -r junit::out=TEST-${tag}.xml -r console)
+    if (CMAKE_CROSSCOMPILING_EMULATOR)
+        add_test(NAME ${tag}_tests COMMAND all_tests [${tag}]
+                -r junit::out=${CMAKE_CURRENT_BINARY_DIR}/TEST-${tag}.xml -r console)
+    else ()
+        add_test(${tag}_tests all_tests [${tag}] -r junit::out=TEST-${tag}.xml -r console)
+    endif ()
 endmacro()
 
 mk_test(key)

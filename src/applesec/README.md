@@ -327,32 +327,23 @@ The regular suites run against this backend (`all_tests` built with
 applesec on both sides. Test drivers that call engines in a loop must give an
 async engine time between calls and flush a sender with `write(e, NULL, 0)`.
 
-**iOS simulator.** The same suite runs in the simulator (it shares the host's
-network, so the Go test server on the host works). The binary needs a keychain
-access group, and the simulator refuses to spawn a binary whose *signature*
-carries entitlements, so embed them in a `__TEXT,__entitlements` section the way
-Xcode does for simulator builds, and ad-hoc sign without them:
+**iOS simulator.** The same suite runs in the simulator, in CI too (the
+`arm64-ios-simulator` job). The simulator shares the host's network, so the Go test
+server on the host works. The `arm64-ios-simulator` preset cross-compiles and sets
+`xcrun simctl spawn booted` as the CTest emulator. `tests/CMakeLists.txt` embeds
+`tests/ios-entitlements.plist` (a keychain access group) in a `__TEXT,__entitlements`
+section, the way Xcode does for simulator builds, because the simulator refuses to
+spawn a binary whose *signature* carries entitlements; it then ad-hoc signs the app.
 
 ```sh
-export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-cat > ent.plist <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyLists-1.0.dtd">
-<plist version="1.0"><dict>
-<key>application-identifier</key><string>TEST.io.openziti.tlsuv.tests</string>
-<key>keychain-access-groups</key><array><string>TEST.io.openziti.tlsuv.tests</string></array>
-</dict></plist>
-PLIST
-cmake -S . -B build/ios-sim -G Ninja \
-  -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
-  -DVCPKG_TARGET_TRIPLET=arm64-ios-simulator -DVCPKG_MANIFEST_NO_DEFAULT_FEATURES=ON \
-  -DVCPKG_MANIFEST_FEATURES="test;applesec;http" \
-  -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphonesimulator \
-  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
-  -DCMAKE_BUILD_TYPE=Debug -Dtlsuv_DEVELOPER_MODE=ON -DTLSUV_TLSLIB=applesec \
-  -DCMAKE_EXE_LINKER_FLAGS="-Wl,-sectcreate,__TEXT,__entitlements,$PWD/ent.plist"
-cmake --build build/ios-sim --target all_tests
-codesign -f -s - build/ios-sim/tests/all_tests.app
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer  # if xcode-select points at the CLT
+cmake --preset arm64-ios-simulator -B build/ios-sim -DTLSUV_TLSLIB=applesec \
+  -DVCPKG_MANIFEST_FEATURES="http;test;applesec" -DVCPKG_MANIFEST_NO_DEFAULT_FEATURES=ON
+cmake --build build/ios-sim
 xcrun simctl boot "iPhone 17 Pro"
-cd tests && xcrun simctl spawn booted $PWD/../build/ios-sim/tests/all_tests.app/all_tests
+cd build/ios-sim && SIMCTL_CHILD_TLSUV_TEST_LOG=7 ctest -C Debug --output-on-failure
 ```
+
+`simctl spawn` passes the test only environment variables prefixed with
+`SIMCTL_CHILD_`, and runs it in the simulator's data directory, not the build
+directory.
