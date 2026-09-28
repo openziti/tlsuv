@@ -239,6 +239,14 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
   PKCS#8 `PRIVATE KEY` (the same encoding the OpenSSL backend writes), public keys
   as SubjectPublicKeyInfo `PUBLIC KEY`, certificates as `CERTIFICATE`.
 - **Expiry** (`get_expiration`) is read from the certificate's DER (`notAfter`).
+- **CSRs** (`generate_csr_to_pem`): Security has no CSR API, so `generate_csr()`
+  encodes the PKCS#10 request itself and signs it with `SecKeyCreateSignature`
+  (ECDSA or RSA PKCS#1 v1.5, SHA-256, as the OpenSSL backend does). Subject
+  attributes take OpenSSL's short or long names (`CN`, `commonName`, …) or a
+  dotted OID, with OpenSSL's string types (PrintableString for `C`, IA5String for
+  `emailAddress` and `DC`, UTF8String otherwise); an unknown name fails the call
+  (OpenSSL silently leaves it out). For RSA keys the output is byte-identical to
+  `openssl req`.
 - **Client identity**: TLS needs a `SecIdentityRef`, and a key must be *stored
   in a keychain* to become part of one. `make_identity()` has two versions:
   - **macOS**: `SecIdentityCreateWithCertificate` pairs the certificate with the
@@ -305,7 +313,7 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
 - **Minimum OS**: ECDSA signing uses the `kSecKeyAlgorithmECDSASignatureDigestRFC4754*`
   algorithms, which need macOS 14 / iOS 17.
 - Not implemented: client certificates on server engines (see above),
-  `allow_partial_chain`, CSR generation, PKCS#11 and platform keychain keys
+  `allow_partial_chain`, PKCS#11 and platform keychain keys
   (keys must be extractable to go into a keychain for the identity).
 - Backpressure: Network.framework encrypts asynchronously, so `engine_write()`
   bounds plaintext not yet sent by NW plus ciphertext not yet flushed to the peer

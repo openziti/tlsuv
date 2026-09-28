@@ -20,6 +20,7 @@
 #include "util.h"
 
 #include <limits.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -1600,6 +1601,189 @@ static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t pk, tlsuv_cert
     return 0;
 }
 
+// ------------------------------------------------------------------ CSR (PKCS#10)
+
+// subject attribute names as OpenSSL accepts them (short and long), with the
+// string type OpenSSL's defaults produce for each
+static const struct {
+    const char* sn;
+    const char* ln;
+    const char* oid;
+    uint8_t str_tag;
+} dn_attrs[] = {
+#define PRINTABLE 0x13
+#define IA5 0x16
+#define UTF8 0x0C
+    {"CN", "commonName", "2.5.4.3", UTF8},
+    {"SN", "surname", "2.5.4.4", UTF8},
+    {"serialNumber", "serialNumber", "2.5.4.5", PRINTABLE},
+    {"C", "countryName", "2.5.4.6", PRINTABLE},
+    {"L", "localityName", "2.5.4.7", UTF8},
+    {"ST", "stateOrProvinceName", "2.5.4.8", UTF8},
+    {"street", "streetAddress", "2.5.4.9", UTF8},
+    {"O", "organizationName", "2.5.4.10", UTF8},
+    {"OU", "organizationalUnitName", "2.5.4.11", UTF8},
+    {"title", "title", "2.5.4.12", UTF8},
+    {"GN", "givenName", "2.5.4.42", UTF8},
+    {"dnQualifier", "dnQualifier", "2.5.4.46", PRINTABLE},
+    {"emailAddress", "emailAddress", "1.2.840.113549.1.9.1", IA5},
+    {"UID", "userId", "0.9.2342.19200300.100.1.1", UTF8},
+    {"DC", "domainComponent", "0.9.2342.19200300.100.1.25", IA5},
+#undef PRINTABLE
+#undef IA5
+#undef UTF8
+};
+
+static void der_put_base128(struct buf* b, unsigned long v) {
+    uint8_t tmp[10];
+    size_t n = 0;
+    do {
+        tmp[n] = (v & 0x7F) | (n ? 0x80 : 0);
+        n++;
+        v >>= 7;
+    } while (v != 0);
+    while (n > 0) {
+        buf_put(b, &tmp[--n], 1);
+    }
+}
+
+// dotted decimal ("2.5.4.3") to a DER OBJECT IDENTIFIER
+static bool der_put_oid(struct buf* out, const char* dotted) {
+    unsigned long arcs[32];
+    size_t n = 0;
+    const char* p = dotted;
+    while (n < sizeof(arcs) / sizeof(arcs[0])) {
+        char* end;
+        if (*p < '0' || *p > '9') return false;
+        arcs[n++] = strtoul(p, &end, 10);
+        if (*end == '\0') break;
+        if (*end != '.') return false;
+        p = end + 1;
+    }
+    if (n < 2 || arcs[0] > 2 || (arcs[0] < 2 && arcs[1] > 39)) return false;
+
+    struct buf body = {0};
+    der_put_base128(&body, arcs[0] * 40 + arcs[1]);
+    for (size_t i = 2; i < n; i++) {
+        der_put_base128(&body, arcs[i]);
+    }
+    der_put(out, 0x06, body.data, body.len);
+    tlsuv__free(body.data);
+    return true;
+}
+
+// RelativeDistinguishedName ::= SET { SEQUENCE { type OID, value string } }
+static bool der_put_rdn(struct buf* name, const char* id, const char* val) {
+    const char* oid = NULL;
+    uint8_t tag = 0x0C;
+    for (size_t i = 0; i < sizeof(dn_attrs) / sizeof(dn_attrs[0]); i++) {
+        if (strcmp(id, dn_attrs[i].sn) == 0 || strcasecmp(id, dn_attrs[i].ln) == 0) {
+            oid = dn_attrs[i].oid;
+            tag = dn_attrs[i].str_tag;
+            break;
+        }
+    }
+
+    struct buf atv = {0}, seq = {0};
+    bool ok = der_put_oid(&atv, oid ? oid : id); // or an OID given in dotted form
+    if (ok) {
+        der_put(&atv, tag, val, strlen(val));
+        der_put(&seq, 0x30, atv.data, atv.len);
+        der_put(name, 0x31, seq.data, seq.len);
+    } else {
+        UM_LOG(WARN, "unknown subject attribute '%s'", id);
+    }
+    tlsuv__free(atv.data);
+    tlsuv__free(seq.data);
+    return ok;
+}
+
+//   CertificationRequest ::= SEQUENCE {
+//       certificationRequestInfo SEQUENCE { version INTEGER (0), subject Name,
+//                                           subjectPKInfo SubjectPublicKeyInfo,
+//                                           attributes [0] SET OF Attribute (empty) },
+//       signatureAlgorithm AlgorithmIdentifier,
+//       signature BIT STRING }
+// signed with SHA-256, as the OpenSSL backend does
+static int generate_csr(tlsuv_private_key_t pk, char** pem, size_t* pemlen, ...) {
+    struct applesec_priv_key* key = container_of(pk, struct applesec_priv_key, api);
+    struct buf rdns = {0}, info = {0}, cri = {0}, alg = {0}, body = {0}, der = {0}, out = {0};
+    CFDataRef sig = NULL;
+    int rc = -1;
+
+    va_list va;
+    va_start(va, pemlen);
+    bool ok = true;
+    while (ok) {
+        const char* id = va_arg(va, const char*);
+        if (id == NULL) break;
+        const char* val = va_arg(va, const char*);
+        if (val == NULL) break;
+        ok = der_put_rdn(&rdns, id, val);
+    }
+    va_end(va);
+    if (!ok) goto done;
+
+    SecKeyAlgorithm sig_alg;
+    if (key->key_type == APPLESEC_KEY_EC) {
+        sig_alg = kSecKeyAlgorithmECDSASignatureMessageX962SHA256;
+        der_put_oid(&alg, "1.2.840.10045.4.3.2"); // ecdsa-with-SHA256, no parameters
+    } else if (key->key_type == APPLESEC_KEY_RSA) {
+        sig_alg = kSecKeyAlgorithmRSASignatureMessagePKCS1v15SHA256;
+        der_put_oid(&alg, "1.2.840.113549.1.1.11"); // sha256WithRSAEncryption
+        buf_put(&alg, "\x05\x00", 2);
+    } else {
+        UM_LOG(WARN, "unsupported private key type");
+        goto done;
+    }
+
+    SecKeyRef pub = SecKeyCopyPublicKey(key->key);
+    if (pub == NULL) {
+        UM_LOG(WARN, "failed to derive public key");
+        goto done;
+    }
+    buf_put(&info, "\x02\x01\x00", 3);
+    der_put(&info, 0x30, rdns.data, rdns.len);
+    ok = spki_der(pub, key->key_type, &info);
+    CFRelease(pub);
+    if (!ok) goto done;
+    buf_put(&info, "\xA0\x00", 2);
+    der_put(&cri, 0x30, info.data, info.len);
+
+    CFDataRef tbs = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, cri.data, (CFIndex)cri.len,
+                                                kCFAllocatorNull);
+    CFErrorRef err = NULL;
+    sig = SecKeyCreateSignature(key->key, sig_alg, tbs, &err);
+    CFRelease(tbs);
+    if (sig == NULL) {
+        UM_LOG(WARN, "failed to sign CSR: %s", cferr(err));
+        if (err) CFRelease(err);
+        goto done;
+    }
+
+    buf_put(&body, cri.data, cri.len);
+    der_put(&body, 0x30, alg.data, alg.len);
+    der_put_bits(&body, CFDataGetBytePtr(sig), CFDataGetLength(sig));
+    der_put(&der, 0x30, body.data, body.len);
+    pem_put(&out, "CERTIFICATE REQUEST", der.data, der.len);
+
+    size_t len;
+    rc = pem_result(&out, pem, &len);
+    out.data = NULL; // owned by *pem now
+    if (pemlen) *pemlen = len;
+
+done:
+    if (sig) CFRelease(sig);
+    tlsuv__free(rdns.data);
+    tlsuv__free(info.data);
+    tlsuv__free(cri.data);
+    tlsuv__free(alg.data);
+    tlsuv__free(body.data);
+    tlsuv__free(der.data);
+    tlsuv__free(out.data);
+    return rc;
+}
+
 // ---------------------------------------------------------------------------
 
 static tls_context ctx_api = {
@@ -1616,9 +1800,9 @@ static tls_context ctx_api = {
     .load_key = load_key,
     .load_cert = load_cert,
     .fips_status = tls_fips_status,
+    .generate_csr_to_pem = generate_csr,
     // not supported by this backend:
     // .allow_partial_chain
-    // .generate_csr_to_pem      -- Security has no CSR API
     // .load_pkcs11_key, .generate_pkcs11_key
     // .generate_keychain_key, .load_keychain_key, .remove_keychain_key
 };
