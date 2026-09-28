@@ -25,9 +25,11 @@
 #include <unistd.h>
 
 #include <CommonCrypto/CommonDigest.h>
+#include <Security/Security.h>
+#if TARGET_OS_OSX
 #include <Security/SecImportExport.h>
 #include <Security/SecKeychain.h>
-#include <Security/Security.h>
+#endif
 
 static tls_context ctx_api;
 static struct tlsuv_private_key_s sec_key_api;
@@ -36,6 +38,9 @@ static struct tlsuv_certificate_s sec_cert_api;
 
 static int load_file(const char* path, char** content, size_t* l);
 static CFArrayRef certs_from_data(const char* buf, size_t len);
+#if !TARGET_OS_OSX
+static void remove_keychain_items(struct applesec_ctx* c);
+#endif
 
 // Callers may count the terminating NUL in the length (mbedTLS requires that for PEM,
 // OpenSSL ignores it). Trailing NULs are dropped so they never reach a parser (the
@@ -153,6 +158,7 @@ static void tls_free_ctx(tls_context* ctx) {
     struct applesec_ctx* c = (struct applesec_ctx*)ctx;
     if (c->ca_bundle) CFRelease(c->ca_bundle);
     if (c->ssl_chain) CFRelease(c->ssl_chain);
+#if TARGET_OS_OSX
     if (c->tmp_keychain) {
         SecKeychainDelete(c->tmp_keychain);
         CFRelease(c->tmp_keychain);
@@ -162,6 +168,9 @@ static void tls_free_ctx(tls_context* ctx) {
         tlsuv__free(c->tmp_keychain_path);
     }
     memset_s(c->tmp_keychain_pw, sizeof(c->tmp_keychain_pw), 0, sizeof(c->tmp_keychain_pw));
+#else
+    remove_keychain_items(c);
+#endif
     tlsuv__free(c);
 }
 
@@ -685,6 +694,7 @@ static bool cert_not_after(const uint8_t* der, size_t len, time_t* t) {
     return parse_asn1_time(tag, item, itemlen, t);
 }
 
+#if TARGET_OS_OSX
 // SecItemImport handles PKCS#8 RSA and SEC1 EC, but rejects PKCS#8 EC outright.
 //
 //   PrivateKeyInfo ::= SEQUENCE { version INTEGER,
@@ -765,6 +775,7 @@ static CFDataRef unwrap_pkcs8_ec(const uint8_t* der, size_t derlen) {
     tlsuv__free(out);
     return result;
 }
+#endif
 
 // SEC1 ECPrivateKey -> the ANSI X9.63 form SecKeyCreateWithData() wants:
 // the uncompressed public point (0x04 || X || Y) followed by the private
@@ -918,6 +929,7 @@ static SecKeyRef create_private_key(CFDataRef blob, enum applesec_key_type* type
     return key;
 }
 
+#if TARGET_OS_OSX
 // Still needed for the mTLS identity: SecKeyCreateWithData() produces a
 // floating key, but SecIdentityCreateWithCertificate() can only pair a
 // certificate with a key that lives in a keychain.
@@ -951,6 +963,7 @@ static OSStatus import_key(CFDataRef data, SecKeychainRef kc, CFArrayRef* items)
     if (sec1) CFRelease(sec1);
     return rc;
 }
+#endif
 
 static int load_key(tlsuv_private_key_t* key_ref, const char* keystr, size_t len) {
     char* file_buf = NULL;
@@ -1315,6 +1328,7 @@ static bool cert_matches_key(SecCertificateRef cert, SecKeyRef pub) {
     return eq;
 }
 
+#if TARGET_OS_OSX
 // the TLS client identity needs a SecIdentityRef, and the only public way to make
 // one is SecIdentityCreateWithCertificate(), which pairs a certificate with a
 // private key *that lives in a keychain*. So put both in a throwaway file
@@ -1424,6 +1438,110 @@ static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
     }
     return 0;
 }
+
+#else // iOS and the other embedded platforms: no file keychains
+
+// Neither SecIdentityCreateWithCertificate() nor file keychains exist here: the
+// only public way to get a SecIdentityRef is SecItemCopyMatching(kSecClassIdentity)
+// over the app's keychain, which pairs a certificate with the private key whose
+// public key it carries. So add both to the keychain, look the identity up, and
+// delete what was added (kc_items) when the context is freed.
+//
+// The items are device-only and readable after first unlock, so the identity
+// keeps working in the background (e.g. from a network extension). Only items
+// this context added are tracked: a key or certificate that is already there
+// (another context, or left behind by a process that never freed its context)
+// comes back as errSecDuplicateItem and is used, not deleted. Deleting items does
+// not invalidate identities already looked up, so a context whose items were
+// removed by another one keeps working.
+static OSStatus add_keychain_item(struct applesec_ctx* c, CFTypeRef cls, CFTypeRef value) {
+    const void* keys[] = {kSecClass, kSecValueRef, kSecAttrAccessible, kSecReturnPersistentRef};
+    const void* vals[] = {cls, value, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                          kCFBooleanTrue};
+    CFDictionaryRef q = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, 4,
+                                           &kCFTypeDictionaryKeyCallBacks,
+                                           &kCFTypeDictionaryValueCallBacks);
+    CFTypeRef ref = NULL;
+    OSStatus rc = SecItemAdd(q, &ref);
+    CFRelease(q);
+    if (rc == errSecSuccess && ref != NULL) {
+        if (c->kc_items == NULL) {
+            c->kc_items = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+        }
+        CFArrayAppendValue(c->kc_items, ref);
+    }
+    if (ref) CFRelease(ref);
+    return rc;
+}
+
+static void remove_keychain_items(struct applesec_ctx* c) {
+    if (c->kc_items == NULL) return;
+    for (CFIndex i = 0; i < CFArrayGetCount(c->kc_items); i++) {
+        const void* keys[] = {kSecValuePersistentRef};
+        const void* vals[] = {CFArrayGetValueAtIndex(c->kc_items, i)};
+        CFDictionaryRef q = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, 1,
+                                               &kCFTypeDictionaryKeyCallBacks,
+                                               &kCFTypeDictionaryValueCallBacks);
+        OSStatus rc = SecItemDelete(q);
+        CFRelease(q);
+        if (rc != errSecSuccess && rc != errSecItemNotFound) {
+            UM_LOG(WARN, "failed to remove keychain item: %s", applesec_error(rc));
+        }
+    }
+    CFRelease(c->kc_items);
+    c->kc_items = NULL;
+}
+
+static SecIdentityRef find_identity(SecCertificateRef leaf) {
+    const void* keys[] = {kSecClass, kSecReturnRef, kSecMatchLimit};
+    const void* vals[] = {kSecClassIdentity, kCFBooleanTrue, kSecMatchLimitAll};
+    CFDictionaryRef q = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, 3,
+                                           &kCFTypeDictionaryKeyCallBacks,
+                                           &kCFTypeDictionaryValueCallBacks);
+    CFTypeRef found = NULL;
+    OSStatus rc = SecItemCopyMatching(q, &found);
+    CFRelease(q);
+    if (rc != errSecSuccess) {
+        UM_LOG(ERR, "failed to look up identity: %s", applesec_error(rc));
+        return NULL;
+    }
+
+    SecIdentityRef identity = NULL;
+    CFArrayRef ids = found;
+    for (CFIndex i = 0; identity == NULL && i < CFArrayGetCount(ids); i++) {
+        SecIdentityRef id = (SecIdentityRef)CFArrayGetValueAtIndex(ids, i);
+        SecCertificateRef cert = NULL;
+        if (SecIdentityCopyCertificate(id, &cert) == errSecSuccess) {
+            if (CFEqual(cert, leaf)) identity = (SecIdentityRef)CFRetain(id);
+            CFRelease(cert);
+        }
+    }
+    CFRelease(found);
+    if (identity == NULL) {
+        UM_LOG(ERR, "failed to create identity: certificate and key not paired in keychain");
+    }
+    return identity;
+}
+
+static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
+                         SecCertificateRef leaf, SecIdentityRef* identity) {
+    // a duplicate is the same key or certificate from an earlier set_own_cert
+    // (e.g. certificate renewed, key kept); the identity lookup finds it
+    OSStatus rc = add_keychain_item(c, kSecClassKey, key->key);
+    if (rc != errSecSuccess && rc != errSecDuplicateItem) {
+        UM_LOG(ERR, "failed to add private key to keychain: %s", applesec_error(rc));
+        return -1;
+    }
+    rc = add_keychain_item(c, kSecClassCertificate, leaf);
+    if (rc != errSecSuccess && rc != errSecDuplicateItem) {
+        UM_LOG(ERR, "failed to add certificate to keychain: %s", applesec_error(rc));
+        return -1;
+    }
+
+    *identity = find_identity(leaf);
+    return *identity ? 0 : -1;
+}
+#endif
 
 static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t pk, tlsuv_certificate_t cert) {
     if (ctx == NULL) return -1;

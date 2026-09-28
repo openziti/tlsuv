@@ -1,7 +1,7 @@
 # applesec: Apple Network.framework TLS backend
 
 `applesec` is the tlsuv TLS backend for Apple platforms, selected with
-`-DTLSUV_TLSLIB=applesec` (opt-in, macOS only; `openssl` stays the default).
+`-DTLSUV_TLSLIB=applesec` (opt-in, macOS and iOS; `openssl` stays the default).
 TLS itself is done by **Network.framework**; keys, certificates and trust
 evaluation use **Security.framework**.
 
@@ -239,16 +239,27 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
   PKCS#8 `PRIVATE KEY` (the same encoding the OpenSSL backend writes), public keys
   as SubjectPublicKeyInfo `PUBLIC KEY`, certificates as `CERTIFICATE`.
 - **Expiry** (`get_expiration`) is read from the certificate's DER (`notAfter`).
-- **Client identity**: TLS needs a `SecIdentityRef`, and the only public way to
-  make one is `SecIdentityCreateWithCertificate`, which pairs a certificate with
-  a key *stored in a keychain*. `make_identity()` therefore imports the key and
-  leaf certificate into a per-context temporary file keychain in `$TMPDIR`
-  (random passphrase, deleted with the context). The keychain's auto-lock is
-  disabled and it is unlocked before each import, so a later `set_own_cert`
-  (e.g. certificate renewal) works after the machine sleeps; re-importing a key
-  that is already there is not an error. `ssl_chain` holds
-  `[identity, intermediates…]`, which `new_client_identity()` in `engine.c`
-  turns into a `sec_identity_t`.
+- **Client identity**: TLS needs a `SecIdentityRef`, and a key must be *stored
+  in a keychain* to become part of one. `make_identity()` has two versions:
+  - **macOS**: `SecIdentityCreateWithCertificate` pairs the certificate with the
+    key, both imported into a per-context temporary file keychain in `$TMPDIR`
+    (random passphrase, deleted with the context). The keychain's auto-lock is
+    disabled and it is unlocked before each import, so a later `set_own_cert`
+    (e.g. certificate renewal) works after the machine sleeps.
+  - **iOS** (and the other non-macOS targets), which have neither that call nor
+    file keychains: the key and certificate are added to the app's keychain with
+    `SecItemAdd` (device-only, readable after first unlock, so it works from a
+    network extension in the background), and the identity is found with
+    `SecItemCopyMatching(kSecClassIdentity)`. The context records the persistent
+    refs of the items it added and deletes them when it is freed. An item that is
+    already there (another context, or left behind by a process that crashed) is
+    reused and not deleted; deleting items does not invalidate identities
+    already looked up. The app needs a keychain access group, which every signed
+    app has by default.
+
+  On both, adding a key or certificate that is already there is not an error.
+  `ssl_chain` holds `[identity, intermediates…]`, which `new_client_identity()`
+  in `engine.c` turns into a `sec_identity_t`.
 - **FIPS**: `fips_status` reports `TLS_FIPS_ENABLED` ("Apple corecrypto"), since
   corecrypto always runs in FIPS mode and has no switch or query API.
 
@@ -291,14 +302,11 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
 
 ## Limitations
 
-- **macOS only.** The client identity needs `SecIdentityCreateWithCertificate` and
-  a file keychain (`make_identity()`), which iOS does not have; that is the one
-  remaining macOS-only piece (an iOS version would add the key and certificate to
-  the app's keychain and fetch a `kSecClassIdentity`). Certificate/key parsing and
-  export, and all of `engine.c`, use only APIs that exist on iOS.
+- **Minimum OS**: ECDSA signing uses the `kSecKeyAlgorithmECDSASignatureDigestRFC4754*`
+  algorithms, which need macOS 14 / iOS 17.
 - Not implemented: client certificates on server engines (see above),
   `allow_partial_chain`, CSR generation, PKCS#11 and platform keychain keys
-  (keys must be extractable to go into the temporary keychain).
+  (keys must be extractable to go into a keychain for the identity).
 - Backpressure: Network.framework encrypts asynchronously, so `engine_write()`
   bounds plaintext not yet sent by NW plus ciphertext not yet flushed to the peer
   (`NW_WRITE_LIMIT`, 256 KiB). Beyond that it accepts a partial write or returns
@@ -318,3 +326,33 @@ The regular suites run against this backend (`all_tests` built with
 `https over custom src` (the `tls_link` path); the `[server]` tests run with
 applesec on both sides. Test drivers that call engines in a loop must give an
 async engine time between calls and flush a sender with `write(e, NULL, 0)`.
+
+**iOS simulator.** The same suite runs in the simulator (it shares the host's
+network, so the Go test server on the host works). The binary needs a keychain
+access group, and the simulator refuses to spawn a binary whose *signature*
+carries entitlements, so embed them in a `__TEXT,__entitlements` section the way
+Xcode does for simulator builds, and ad-hoc sign without them:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+cat > ent.plist <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyLists-1.0.dtd">
+<plist version="1.0"><dict>
+<key>application-identifier</key><string>TEST.io.openziti.tlsuv.tests</string>
+<key>keychain-access-groups</key><array><string>TEST.io.openziti.tlsuv.tests</string></array>
+</dict></plist>
+PLIST
+cmake -S . -B build/ios-sim -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+  -DVCPKG_TARGET_TRIPLET=arm64-ios-simulator -DVCPKG_MANIFEST_NO_DEFAULT_FEATURES=ON \
+  -DVCPKG_MANIFEST_FEATURES="test;applesec;http" \
+  -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphonesimulator \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+  -DCMAKE_BUILD_TYPE=Debug -Dtlsuv_DEVELOPER_MODE=ON -DTLSUV_TLSLIB=applesec \
+  -DCMAKE_EXE_LINKER_FLAGS="-Wl,-sectcreate,__TEXT,__entitlements,$PWD/ent.plist"
+cmake --build build/ios-sim --target all_tests
+codesign -f -s - build/ios-sim/tests/all_tests.app
+xcrun simctl boot "iPhone 17 Pro"
+cd tests && xcrun simctl spawn booted $PWD/../build/ios-sim/tests/all_tests.app/all_tests
+```

@@ -36,11 +36,17 @@ struct applesec_ctx {
 
     // [SecIdentityRef, intermediate SecCertificateRef...]; engine.c turns it into a sec_identity_t
     CFArrayRef ssl_chain;
+#if TARGET_OS_OSX
     // file keychain backing ssl_chain[0]; deleted with the context
     SecKeychainRef tmp_keychain;
     char *tmp_keychain_path;
     // random passphrase of tmp_keychain, kept to unlock it before each import
     char tmp_keychain_pw[65];
+#else
+    // persistent refs of the keys and certificates this context added to the
+    // app's keychain for ssl_chain[0]; deleted with the context
+    CFMutableArrayRef kc_items;
+#endif
 
     int (*cert_verify_f)(const struct tlsuv_certificate_s *cert, void *v_ctx);
     void *verify_ctx;
@@ -50,8 +56,8 @@ struct applesec_priv_key {
     struct tlsuv_private_key_s api;
     SecKeyRef key;
     enum applesec_key_type key_type;
-    // PEM as it was handed to load_key(); kept so to_pem() round-trips
-    // byte-for-byte and so the key can be re-imported into a keychain.
+    // PEM as it was handed to load_key(); kept so the key can be re-imported
+    // into the macOS temporary keychain as it was loaded.
     CFDataRef pem;
 };
 
