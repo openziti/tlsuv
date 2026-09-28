@@ -1184,6 +1184,7 @@ static tls_context ctx_api = {
     .version = tls_lib_version,
     .strerror = tls_strerror,
     .new_engine = applenw_new_engine,
+    .new_server_engine = applenw_new_server_engine,
     .free_ctx = tls_free_ctx,
     .set_ca_bundle = tls_set_ca_bundle,
     .set_own_cert = tls_set_own_cert,

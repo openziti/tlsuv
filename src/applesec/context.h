@@ -71,6 +71,7 @@ extern const char *applesec_error(OSStatus code);
 
 // engine.c
 extern tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host);
+extern tlsuv_engine_t applenw_new_server_engine(tls_context *ctx);
 
 // context.c, used by the engine to hand the peer chain to a verify callback.
 // takes ownership of `chain`.

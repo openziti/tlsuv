@@ -41,6 +41,8 @@ struct applenw_engine_s;
 static void set_error(struct applenw_engine_s *e, CFErrorRef err);
 static CFErrorRef posix_error(int code);
 static void wake(struct applenw_engine_s *e);
+static void release_listener(struct applenw_engine_s *e);
+static void engine_release(struct applenw_engine_s *e);
 
 static inline void log_frame(const char *dir, const char *bytes, size_t len) {
     const char *end = bytes + len;
@@ -77,16 +79,25 @@ static inline void log_frame(const char *dir, const char *bytes, size_t len) {
     }
 }
 
-struct tls_frame {
-    uint16_t len;
-    uint16_t recv;
-    char *frame;
+// lifecycle of one TLS session (one connection); engine_reset() starts a new one.
+// Written on the queue, except IDLE -> STARTING (handshake) and -> IDLE (reset).
+enum session_state {
+    SESSION_IDLE,     // nothing created yet
+    SESSION_STARTING, // client connection / server listener created, relay not ready
+    SESSION_RELAYING, // tls_channel exists: peer ciphertext is forwarded to NW
+    SESSION_CLOSING,  // engine_close(): the queue flushes close_notify, then stops IO
+    SESSION_CLOSED,   // IO stopped (closed or freed); callbacks only drop references
 };
 
 // per-connection engine
 struct applenw_engine_s {
     struct tlsuv_engine_s api;
     bool server;
+    _Atomic(enum session_state) session;
+    // guards async_cb/async_ctx: lets close/free/setup_async swap them without the queue
+    pthread_mutex_t async_mutex;
+    // server engines: TLS listener on 127.0.0.1 the relay connects to
+    nw_listener_t listener;
     // written on e->queue (state handler, accept block), read on the loop thread
     _Atomic(tls_handshake_state) hs_state;
 
@@ -95,16 +106,15 @@ struct applenw_engine_s {
     io_read read_f;
     io_write write_f;
     int sock;
+    // peer closed its side; EOF has been passed on to NW
     bool read_eof;
-    bool eof_forwarded;
     // NW finished writing; shut down the peer socket once outbound_buf is flushed.
     // guarded by outbound_mutex
     bool shutdown_pending;
 
-    // e->queue only: engine_free() has run / NW delivered the cancelled state.
-    // whichever happens second deallocates the engine
-    bool freed;
-    bool conn_cancelled;
+    // owner + each NW object (connection, listener) + in-flight accept block;
+    // the engine is deallocated when the last one lets go (see engine_release())
+    _Atomic int refs;
     // bumped by engine_reset(): completions from a replaced connection compare
     // against it and leave the new session alone
     _Atomic uint32_t conn_gen;
@@ -121,7 +131,6 @@ struct applenw_engine_s {
 
     char inbound_buf[32 * 1024];
     size_t inbound_len;
-    struct tls_frame inbound_frame;
 
     pthread_mutex_t outbound_mutex;
     dispatch_data_t outbound_buf;
@@ -206,59 +215,49 @@ static ssize_t engine_socket_write(void *io, const char *buf, size_t len) {
     return res;
 }
 
-static int read_inbound_frame(struct applenw_engine_s *e) {
-    ssize_t rc;
-    if (e->inbound_len < 5) goto do_read;
+static void close_tls_channel(struct applenw_engine_s *e);
 
-    uint16_t payload_len = ((uint8_t)e->inbound_buf[3]) << 8 | (uint8_t)e->inbound_buf[4];
-    // RFC 8446 5.2: TLSCiphertext is at most 2^14 + 256 bytes
-    if (payload_len > (1 << 14) + 256) {
-        UM_LOG(WARN, "invalid TLS record length[%u]", payload_len);
-        return TLS_ERR;
-    }
-    e->inbound_frame.len = payload_len + 5;
-    e->inbound_frame.frame = e->inbound_buf;
-    e->inbound_frame.recv = MIN(e->inbound_len, e->inbound_frame.len);
-
-    if (e->inbound_frame.recv == e->inbound_frame.len) {
-        log_frame("<<< ", e->inbound_buf, e->inbound_frame.len);
-        return TLS_OK;
-    }
-
-do_read:
-    if (e->read_eof) {
-        if (e->inbound_len > 0) {
-            UM_LOG(WARN, "EOF with incomplete frame");
+// length of the complete TLS record at the front of inbound_buf (reading more from
+// the peer if needed), or TLS_AGAIN / TLS_EOF / TLS_ERR
+static ssize_t read_inbound_record(struct applenw_engine_s *e) {
+    for (;;) {
+        if (e->inbound_len >= 5) {
+            size_t payload_len = ((uint8_t) e->inbound_buf[3]) << 8 | (uint8_t) e->inbound_buf[4];
+            // RFC 8446 5.2: TLSCiphertext is at most 2^14 + 256 bytes
+            if (payload_len > (1 << 14) + 256) {
+                UM_LOG(WARN, "invalid TLS record length[%zu]", payload_len);
+                return TLS_ERR;
+            }
+            size_t len = payload_len + 5;
+            if (e->inbound_len >= len) {
+                log_frame("<<< ", e->inbound_buf, len);
+                return (ssize_t) len;
+            }
         }
-        return TLS_EOF;
-    }
-    // recv() with a zero length returns 0, which would look like EOF
-    if (e->inbound_len == sizeof(e->inbound_buf)) {
-        return TLS_AGAIN;
-    }
-    rc = e->read_f(e->io, e->inbound_buf + e->inbound_len, sizeof(e->inbound_buf) - e->inbound_len);
-    if (rc == TLS_EOF) {
-        e->read_eof = true;
-    }
-    if (rc == TLS_ERR || rc == TLS_AGAIN || rc == TLS_EOF) {
-        return (int)rc;
-    }
-    e->inbound_len += rc;
 
-    return read_inbound_frame(e);
-}
+        if (e->read_eof) {
+            if (e->inbound_len > 0) {
+                UM_LOG(WARN, "EOF with incomplete frame");
+            }
+            return TLS_EOF;
+        }
+        // recv() with a zero length returns 0, which would look like EOF
+        if (e->inbound_len == sizeof(e->inbound_buf)) {
+            return TLS_AGAIN;
+        }
 
-static bool discard_inbound_frame(struct applenw_engine_s *e) {
-    UM_LOG(TRACE, "discarding %d bytes out of %zd", e->inbound_frame.len, e->inbound_len);
-    memmove(e->inbound_buf, e->inbound_buf + e->inbound_frame.len, e->inbound_len - e->inbound_frame.len);
-    e->inbound_len -= e->inbound_frame.len;
-    e->inbound_frame.len = 0;
-    e->inbound_frame.recv = 0;
-
-    if (e->inbound_len < 5) return false;
-    e->inbound_frame.len = 5 + (((uint8_t)e->inbound_buf[3] << 8) | (uint8_t)e->inbound_buf[4]);
-    e->inbound_frame.recv = MIN(e->inbound_frame.len, e->inbound_len);
-    return e->inbound_frame.len == e->inbound_frame.recv;
+        ssize_t rc = e->read_f(e->io, e->inbound_buf + e->inbound_len, sizeof(e->inbound_buf) - e->inbound_len);
+        if (rc == TLS_EOF) {
+            // peer closed: NW sees EOF once the records forwarded before it are written
+            e->read_eof = true;
+            close_tls_channel(e);
+            continue;
+        }
+        if (rc < 0) {
+            return rc;
+        }
+        e->inbound_len += rc;
+    }
 }
 
 static void engine_set_io_fd(tlsuv_engine_t self, tlsuv_sock_t fd) {
@@ -298,11 +297,22 @@ static tls_handshake_state engine_handshake_state(tlsuv_engine_t self) {
 }
 
 static void wake(struct applenw_engine_s *e) {
+    pthread_mutex_lock(&e->async_mutex);
     if (e->async_cb) {
         // callers hold at most one of decode_mutex/outbound_mutex, so read the
         // atomic sizes rather than the buffers themselves
         e->async_cb(e->async_ctx, e->decoded_len, e->outbound_len);
     }
+    pthread_mutex_unlock(&e->async_mutex);
+}
+
+// once this returns the previous callback/ctx is never used again (the caller may
+// free it). Only waits for a wake() in progress, never for the queue.
+static void set_async(struct applenw_engine_s *e, void (*cb)(void *, size_t, size_t), void *ctx) {
+    pthread_mutex_lock(&e->async_mutex);
+    e->async_cb = cb;
+    e->async_ctx = ctx;
+    pthread_mutex_unlock(&e->async_mutex);
 }
 
 // takes ownership of `err`
@@ -329,9 +339,15 @@ static CFErrorRef posix_error(int code) {
     return CFErrorCreate(kCFAllocatorDefault, kCFErrorDomainPOSIX, code, NULL);
 }
 
-// hand a copy of the current inbound record to NW (via tls_channel)
-static void forward_frame(struct applenw_engine_s *e) {
-    dispatch_data_t frame = dispatch_data_create(e->inbound_frame.frame, e->inbound_frame.len,
+// e->queue only: a callback from session `gen` may still act (not replaced by
+// engine_reset(), not closed/freed)
+static bool is_current(struct applenw_engine_s *e, uint32_t gen) {
+    return gen == e->conn_gen && e->session != SESSION_CLOSED;
+}
+
+// hand a copy of the record at the front of inbound_buf to NW (via tls_channel)
+static void forward_record(struct applenw_engine_s *e, size_t len) {
+    dispatch_data_t frame = dispatch_data_create(e->inbound_buf, len,
                                                  e->queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
     dispatch_async(e->queue, ^{
         if (e->tls_channel) {
@@ -353,30 +369,75 @@ static void close_tls_channel(struct applenw_engine_s *e) {
     });
 }
 
+// forward every complete record received from the peer: a record that decodes to no
+// plaintext (e.g. NewSessionTicket) triggers no async wakeup, so anything left
+// behind it would sit in inbound_buf until the socket becomes readable again.
+// Returns why it stopped: TLS_AGAIN, TLS_EOF or TLS_ERR.
+static int forward_inbound(struct applenw_engine_s *e) {
+    ssize_t len;
+    while ((len = read_inbound_record(e)) > 0) {
+        forward_record(e, (size_t) len);
+        memmove(e->inbound_buf, e->inbound_buf + len, e->inbound_len - len);
+        e->inbound_len -= len;
+    }
+    if (len == TLS_ERR) {
+        close_tls_channel(e);
+    }
+    return (int) len;
+}
+
 // stop all IO and callbacks into the stream; waits for queued work to drain.
 // idempotent, loop thread only.
+// e->queue only: stop the relay and close the engine's dup of the caller's socket
 static void stop_io(struct applenw_engine_s *e) {
-    dispatch_sync(e->queue, ^{
-        e->async_cb = NULL;
-        e->async_ctx = NULL;
-        if (e->tls_channel) {
-            dispatch_io_close(e->tls_channel, DISPATCH_IO_STOP);
-            dispatch_release((dispatch_object_t)e->tls_channel);
-            e->tls_channel = NULL;
-        }
-        if (e->sock != -1) {
-            close(e->sock);
-            e->sock = -1;
-        }
-    });
+    release_listener(e);
+    if (e->tls_channel) {
+        dispatch_io_close(e->tls_channel, DISPATCH_IO_STOP);
+        dispatch_release((dispatch_object_t)e->tls_channel);
+        e->tls_channel = NULL;
+    }
+    if (e->sock != -1) {
+        close(e->sock);
+        e->sock = -1;
+    }
+}
+
+// e->queue only: a graceful close is done (close_notify flushed) or timed out
+static void finish_close(struct applenw_engine_s *e) {
+    if (e->session != SESSION_CLOSING) {
+        return;
+    }
+    e->session = SESSION_CLOSED;
+    stop_io(e);
+    engine_release(e); // the reference taken by engine_close()
+}
+
+static void engine_dealloc(struct applenw_engine_s *e);
+
+static void engine_retain(struct applenw_engine_s *e) {
+    e->refs++;
+}
+
+static void engine_release(struct applenw_engine_s *e) {
+    if (--e->refs == 0) {
+        engine_dealloc(e);
+    }
 }
 
 static void engine_dealloc(struct applenw_engine_s *e) {
+    // released here, not in engine_free(): late NW callbacks may still use them
+    if (e->ca) CFRelease(e->ca);
+    if (e->identity) sec_release(e->identity);
+    if (e->protocol_parameters) nw_release(e->protocol_parameters);
     if (e->error) CFRelease(e->error);
     if (e->policies) CFRelease(e->policies);
     dispatch_release((dispatch_object_t)e->outbound_buf);
     pthread_mutex_destroy(&e->outbound_mutex);
     pthread_mutex_destroy(&e->decode_mutex);
+    pthread_mutex_destroy(&e->async_mutex);
+    // may run on the queue itself (last reference dropped by a callback): the queue
+    // stays alive until that block returns
+    dispatch_release(e->queue);
     tlsuv__free(e);
 }
 
@@ -396,11 +457,16 @@ static void write_to_peer (struct applenw_engine_s *e, dispatch_data_t data) {
 static void tls_to_socket(struct applenw_engine_s *e, int socket) {
     assert(e->tls_channel == NULL);
     UM_LOG(TRACE, "staring dispatch tls_sock[%d]", socket);
+    // the cleanup handler runs once the channel is closed and all its handlers have
+    // run, so the channel holds an engine reference until then
+    engine_retain(e);
+    uint32_t gen = e->conn_gen;
     e->tls_channel = dispatch_io_create(DISPATCH_IO_STREAM, socket, e->queue, ^(int er){
         if (er != 0) {
             UM_LOG(ERR, "tls_to_socket: error %d", er);
         }
         close(socket);
+        engine_release(e);
     });
 
     dispatch_io_set_low_water(e->tls_channel, 6);
@@ -410,7 +476,10 @@ static void tls_to_socket(struct applenw_engine_s *e, int socket) {
                          UM_LOG(TRACE, "done[%d] error[%d] d[%zd]",
                              done, error, data ? dispatch_data_get_size(data) : -1);
                          if (error == ECANCELED) {
-                             // stopped by stop_io(); the engine may already be gone
+                             // stopped by stop_io()/engine_reset()
+                             return;
+                         }
+                         if (!is_current(e, gen)) {
                              return;
                          }
                          if (error) {
@@ -423,6 +492,15 @@ static void tls_to_socket(struct applenw_engine_s *e, int socket) {
                          if (data) {
                              write_to_peer(e, data);
                          }
+                         if (e->session == SESSION_CLOSING) {
+                             // engine_close(): the owner no longer drives IO, so the queue
+                             // flushes close_notify itself (socket IO only, see engine_close)
+                             engine_flush((tlsuv_engine_t) e);
+                             if (done) {
+                                 finish_close(e);
+                             }
+                             return;
+                         }
                          if (done && e->io_is_socket) {
                              // outbound_buf may still hold ciphertext (e.g. close_notify):
                              // engine_flush() does the shutdown once it has been written
@@ -432,6 +510,52 @@ static void tls_to_socket(struct applenw_engine_s *e, int socket) {
                              pthread_mutex_unlock(&e->outbound_mutex);
                          }
                      });
+
+    // handshake() holds peer ciphertext back until now (it would otherwise be dropped)
+    e->session = SESSION_RELAYING;
+    wake(e);
+}
+
+// state handler shared by client connections and connections accepted by the server listener
+static void set_connection_handler(struct applenw_engine_s *e, nw_connection_t conn) {
+    // held until the cancelled state, which is the connection's last callback
+    engine_retain(e);
+    uint32_t gen = e->conn_gen;
+    nw_connection_set_state_changed_handler(conn, ^(nw_connection_state_t state, nw_error_t error) {
+        if (state == nw_connection_state_cancelled) {
+            UM_LOG(DEBG, "Connection cancelled");
+            engine_release(e);
+            return;
+        }
+        if (!is_current(e, gen)) {
+            // replaced by engine_reset(), or closed/freed: nothing to report to
+            return;
+        }
+        if (error) {
+            UM_LOG(WARN, "connection error: %d", nw_error_get_error_code(error));
+            // wakes the stream so process_connect/process_inbound sees the failure
+            handshake_failed(e, nw_error_copy_cf_error(error));
+        }
+        switch (state) {
+        case nw_connection_state_preparing: {
+            // don't clobber TLS_HS_ERROR set by a failed accept
+            tls_handshake_state expected = TLS_HS_BEFORE;
+            atomic_compare_exchange_strong(&e->hs_state, &expected, TLS_HS_CONTINUE);
+            break;
+        }
+        case nw_connection_state_ready:
+            e->hs_state = TLS_HS_COMPLETE;
+            UM_LOG(DEBG, "Handshake completed successfully!");
+            wake(e);
+            break;
+        case nw_connection_state_failed:
+            UM_LOG(DEBG, "Connection failed");
+            break;
+        default:
+            UM_LOG(WARN, "unhandled state: %d", state);
+            break;
+        }
+    });
 }
 
 static enum tls_handshake_st engine_create_client(struct applenw_engine_s *e) {
@@ -460,74 +584,135 @@ static enum tls_handshake_st engine_create_client(struct applenw_engine_s *e) {
     nw_connection_t conn = nw_connection_create(ep, e->protocol_parameters);
     nw_release(ep);
 
-    nw_connection_set_state_changed_handler(conn, ^(nw_connection_state_t state, nw_error_t error) {
-        if (error) {
-            UM_LOG(WARN, "connection error: %d", nw_error_get_error_code(error));
-            // wakes the stream so process_connect/process_inbound sees the failure
-            handshake_failed(e, nw_error_copy_cf_error(error));
-        }
-        switch (state) {
-        case nw_connection_state_preparing: {
-            // don't clobber TLS_HS_ERROR set by a failed accept
-            tls_handshake_state expected = TLS_HS_BEFORE;
-            atomic_compare_exchange_strong(&e->hs_state, &expected, TLS_HS_CONTINUE);
-            break;
-        }
-        case nw_connection_state_ready:
-            e->hs_state = TLS_HS_COMPLETE;
-            UM_LOG(DEBG, "Handshake completed successfully!");
-            wake(e);
-            break;
-        case nw_connection_state_failed:
-            UM_LOG(DEBG, "Connection failed");
-            break;
-        case nw_connection_state_cancelled:
-            e->conn_cancelled = true;
-            // cancelled without engine_free() (NW gave up on its own):
-            // the stream still owns the engine, engine_free() deallocates it
-            if (e->freed) {
-                engine_dealloc(e);
-            }
-            UM_LOG(DEBG, "Connection cancelled");
-            break;
-        default:
-            UM_LOG(WARN, "unhandled state: %d", state);
-            break;
-        }
-    });
+    set_connection_handler(e, conn);
 
     nw_connection_set_queue(conn, e->queue);
     nw_connection_start(conn);
     e->connection = conn;
 
+    engine_retain(e); // for the accept block
+    uint32_t gen = e->conn_gen;
     dispatch_async(e->queue, ^{
         struct pollfd pfd = {
             .fd = lsoc,
             .events = POLLIN,
         };
 
-        if (poll(&pfd, 1, 1000) < 1) {
+        int ready = poll(&pfd, 1, 1000);
+        bool stale = !is_current(e, gen);
+        if (stale) {
+            // engine reset or freed while waiting
+            close(lsoc);
+        } else if (ready < 1) {
             UM_LOG(WARN, "nw_connection did not connect in time");
             close(lsoc);
             handshake_failed(e, posix_error(ETIMEDOUT));
+        } else {
+            int tls_sock = accept(lsoc, NULL, 0);
+            int accept_err = errno;
+            close(lsoc);
+            if (tls_sock < 0) {
+                UM_LOG(WARN, "accept failed: %s", strerror(accept_err));
+                handshake_failed(e, posix_error(accept_err));
+            } else {
+                int true_val = 1;
+                setsockopt(tls_sock, SOL_SOCKET, SO_NOSIGPIPE, &true_val, sizeof(true_val));
+                setsockopt(tls_sock, IPPROTO_TCP, TCP_NODELAY, &true_val, sizeof(true_val));
+                tls_to_socket(e, tls_sock);
+            }
+        }
+        engine_release(e);
+    });
+
+    return TLS_HS_BEFORE;
+}
+
+// server engines: the relay socket connects to a TLS listener on 127.0.0.1, and
+// the connection the listener accepts is the TLS session (the mirror image of the
+// client, where NW connects to our listener)
+static enum tls_handshake_st engine_create_server(struct applenw_engine_s *e) {
+    assert(e);
+    assert(e->server);
+    assert(e->listener == NULL);
+
+    nw_listener_t listener = nw_listener_create(e->protocol_parameters);
+    if (listener == NULL) {
+        UM_LOG(WARN, "failed to create TLS listener");
+        return TLS_HS_ERROR;
+    }
+
+    nw_listener_set_queue(listener, e->queue);
+    // held until the listener's cancelled state, its last callback
+    engine_retain(e);
+    uint32_t gen = e->conn_gen;
+    nw_listener_set_state_changed_handler(listener, ^(nw_listener_state_t state, nw_error_t error) {
+        if (state == nw_listener_state_cancelled) {
+            engine_release(e);
             return;
         }
-        int tls_sock = accept(lsoc, NULL, 0);
-        int accept_err = errno;
-        close(lsoc);
-        if (tls_sock < 0) {
-            UM_LOG(WARN, "accept failed: %s", strerror(accept_err));
-            handshake_failed(e, posix_error(accept_err));
+        if (!is_current(e, gen)) {
+            return;
+        }
+        if (state == nw_listener_state_failed) {
+            UM_LOG(WARN, "TLS listener failed: %d", error ? nw_error_get_error_code(error) : 0);
+            handshake_failed(e, error ? nw_error_copy_cf_error(error) : posix_error(EIO));
+            return;
+        }
+        if (state != nw_listener_state_ready) {
+            return;
+        }
+
+        struct sockaddr_in addr = {
+            .sin_family = AF_INET,
+            .sin_port = htons(nw_listener_get_port(listener)),
+            .sin_addr = htonl(INADDR_LOOPBACK),
+        };
+        int tls_sock = socket(AF_INET, SOCK_STREAM, 0);
+        // blocking connect: the listener is ready on loopback, so this completes
+        // from the kernel's backlog without waiting for the accept handler
+        if (tls_sock < 0 || connect(tls_sock, (struct sockaddr *) &addr, sizeof(addr)) != 0) {
+            int err = errno;
+            UM_LOG(WARN, "failed to connect to TLS listener: %s", strerror(err));
+            if (tls_sock >= 0) close(tls_sock);
+            handshake_failed(e, posix_error(err));
             return;
         }
         int true_val = 1;
         setsockopt(tls_sock, SOL_SOCKET, SO_NOSIGPIPE, &true_val, sizeof(true_val));
         setsockopt(tls_sock, IPPROTO_TCP, TCP_NODELAY, &true_val, sizeof(true_val));
-
         tls_to_socket(e, tls_sock);
     });
 
+    nw_listener_set_new_connection_handler(listener, ^(nw_connection_t conn) {
+        if (!is_current(e, gen) || e->connection != NULL) {
+            // stale, or a second peer on the port (not our relay)
+            nw_connection_cancel(conn);
+            return;
+        }
+        nw_retain(conn);
+        e->connection = conn;
+        set_connection_handler(e, conn);
+        nw_connection_set_queue(conn, e->queue);
+        nw_connection_start(conn);
+
+        // the accepted connection lives on without the listener
+        nw_listener_cancel(listener);
+    });
+
+    e->listener = listener;
+    nw_listener_start(listener);
     return TLS_HS_BEFORE;
+}
+
+// e->queue only
+static void release_listener(struct applenw_engine_s *e) {
+    if (e->listener) {
+        // handlers stay: they ignore stale events, and the cancelled state drops
+        // the listener's engine reference
+        nw_listener_cancel(e->listener);
+        nw_release(e->listener);
+        e->listener = NULL;
+    }
 }
 
 static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
@@ -546,35 +731,18 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         return state;
     }
 
-    if (e->connection) {
-        int rc;
-        do {
-            rc = read_inbound_frame(e);
-            if (rc == TLS_OK) {
-                UM_LOG(TRACE, "engine_handshake: received frame: %d len: %d", e->inbound_frame.frame[0], e->inbound_frame.len);
-                forward_frame(e);
-
-                bool more = discard_inbound_frame(e);
-                UM_LOG(TRACE, "engine_handshake: more: %d, %zd", more, e->inbound_len);
-                if (!more) {
-                    break;
-                }
-            }
-            if (rc == TLS_ERR) {
-                close_tls_channel(e);
-            }
-        } while (rc == TLS_OK);
-
-        state = e->hs_state;
-        if (state != TLS_HS_CONTINUE) {
-            return state;
+    if (e->session == SESSION_IDLE) {
+        e->session = SESSION_STARTING;
+        tls_handshake_state rc = e->server ? engine_create_server(e) : engine_create_client(e);
+        if (rc == TLS_HS_ERROR) {
+            e->hs_state = TLS_HS_ERROR;
         }
-
         return e->hs_state;
     }
 
-    if (engine_create_client(e) == TLS_HS_ERROR) {
-        e->hs_state = TLS_HS_ERROR;
+    // until the relay exists, leave peer ciphertext in the socket / inbound_buf
+    if (e->session == SESSION_RELAYING) {
+        forward_inbound(e);
     }
 
     return e->hs_state;
@@ -601,6 +769,9 @@ static const char* engine_get_alpn(tlsuv_engine_t self) {
             if (negotiated) {
                 strlcpy(e->alpn, negotiated, sizeof(e->alpn));
                 res = e->alpn;
+            } else if (e->hs_state == TLS_HS_COMPLETE) {
+                // nothing negotiated: "" like the other backends (NULL = not known yet)
+                res = "";
             }
             sec_release(sec_metadata);
         }
@@ -653,9 +824,43 @@ static int engine_get_peer_cert(tlsuv_engine_t self, tlsuv_certificate_t *cert) 
     return 0;
 }
 
+// Does not block: IO is stopped on the queue. On a completed connection over a
+// socket, NW sends close_notify on a graceful cancel (a final send does not); it
+// comes back through the relay, is flushed to the socket from the queue, and IO
+// stops once NW is done (or after 200 ms). With set_io the io callbacks are the
+// owner's and not thread safe, so close_notify cannot be flushed and is skipped.
 static int engine_close(tlsuv_engine_t self) {
     struct applenw_engine_s *e = (struct applenw_engine_s *) self;
-    stop_io(e);
+    set_async(e, NULL, NULL); // no wakeups into the owner after this
+
+    engine_retain(e); // held by the close until IO is stopped
+    dispatch_async(e->queue, ^{
+        if (e->session == SESSION_CLOSING || e->session == SESSION_CLOSED) {
+            engine_release(e);
+            return;
+        }
+
+        bool graceful = e->session == SESSION_RELAYING && e->connection != NULL &&
+                        e->hs_state == TLS_HS_COMPLETE && e->io_is_socket;
+        if (!graceful) {
+            e->session = SESSION_CLOSED;
+            stop_io(e);
+            engine_release(e);
+            return;
+        }
+
+        e->session = SESSION_CLOSING; // keeps the close's reference until finish_close()
+        nw_connection_cancel(e->connection);
+
+        engine_retain(e); // for the timer
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_MSEC), e->queue, ^{
+            if (e->session == SESSION_CLOSING) {
+                UM_LOG(DEBG, "engine[%p] close_notify was not flushed in time", e);
+            }
+            finish_close(e);
+            engine_release(e);
+        });
+    });
     return TLS_OK;
 }
 
@@ -843,25 +1048,11 @@ static bool process_decoded(struct applenw_engine_s *e, uint32_t gen, dispatch_d
 static int engine_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout) {
     struct applenw_engine_s *e = (struct applenw_engine_s *) self;
     int rc;
-    int frames = 0;
-
     // async wakeups always come through here; this also carries out a pending shutdown
     // when there is nothing left to flush (the stream only flushes on UV_WRITABLE)
     engine_flush(self);
 
-    // forward every complete record we have: a record that decodes to no plaintext
-    // (e.g. NewSessionTicket) triggers no async wakeup, so anything left behind
-    // it would sit in inbound_buf until the socket becomes readable again
-    while ((rc = read_inbound_frame(e)) == TLS_OK) {
-        frames++;
-        forward_frame(e);
-        discard_inbound_frame(e);
-    }
-    if (rc == TLS_EOF && !e->eof_forwarded) {
-        // peer closed: let NW see EOF once all forwarded records are written
-        e->eof_forwarded = true;
-        close_tls_channel(e);
-    }
+    rc = forward_inbound(e);
 
     *out_bytes = 0;
     pthread_mutex_lock(&e->decode_mutex);
@@ -935,10 +1126,8 @@ static int engine_reset(tlsuv_engine_t self) {
         old = e->connection;
         e->connection = NULL;
         e->conn_gen++;
-        if (old) {
-            // its remaining events (errors, cancelled) must not reach the new session
-            nw_connection_set_state_changed_handler(old, NULL);
-        }
+        release_listener(e);
+        e->session = SESSION_IDLE;
         if (e->tls_channel) {
             dispatch_io_close(e->tls_channel, DISPATCH_IO_STOP);
             dispatch_release((dispatch_object_t)e->tls_channel);
@@ -970,12 +1159,9 @@ static int engine_reset(tlsuv_engine_t self) {
 
     // loop-thread state
     e->inbound_len = 0;
-    memset(&e->inbound_frame, 0, sizeof(e->inbound_frame));
     e->read_eof = false;
-    e->eof_forwarded = false;
     e->nw_pending = 0;
     e->write_blocked = false;
-    e->conn_cancelled = false;
     e->alpn[0] = 0;
     e->hs_state = TLS_HS_BEFORE;
     return 0;
@@ -985,44 +1171,31 @@ static void engine_free(tlsuv_engine_t self) {
     struct applenw_engine_s *e = (struct applenw_engine_s *) self;
     if (e == NULL) return;
 
-    stop_io(e);
+    set_async(e, NULL, NULL); // no wakeups into the owner after this
 
-    if (e->ca) CFRelease(e->ca);
-    if (e->identity) sec_release(e->identity);
-    nw_release(e->protocol_parameters);
+    // the rest runs on the queue; from there on, callbacks still in flight only
+    // drop their references
+    dispatch_async(e->queue, ^{
+        if (e->session != SESSION_CLOSING) {
+            // (a graceful close stops IO itself once close_notify is out)
+            e->session = SESSION_CLOSED;
+            stop_io(e);
+        }
 
-    dispatch_queue_t queue = e->queue;
-    nw_connection_t conn = e->connection;
-
-    __block bool dealloc_now = true;
-    if (conn != NULL) {
-        dispatch_sync(queue, ^{
-            e->freed = true;
-            dealloc_now = e->conn_cancelled;
-        });
-    }
-
-    if (dealloc_now) {
-        // no connection, or NW already cancelled it: nothing else will touch `e`
-        if (conn) nw_release(conn);
-        engine_dealloc(e);
-    } else {
-        // the cancelled state handler frees `e` on the queue: don't touch it after this
-        nw_connection_cancel(conn);
-        nw_release(conn);
-    }
-    nw_release(queue);
+        nw_connection_t conn = e->connection;
+        e->connection = NULL;
+        if (conn != NULL) {
+            // its cancelled state releases the connection's engine reference
+            nw_connection_cancel(conn);
+            nw_release(conn);
+        }
+        engine_release(e); // the owner's reference: `e` may be gone after this
+    });
 }
 
 static void engine_setup_async(tlsuv_engine_t self, void (*cb)(void *, size_t, size_t), void *async_ctx) {
     struct applenw_engine_s *e = (struct applenw_engine_s *) self;
-    // callbacks are invoked on e->queue (and from engine_flush() on the loop thread,
-    // which is also where this is called): swap them on the queue, so that once this
-    // returns the previous callback/ctx is never used again (the caller may free it)
-    dispatch_sync(e->queue, ^{
-        e->async_cb = cb;
-        e->async_ctx = async_ctx;
-    });
+    set_async(e, cb, async_ctx);
 }
 
 static struct tlsuv_engine_s applenw_engine_api = {
@@ -1116,10 +1289,11 @@ static sec_identity_t new_client_identity(struct sectransport_ctx *ctx) {
     return identity;
 }
 
-tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host) {
+// state shared by client and server engines
+static struct applenw_engine_s *engine_alloc(struct sectransport_ctx *sec_ctx) {
     struct applenw_engine_s *e = tlsuv__calloc(1, sizeof(*e));
     e->api = applenw_engine_api;
-    struct sectransport_ctx* sec_ctx = (struct sectransport_ctx *) ctx;
+    e->refs = 1; // the owner's, dropped by engine_free()
     e->hs_state = TLS_HS_BEFORE;
     e->ca = sec_ctx->ca_bundle ? CFRetain(sec_ctx->ca_bundle) : NULL;
     e->identity = new_client_identity(sec_ctx);
@@ -1131,6 +1305,16 @@ tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host) {
     dispatch_queue_t global = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
     e->queue = dispatch_queue_create_with_target(
         "tlsuv.queue", DISPATCH_QUEUE_SERIAL, global);
+
+    pthread_mutex_init(&e->outbound_mutex, NULL);
+    pthread_mutex_init(&e->decode_mutex, NULL);
+    pthread_mutex_init(&e->async_mutex, NULL);
+    return e;
+}
+
+tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host) {
+    struct sectransport_ctx* sec_ctx = (struct sectransport_ctx *) ctx;
+    struct applenw_engine_s *e = engine_alloc(sec_ctx);
 
     // no host (e.g. tlsuv_stream_connect_addr() without a hostname): the SSL policy
     // then skips the name check
@@ -1211,8 +1395,43 @@ tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host) {
         }
     );
 
-    pthread_mutex_init(&e->outbound_mutex, NULL);
-    pthread_mutex_init(&e->decode_mutex, NULL);
+    return (tlsuv_engine_t) e;
+}
+
+// Client certificates are not requested: Network.framework only offers "required"
+// publicly (the optional mode is not public API), and a required client cert would
+// reject clients that have none. get_peer_cert() therefore returns TLS_ERR.
+tlsuv_engine_t applenw_new_server_engine(tls_context *ctx) {
+    struct sectransport_ctx* sec_ctx = (struct sectransport_ctx *) ctx;
+    if (sec_ctx->ssl_chain == NULL) {
+        UM_LOG(WARN, "server engine requires own certificate (set_own_cert)");
+        return NULL;
+    }
+
+    struct applenw_engine_s *e = engine_alloc(sec_ctx);
+    e->server = true;
+    if (e->identity == NULL) {
+        UM_LOG(WARN, "failed to create server identity");
+        e->api.free((tlsuv_engine_t) e);
+        return NULL;
+    }
+
+    e->protocol_parameters = nw_parameters_create_secure_tcp(
+        ^(nw_protocol_options_t opts){
+            sec_protocol_options_t sec_options = nw_tls_copy_sec_protocol_options(opts);
+            sec_protocol_options_set_min_tls_protocol_version(sec_options, tls_protocol_version_TLSv12);
+            sec_protocol_options_set_local_identity(sec_options, e->identity);
+            nw_release(sec_options);
+        },
+        ^(nw_protocol_options_t opts) {
+            nw_tcp_options_set_no_delay(opts, true);
+        }
+    );
+
+    // listen on loopback only, ephemeral port: only the engine's own relay connects
+    nw_endpoint_t local = nw_endpoint_create_host("127.0.0.1", "0");
+    nw_parameters_set_local_endpoint(e->protocol_parameters, local);
+    nw_release(local);
 
     return (tlsuv_engine_t) e;
 }
