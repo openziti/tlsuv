@@ -99,7 +99,7 @@ static enum applesec_key_type key_type_of(SecKeyRef k) {
 // ---------------------------------------------------------------- CA bundle
 
 // `ca` is either a PEM/DER blob or a path to one
-static int load_ca(struct sectransport_ctx* ctx, const char* ca, size_t ca_len) {
+static int load_ca(struct applesec_ctx* ctx, const char* ca, size_t ca_len) {
     if (ctx->ca_bundle != NULL) {
         CFRelease(ctx->ca_bundle);
         ctx->ca_bundle = NULL;
@@ -132,13 +132,13 @@ static int load_ca(struct sectransport_ctx* ctx, const char* ca, size_t ca_len) 
 }
 
 static int tls_set_ca_bundle(tls_context* ctx, const char* ca, size_t ca_len) {
-    return load_ca((struct sectransport_ctx*)ctx, ca, ca_len);
+    return load_ca((struct applesec_ctx*)ctx, ca, ca_len);
 }
 
 // ------------------------------------------------------------------ context
 
 tls_context* new_applesec_ctx(const char* ca, size_t ca_len) {
-    struct sectransport_ctx* ctx = tlsuv__calloc(1, sizeof(*ctx));
+    struct applesec_ctx* ctx = tlsuv__calloc(1, sizeof(*ctx));
     ctx->api = ctx_api;
 
     UM_LOG(INFO, "using %s", ctx->api.version());
@@ -153,7 +153,7 @@ int configure_applesec(void) {
 }
 
 static void tls_free_ctx(tls_context* ctx) {
-    struct sectransport_ctx* c = (struct sectransport_ctx*)ctx;
+    struct applesec_ctx* c = (struct applesec_ctx*)ctx;
     if (c->ca_bundle) CFRelease(c->ca_bundle);
     if (c->ssl_chain) CFRelease(c->ssl_chain);
     if (c->tmp_keychain) {
@@ -207,7 +207,7 @@ static const char* tls_lib_version(void) {
 static void tls_set_cert_verify(tls_context* ctx,
                                 int (*verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
                                 void* v_ctx) {
-    struct sectransport_ctx* c = (struct sectransport_ctx*)ctx;
+    struct applesec_ctx* c = (struct applesec_ctx*)ctx;
     c->cert_verify_f = verify_f;
     c->verify_ctx = v_ctx;
 }
@@ -239,7 +239,7 @@ static int gen_key(tlsuv_private_key_t* key_ref) {
     }
     if (err) CFRelease(err);
 
-    struct sectransport_priv_key* pk = tlsuv__calloc(1, sizeof(*pk));
+    struct applesec_priv_key* pk = tlsuv__calloc(1, sizeof(*pk));
     pk->api = sec_key_api;
     pk->key = k;
     pk->key_type = APPLESEC_KEY_EC;
@@ -630,7 +630,7 @@ static int load_key(tlsuv_private_key_t* key_ref, const char* keystr, size_t len
         return -1;
     }
 
-    struct sectransport_priv_key* pk = tlsuv__calloc(1, sizeof(*pk));
+    struct applesec_priv_key* pk = tlsuv__calloc(1, sizeof(*pk));
     pk->api = sec_key_api;
     pk->key = k;
     pk->key_type = type;
@@ -717,14 +717,14 @@ static int verify_with_key(SecKeyRef key, enum applesec_key_type type, enum hash
 }
 
 static void privkey_free(struct tlsuv_private_key_s* pk) {
-    struct sectransport_priv_key* key = container_of(pk, struct sectransport_priv_key, api);
+    struct applesec_priv_key* key = container_of(pk, struct applesec_priv_key, api);
     if (key->key) CFRelease(key->key);
     if (key->pem) CFRelease(key->pem);
     tlsuv__free(key);
 }
 
 static int privkey_to_pem(struct tlsuv_private_key_s* pk, char** pem, size_t* pemlen) {
-    struct sectransport_priv_key* key = container_of(pk, struct sectransport_priv_key, api);
+    struct applesec_priv_key* key = container_of(pk, struct applesec_priv_key, api);
     CFDataRef data = key->pem;
 
     if (data == NULL) {
@@ -746,14 +746,14 @@ static int privkey_to_pem(struct tlsuv_private_key_s* pk, char** pem, size_t* pe
 }
 
 static struct tlsuv_public_key_s* privkey_pubkey(struct tlsuv_private_key_s* pk) {
-    struct sectransport_priv_key* key = container_of(pk, struct sectransport_priv_key, api);
+    struct applesec_priv_key* key = container_of(pk, struct applesec_priv_key, api);
     SecKeyRef pub = SecKeyCopyPublicKey(key->key);
     if (pub == NULL) {
         UM_LOG(WARN, "failed to derive public key");
         return NULL;
     }
 
-    struct sectransport_pub_key* pubkey = tlsuv__calloc(1, sizeof(*pubkey));
+    struct applesec_pub_key* pubkey = tlsuv__calloc(1, sizeof(*pubkey));
     pubkey->api = pub_key_api;
     pubkey->key = pub;
     pubkey->key_type = key->key_type;
@@ -763,7 +763,7 @@ static struct tlsuv_public_key_s* privkey_pubkey(struct tlsuv_private_key_s* pk)
 static int privkey_sign(struct tlsuv_private_key_s* pk, enum hash_algo algo,
                         const char* data, size_t datalen,
                         char* sig, size_t* siglen) {
-    struct sectransport_priv_key* key = container_of(pk, struct sectransport_priv_key, api);
+    struct applesec_priv_key* key = container_of(pk, struct applesec_priv_key, api);
     SecKeyAlgorithm algorithm = sign_algo(key->key_type, algo);
     if (algorithm == NULL) {
         UM_LOG(WARN, "unsupported key type/hash combination");
@@ -808,13 +808,13 @@ static struct tlsuv_private_key_s sec_key_api = {
 };
 
 static void pubkey_free(struct tlsuv_public_key_s* pk) {
-    struct sectransport_pub_key* key = container_of(pk, struct sectransport_pub_key, api);
+    struct applesec_pub_key* key = container_of(pk, struct applesec_pub_key, api);
     if (key->key) CFRelease(key->key);
     tlsuv__free(key);
 }
 
 static int pubkey_to_pem(struct tlsuv_public_key_s* pk, char** pem, size_t* pemlen) {
-    struct sectransport_pub_key* key = container_of(pk, struct sectransport_pub_key, api);
+    struct applesec_pub_key* key = container_of(pk, struct applesec_pub_key, api);
     CFDataRef data = NULL;
     OSStatus rc = SecItemExport(key->key, kSecFormatPEMSequence, kSecItemPemArmour, NULL, &data);
 
@@ -834,7 +834,7 @@ static int pubkey_to_pem(struct tlsuv_public_key_s* pk, char** pem, size_t* peml
 static int pubkey_verify(struct tlsuv_public_key_s* pub,
                          enum hash_algo algo, const char* data, size_t datalen,
                          const char* sig, size_t siglen) {
-    struct sectransport_pub_key* key = container_of(pub, struct sectransport_pub_key, api);
+    struct applesec_pub_key* key = container_of(pub, struct applesec_pub_key, api);
     return verify_with_key(key->key, key->key_type, algo, data, datalen, sig, siglen);
 }
 
@@ -849,13 +849,13 @@ static struct tlsuv_public_key_s pub_key_api = {
 static void cert_free(struct tlsuv_certificate_s* c) {
     if (c == NULL) return;
 
-    struct sectransport_cert* cert = container_of(c, struct sectransport_cert, api);
+    struct applesec_cert* cert = container_of(c, struct applesec_cert, api);
     if (cert->chain) CFRelease(cert->chain);
     tlsuv__free(cert);
 }
 
 static int cert_to_pem(const struct tlsuv_certificate_s* c, int full, char** pem, size_t* pem_len) {
-    struct sectransport_cert* cert = container_of(c, struct sectransport_cert, api);
+    struct applesec_cert* cert = container_of(c, struct applesec_cert, api);
     CFTypeRef item = full ? (CFTypeRef)cert->chain : CFArrayGetValueAtIndex(cert->chain, 0);
     CFDataRef data = NULL;
     OSStatus rc = SecItemExport(item, kSecFormatPEMSequence, kSecItemPemArmour, NULL, &data);
@@ -873,7 +873,7 @@ static int cert_to_pem(const struct tlsuv_certificate_s* c, int full, char** pem
 }
 
 static int cert_expiration(const struct tlsuv_certificate_s* c, struct tm* exp) {
-    struct sectransport_cert* cert = container_of(c, struct sectransport_cert, api);
+    struct applesec_cert* cert = container_of(c, struct applesec_cert, api);
     SecCertificateRef leaf = (SecCertificateRef)CFArrayGetValueAtIndex(cert->chain, 0);
 
     CFStringRef oid = kSecOIDX509V1ValidityNotAfter;
@@ -904,7 +904,7 @@ static int cert_expiration(const struct tlsuv_certificate_s* c, struct tm* exp) 
 static int cert_verify(const struct tlsuv_certificate_s* c, enum hash_algo algo,
                        const char* data, size_t datalen,
                        const char* sig, size_t siglen) {
-    struct sectransport_cert* cert = container_of(c, struct sectransport_cert, api);
+    struct applesec_cert* cert = container_of(c, struct applesec_cert, api);
     SecCertificateRef leaf = (SecCertificateRef)CFArrayGetValueAtIndex(cert->chain, 0);
 
     SecKeyRef pub = SecCertificateCopyKey(leaf);
@@ -928,7 +928,7 @@ static struct tlsuv_certificate_s sec_cert_api = {
 };
 
 tlsuv_certificate_t applesec_cert_new(CFArrayRef chain) {
-    struct sectransport_cert* c = tlsuv__calloc(1, sizeof(*c));
+    struct applesec_cert* c = tlsuv__calloc(1, sizeof(*c));
     c->api = sec_cert_api;
     c->chain = chain;
     return &c->api;
@@ -1023,7 +1023,7 @@ static bool cert_matches_key(SecCertificateRef cert, SecKeyRef pub) {
 // Consequence: the private key has to be extractable. That rules out keys held
 // by the platform keychain (src/apple/keychain.c creates those non-extractable),
 // which is why the keychain key slots are not implemented for this backend.
-static int make_identity(struct sectransport_ctx* c, struct sectransport_priv_key* key,
+static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
                          SecCertificateRef leaf, SecIdentityRef* identity) {
     *identity = NULL;
 
@@ -1123,7 +1123,7 @@ static int make_identity(struct sectransport_ctx* c, struct sectransport_priv_ke
 
 static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t pk, tlsuv_certificate_t cert) {
     if (ctx == NULL) return -1;
-    struct sectransport_ctx* c = (struct sectransport_ctx*)ctx;
+    struct applesec_ctx* c = (struct applesec_ctx*)ctx;
 
     if (c->ssl_chain) {
         CFRelease(c->ssl_chain);
@@ -1135,8 +1135,8 @@ static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t pk, tlsuv_cert
         return 0;
     }
 
-    struct sectransport_priv_key* key = container_of(pk, struct sectransport_priv_key, api);
-    struct sectransport_cert* cer = container_of(cert, struct sectransport_cert, api);
+    struct applesec_priv_key* key = container_of(pk, struct applesec_priv_key, api);
+    struct applesec_cert* cer = container_of(cert, struct applesec_cert, api);
 
     SecKeyRef pub = SecKeyCopyPublicKey(key->key);
     if (pub == NULL) {
@@ -1183,8 +1183,8 @@ static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t pk, tlsuv_cert
 static tls_context ctx_api = {
     .version = tls_lib_version,
     .strerror = tls_strerror,
-    .new_engine = applenw_new_engine,
-    .new_server_engine = applenw_new_server_engine,
+    .new_engine = applesec_new_engine,
+    .new_server_engine = applesec_new_server_engine,
     .free_ctx = tls_free_ctx,
     .set_ca_bundle = tls_set_ca_bundle,
     .set_own_cert = tls_set_own_cert,

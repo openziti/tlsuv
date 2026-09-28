@@ -28,7 +28,7 @@ enum applesec_key_type {
     APPLESEC_KEY_RSA,
 };
 
-struct sectransport_ctx {
+struct applesec_ctx {
     tls_context api;
 
     // anchors for SecTrustSetAnchorCertificates()
@@ -46,7 +46,7 @@ struct sectransport_ctx {
     void *verify_ctx;
 };
 
-struct sectransport_priv_key {
+struct applesec_priv_key {
     struct tlsuv_private_key_s api;
     SecKeyRef key;
     enum applesec_key_type key_type;
@@ -55,13 +55,13 @@ struct sectransport_priv_key {
     CFDataRef pem;
 };
 
-struct sectransport_pub_key {
+struct applesec_pub_key {
     struct tlsuv_public_key_s api;
     SecKeyRef key;
     enum applesec_key_type key_type;
 };
 
-struct sectransport_cert {
+struct applesec_cert {
     struct tlsuv_certificate_s api;
 
     CFArrayRef chain;
@@ -70,8 +70,8 @@ struct sectransport_cert {
 extern const char *applesec_error(OSStatus code);
 
 // engine.c
-extern tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host);
-extern tlsuv_engine_t applenw_new_server_engine(tls_context *ctx);
+extern tlsuv_engine_t applesec_new_engine(tls_context *ctx, const char *host);
+extern tlsuv_engine_t applesec_new_server_engine(tls_context *ctx);
 
 // context.c, used by the engine to hand the peer chain to a verify callback.
 // takes ownership of `chain`.

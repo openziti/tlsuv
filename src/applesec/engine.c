@@ -37,12 +37,12 @@ static int engine_flush(tlsuv_engine_t self);
 // max plaintext handed to NW but not yet sent, plus ciphertext not yet flushed to
 // the peer; engine_write() accepts no more than this is in flight
 #define NW_WRITE_LIMIT (256 * 1024)
-struct applenw_engine_s;
-static void set_error(struct applenw_engine_s *e, CFErrorRef err);
+struct applesec_engine_s;
+static void set_error(struct applesec_engine_s *e, CFErrorRef err);
 static CFErrorRef posix_error(int code);
-static void wake(struct applenw_engine_s *e);
-static void release_listener(struct applenw_engine_s *e);
-static void engine_release(struct applenw_engine_s *e);
+static void wake(struct applesec_engine_s *e);
+static void release_listener(struct applesec_engine_s *e);
+static void engine_release(struct applesec_engine_s *e);
 
 static inline void log_frame(const char *dir, const char *bytes, size_t len) {
     const char *end = bytes + len;
@@ -90,7 +90,7 @@ enum session_state {
 };
 
 // per-connection engine
-struct applenw_engine_s {
+struct applesec_engine_s {
     struct tlsuv_engine_s api;
     bool server;
     _Atomic(enum session_state) session;
@@ -161,7 +161,7 @@ struct applenw_engine_s {
 // engine
 
 static void engine_set_io(tlsuv_engine_t self, io_ctx io, io_read rd, io_write wr) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     assert(rd != NULL);
     assert(wr != NULL);
     e->io = io;
@@ -170,7 +170,7 @@ static void engine_set_io(tlsuv_engine_t self, io_ctx io, io_read rd, io_write w
 }
 
 static ssize_t engine_socket_read(void *io, char *buf, size_t len) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) io;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) io;
     struct pollfd pfd = { e->sock, POLLIN, 0 };
     if (poll(&pfd, 1, 0) <= 0) {
         return TLS_AGAIN;
@@ -191,7 +191,7 @@ static ssize_t engine_socket_read(void *io, char *buf, size_t len) {
 }
 
 static ssize_t engine_socket_write(void *io, const char *buf, size_t len) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) io;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) io;
     ssize_t res = send(e->sock, buf, len, 0);
     if (res == -1) {
         int err = errno;
@@ -215,11 +215,11 @@ static ssize_t engine_socket_write(void *io, const char *buf, size_t len) {
     return res;
 }
 
-static void close_tls_channel(struct applenw_engine_s *e);
+static void close_tls_channel(struct applesec_engine_s *e);
 
 // length of the complete TLS record at the front of inbound_buf (reading more from
 // the peer if needed), or TLS_AGAIN / TLS_EOF / TLS_ERR
-static ssize_t read_inbound_record(struct applenw_engine_s *e) {
+static ssize_t read_inbound_record(struct applesec_engine_s *e) {
     for (;;) {
         if (e->inbound_len >= 5) {
             size_t payload_len = ((uint8_t) e->inbound_buf[3]) << 8 | (uint8_t) e->inbound_buf[4];
@@ -261,7 +261,7 @@ static ssize_t read_inbound_record(struct applenw_engine_s *e) {
 }
 
 static void engine_set_io_fd(tlsuv_engine_t self, tlsuv_sock_t fd) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     e->io_is_socket = true;
     // set again after engine_reset() for a new connection: drop the old dup
     if (e->sock != -1) {
@@ -273,7 +273,7 @@ static void engine_set_io_fd(tlsuv_engine_t self, tlsuv_sock_t fd) {
 }
 
 static void engine_set_protocols(tlsuv_engine_t self, const char **protocols, int len) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     nw_protocol_definition_t tls = nw_protocol_copy_tls_definition();
     nw_protocol_stack_t stack = nw_parameters_copy_default_protocol_stack(e->protocol_parameters);
     nw_protocol_stack_iterate_application_protocols(stack, ^(nw_protocol_options_t opts) {
@@ -292,11 +292,11 @@ static void engine_set_protocols(tlsuv_engine_t self, const char **protocols, in
 }
 
 static tls_handshake_state engine_handshake_state(tlsuv_engine_t self) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     return e->hs_state;
 }
 
-static void wake(struct applenw_engine_s *e) {
+static void wake(struct applesec_engine_s *e) {
     pthread_mutex_lock(&e->async_mutex);
     if (e->async_cb) {
         // callers hold at most one of decode_mutex/outbound_mutex, so read the
@@ -308,7 +308,7 @@ static void wake(struct applenw_engine_s *e) {
 
 // once this returns the previous callback/ctx is never used again (the caller may
 // free it). Only waits for a wake() in progress, never for the queue.
-static void set_async(struct applenw_engine_s *e, void (*cb)(void *, size_t, size_t), void *ctx) {
+static void set_async(struct applesec_engine_s *e, void (*cb)(void *, size_t, size_t), void *ctx) {
     pthread_mutex_lock(&e->async_mutex);
     e->async_cb = cb;
     e->async_ctx = ctx;
@@ -316,7 +316,7 @@ static void set_async(struct applenw_engine_s *e, void (*cb)(void *, size_t, siz
 }
 
 // takes ownership of `err`
-static void set_error(struct applenw_engine_s *e, CFErrorRef err) {
+static void set_error(struct applesec_engine_s *e, CFErrorRef err) {
     pthread_mutex_lock(&e->decode_mutex);
     if (e->error) CFRelease(e->error);
     e->error = err;
@@ -324,7 +324,7 @@ static void set_error(struct applenw_engine_s *e, CFErrorRef err) {
 }
 
 // e->queue only; takes ownership of `err`
-static void handshake_failed(struct applenw_engine_s *e, CFErrorRef err) {
+static void handshake_failed(struct applesec_engine_s *e, CFErrorRef err) {
     set_error(e, err);
     if (e->hs_state != TLS_HS_COMPLETE) {
         e->hs_state = TLS_HS_ERROR;
@@ -341,12 +341,12 @@ static CFErrorRef posix_error(int code) {
 
 // e->queue only: a callback from session `gen` may still act (not replaced by
 // engine_reset(), not closed/freed)
-static bool is_current(struct applenw_engine_s *e, uint32_t gen) {
+static bool is_current(struct applesec_engine_s *e, uint32_t gen) {
     return gen == e->conn_gen && e->session != SESSION_CLOSED;
 }
 
 // hand a copy of the record at the front of inbound_buf to NW (via tls_channel)
-static void forward_record(struct applenw_engine_s *e, size_t len) {
+static void forward_record(struct applesec_engine_s *e, size_t len) {
     dispatch_data_t frame = dispatch_data_create(e->inbound_buf, len,
                                                  e->queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
     dispatch_async(e->queue, ^{
@@ -361,7 +361,7 @@ static void forward_record(struct applenw_engine_s *e, size_t len) {
     });
 }
 
-static void close_tls_channel(struct applenw_engine_s *e) {
+static void close_tls_channel(struct applesec_engine_s *e) {
     dispatch_async(e->queue, ^{
         if (e->tls_channel) {
             dispatch_io_close(e->tls_channel, 0);
@@ -373,7 +373,7 @@ static void close_tls_channel(struct applenw_engine_s *e) {
 // plaintext (e.g. NewSessionTicket) triggers no async wakeup, so anything left
 // behind it would sit in inbound_buf until the socket becomes readable again.
 // Returns why it stopped: TLS_AGAIN, TLS_EOF or TLS_ERR.
-static int forward_inbound(struct applenw_engine_s *e) {
+static int forward_inbound(struct applesec_engine_s *e) {
     ssize_t len;
     while ((len = read_inbound_record(e)) > 0) {
         forward_record(e, (size_t) len);
@@ -389,7 +389,7 @@ static int forward_inbound(struct applenw_engine_s *e) {
 // stop all IO and callbacks into the stream; waits for queued work to drain.
 // idempotent, loop thread only.
 // e->queue only: stop the relay and close the engine's dup of the caller's socket
-static void stop_io(struct applenw_engine_s *e) {
+static void stop_io(struct applesec_engine_s *e) {
     release_listener(e);
     if (e->tls_channel) {
         dispatch_io_close(e->tls_channel, DISPATCH_IO_STOP);
@@ -403,7 +403,7 @@ static void stop_io(struct applenw_engine_s *e) {
 }
 
 // e->queue only: a graceful close is done (close_notify flushed) or timed out
-static void finish_close(struct applenw_engine_s *e) {
+static void finish_close(struct applesec_engine_s *e) {
     if (e->session != SESSION_CLOSING) {
         return;
     }
@@ -412,19 +412,19 @@ static void finish_close(struct applenw_engine_s *e) {
     engine_release(e); // the reference taken by engine_close()
 }
 
-static void engine_dealloc(struct applenw_engine_s *e);
+static void engine_dealloc(struct applesec_engine_s *e);
 
-static void engine_retain(struct applenw_engine_s *e) {
+static void engine_retain(struct applesec_engine_s *e) {
     e->refs++;
 }
 
-static void engine_release(struct applenw_engine_s *e) {
+static void engine_release(struct applesec_engine_s *e) {
     if (--e->refs == 0) {
         engine_dealloc(e);
     }
 }
 
-static void engine_dealloc(struct applenw_engine_s *e) {
+static void engine_dealloc(struct applesec_engine_s *e) {
     // released here, not in engine_free(): late NW callbacks may still use them
     if (e->ca) CFRelease(e->ca);
     if (e->identity) sec_release(e->identity);
@@ -441,7 +441,7 @@ static void engine_dealloc(struct applenw_engine_s *e) {
     tlsuv__free(e);
 }
 
-static void write_to_peer (struct applenw_engine_s *e, dispatch_data_t data) {
+static void write_to_peer (struct applesec_engine_s *e, dispatch_data_t data) {
     size_t avail = dispatch_data_get_size(data);
     UM_LOG(TRACE, "tls_to_socket: %zu bytes", avail);
 
@@ -454,7 +454,7 @@ static void write_to_peer (struct applenw_engine_s *e, dispatch_data_t data) {
     pthread_mutex_unlock(&e->outbound_mutex);
 }
 
-static void tls_to_socket(struct applenw_engine_s *e, int socket) {
+static void tls_to_socket(struct applesec_engine_s *e, int socket) {
     assert(e->tls_channel == NULL);
     UM_LOG(TRACE, "staring dispatch tls_sock[%d]", socket);
     // the cleanup handler runs once the channel is closed and all its handlers have
@@ -517,7 +517,7 @@ static void tls_to_socket(struct applenw_engine_s *e, int socket) {
 }
 
 // state handler shared by client connections and connections accepted by the server listener
-static void set_connection_handler(struct applenw_engine_s *e, nw_connection_t conn) {
+static void set_connection_handler(struct applesec_engine_s *e, nw_connection_t conn) {
     // held until the cancelled state, which is the connection's last callback
     engine_retain(e);
     uint32_t gen = e->conn_gen;
@@ -558,7 +558,7 @@ static void set_connection_handler(struct applenw_engine_s *e, nw_connection_t c
     });
 }
 
-static enum tls_handshake_st engine_create_client(struct applenw_engine_s *e) {
+static enum tls_handshake_st engine_create_client(struct applesec_engine_s *e) {
     assert(e);
     assert(e->connection == NULL);
     assert(e->server == false);
@@ -630,7 +630,7 @@ static enum tls_handshake_st engine_create_client(struct applenw_engine_s *e) {
 // server engines: the relay socket connects to a TLS listener on 127.0.0.1, and
 // the connection the listener accepts is the TLS session (the mirror image of the
 // client, where NW connects to our listener)
-static enum tls_handshake_st engine_create_server(struct applenw_engine_s *e) {
+static enum tls_handshake_st engine_create_server(struct applesec_engine_s *e) {
     assert(e);
     assert(e->server);
     assert(e->listener == NULL);
@@ -705,7 +705,7 @@ static enum tls_handshake_st engine_create_server(struct applenw_engine_s *e) {
 }
 
 // e->queue only
-static void release_listener(struct applenw_engine_s *e) {
+static void release_listener(struct applesec_engine_s *e) {
     if (e->listener) {
         // handlers stay: they ignore stale events, and the cancelled state drops
         // the listener's engine reference
@@ -716,7 +716,7 @@ static void release_listener(struct applenw_engine_s *e) {
 }
 
 static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     assert(e->read_f != NULL);
     assert(e->write_f != NULL);
 
@@ -749,7 +749,7 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
 }
 
 static const char* engine_get_alpn(tlsuv_engine_t self) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     if (e->connection == NULL) {
         return NULL;
     }
@@ -783,7 +783,7 @@ static const char* engine_get_alpn(tlsuv_engine_t self) {
 
 // the chain the peer sent, leaf first, as recorded by Network.framework
 static int engine_get_peer_cert(tlsuv_engine_t self, tlsuv_certificate_t *cert) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     if (cert == NULL) return TLS_ERR;
     *cert = NULL;
 
@@ -830,7 +830,7 @@ static int engine_get_peer_cert(tlsuv_engine_t self, tlsuv_certificate_t *cert) 
 // stops once NW is done (or after 200 ms). With set_io the io callbacks are the
 // owner's and not thread safe, so close_notify cannot be flushed and is skipped.
 static int engine_close(tlsuv_engine_t self) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     set_async(e, NULL, NULL); // no wakeups into the owner after this
 
     engine_retain(e); // held by the close until IO is stopped
@@ -865,7 +865,7 @@ static int engine_close(tlsuv_engine_t self) {
 }
 
 static int engine_flush(tlsuv_engine_t self) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     __block int result = TLS_OK;
 
     pthread_mutex_lock(&e->outbound_mutex);
@@ -913,7 +913,7 @@ static int engine_flush(tlsuv_engine_t self) {
 }
 
 static int engine_write(tlsuv_engine_t self, const char *data, size_t data_len) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     if (e->connection == NULL ||
         e->hs_state != TLS_HS_COMPLETE) {
         return TLS_ERR;
@@ -993,7 +993,7 @@ static int engine_write(tlsuv_engine_t self, const char *data, size_t data_len) 
     return (int) n;
 }
 
-static bool process_decoded(struct applenw_engine_s *e, uint32_t gen, dispatch_data_t dd, nw_content_context_t ctx, bool done, nw_error_t er){
+static bool process_decoded(struct applesec_engine_s *e, uint32_t gen, dispatch_data_t dd, nw_content_context_t ctx, bool done, nw_error_t er){
     UM_LOG(TRACE, "dd[%p] done[%d] er[%d]", dd, done, er ? nw_error_get_error_code(er) : 0);
     // ECANCELED: the connection was cancelled (engine_free/engine_reset), `e` may be gone
     if (er != NULL && nw_error_get_error_code(er) == ECANCELED) {
@@ -1046,7 +1046,7 @@ static bool process_decoded(struct applenw_engine_s *e, uint32_t gen, dispatch_d
 }
 
 static int engine_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t maxout) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     int rc;
     // async wakeups always come through here; this also carries out a pending shutdown
     // when there is nothing left to flush (the stream only flushes on UV_WRITABLE)
@@ -1098,7 +1098,7 @@ static int engine_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t
 }
 
 static const char* engine_strerror(tlsuv_engine_t self) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     const char *res = NULL;
 
     // e->error is replaced by set_error() on e->queue
@@ -1118,7 +1118,7 @@ static const char* engine_strerror(tlsuv_engine_t self) {
 // drop the current connection and all per-session state, so the next
 // engine_handshake() starts a fresh handshake over the same io
 static int engine_reset(tlsuv_engine_t self) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
 
     // everything tied to the connection runs on e->queue: detach it there
     __block nw_connection_t old = NULL;
@@ -1168,7 +1168,7 @@ static int engine_reset(tlsuv_engine_t self) {
 }
 
 static void engine_free(tlsuv_engine_t self) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     if (e == NULL) return;
 
     set_async(e, NULL, NULL); // no wakeups into the owner after this
@@ -1194,11 +1194,11 @@ static void engine_free(tlsuv_engine_t self) {
 }
 
 static void engine_setup_async(tlsuv_engine_t self, void (*cb)(void *, size_t, size_t), void *async_ctx) {
-    struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+    struct applesec_engine_s *e = (struct applesec_engine_s *) self;
     set_async(e, cb, async_ctx);
 }
 
-static struct tlsuv_engine_s applenw_engine_api = {
+static struct tlsuv_engine_s applesec_engine_api = {
         .set_io = engine_set_io,
         .set_io_fd = engine_set_io_fd,
         .set_protocols = engine_set_protocols,
@@ -1260,7 +1260,7 @@ static bool only_validity_cap_failed(SecTrustRef trust) {
 
 // ctx->ssl_chain is [SecIdentityRef, intermediates...] (built by tls_set_own_cert).
 // sec_identity_create_with_certificates() takes the chain to send, leaf first.
-static sec_identity_t new_client_identity(struct sectransport_ctx *ctx) {
+static sec_identity_t new_client_identity(struct applesec_ctx *ctx) {
     if (ctx->ssl_chain == NULL || CFArrayGetCount(ctx->ssl_chain) == 0) {
         return NULL;
     }
@@ -1290,9 +1290,9 @@ static sec_identity_t new_client_identity(struct sectransport_ctx *ctx) {
 }
 
 // state shared by client and server engines
-static struct applenw_engine_s *engine_alloc(struct sectransport_ctx *sec_ctx) {
-    struct applenw_engine_s *e = tlsuv__calloc(1, sizeof(*e));
-    e->api = applenw_engine_api;
+static struct applesec_engine_s *engine_alloc(struct applesec_ctx *sec_ctx) {
+    struct applesec_engine_s *e = tlsuv__calloc(1, sizeof(*e));
+    e->api = applesec_engine_api;
     e->refs = 1; // the owner's, dropped by engine_free()
     e->hs_state = TLS_HS_BEFORE;
     e->ca = sec_ctx->ca_bundle ? CFRetain(sec_ctx->ca_bundle) : NULL;
@@ -1312,9 +1312,9 @@ static struct applenw_engine_s *engine_alloc(struct sectransport_ctx *sec_ctx) {
     return e;
 }
 
-tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host) {
-    struct sectransport_ctx* sec_ctx = (struct sectransport_ctx *) ctx;
-    struct applenw_engine_s *e = engine_alloc(sec_ctx);
+tlsuv_engine_t applesec_new_engine(tls_context *ctx, const char *host) {
+    struct applesec_ctx* sec_ctx = (struct applesec_ctx *) ctx;
+    struct applesec_engine_s *e = engine_alloc(sec_ctx);
 
     // no host (e.g. tlsuv_stream_connect_addr() without a hostname): the SSL policy
     // then skips the name check
@@ -1401,14 +1401,14 @@ tlsuv_engine_t applenw_new_engine(tls_context *ctx, const char *host) {
 // Client certificates are not requested: Network.framework only offers "required"
 // publicly (the optional mode is not public API), and a required client cert would
 // reject clients that have none. get_peer_cert() therefore returns TLS_ERR.
-tlsuv_engine_t applenw_new_server_engine(tls_context *ctx) {
-    struct sectransport_ctx* sec_ctx = (struct sectransport_ctx *) ctx;
+tlsuv_engine_t applesec_new_server_engine(tls_context *ctx) {
+    struct applesec_ctx* sec_ctx = (struct applesec_ctx *) ctx;
     if (sec_ctx->ssl_chain == NULL) {
         UM_LOG(WARN, "server engine requires own certificate (set_own_cert)");
         return NULL;
     }
 
-    struct applenw_engine_s *e = engine_alloc(sec_ctx);
+    struct applesec_engine_s *e = engine_alloc(sec_ctx);
     e->server = true;
     if (e->identity == NULL) {
         UM_LOG(WARN, "failed to create server identity");
