@@ -119,7 +119,7 @@ static int load_ca(struct applesec_ctx* ctx, const char* ca, size_t ca_len) {
 
     buflen = pem_trimmed_len(buf, buflen);
     ctx->ca_bundle = certs_from_data(buf, buflen);
-    free(file_buf);
+    tlsuv__free(file_buf);
 
     if (ctx->ca_bundle == NULL) {
         UM_LOG(WARN, "failed to load CA bundle");
@@ -964,7 +964,7 @@ static int load_key(tlsuv_private_key_t* key_ref, const char* keystr, size_t len
 
     buflen = pem_trimmed_len(buf, buflen);
     CFDataRef data = CFDataCreate(kCFAllocatorDefault, (const uint8_t*)buf, (CFIndex)buflen);
-    free(file_buf);
+    tlsuv__free(file_buf);
 
     enum applesec_key_type type = APPLESEC_KEY_UNKNOWN;
     SecKeyRef k = create_private_key(data, &type);
@@ -1261,7 +1261,7 @@ static int load_cert(tlsuv_certificate_t* cert, const char* certstr, size_t len)
 
     buflen = pem_trimmed_len(buf, buflen);
     CFArrayRef certs = certs_from_data(buf, buflen);
-    free(file_buf);
+    tlsuv__free(file_buf);
 
     if (certs == NULL) {
         UM_LOG(WARN, "failed to load certificate");
@@ -1380,12 +1380,16 @@ static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
     }
 
     // the key has to go in as PEM/DER; use the bytes it was loaded from, or
-    // export a generated key.
+    // encode a generated key (PKCS#8, which import_key() converts as needed)
     CFDataRef pem = key->pem;
     if (pem == NULL) {
-        OSStatus rc = SecItemExport(key->key, kSecFormatPEMSequence, kSecItemPemArmour, NULL, &pem);
-        if (rc != errSecSuccess) {
-            UM_LOG(ERR, "failed to export private key: %s", applesec_error(rc));
+        struct buf out = {0};
+        if (private_key_pem(key->key, key->key_type, &out)) {
+            pem = CFDataCreate(kCFAllocatorDefault, out.data, (CFIndex)out.len);
+        }
+        tlsuv__free(out.data);
+        if (pem == NULL) {
+            UM_LOG(ERR, "failed to export private key");
             return -1;
         }
     }
@@ -1509,13 +1513,13 @@ static int load_file(const char* path, char** content, size_t* l) {
         uv_fs_req_cleanup(&req);
         return rc;
     }
-    uv_buf_t buf = uv_buf_init(malloc(req.statbuf.st_size), (unsigned int)req.statbuf.st_size);
+    uv_buf_t buf = uv_buf_init(tlsuv__malloc(req.statbuf.st_size), (unsigned int)req.statbuf.st_size);
     uv_fs_req_cleanup(&req);
 
     file = uv_fs_open(NULL, &req, path, 0, 0, NULL);
     uv_fs_req_cleanup(&req);
     if (file < 0) {
-        free(buf.base);
+        tlsuv__free(buf.base);
         return file;
     }
 
@@ -1526,7 +1530,7 @@ static int load_file(const char* path, char** content, size_t* l) {
     uv_fs_req_cleanup(&req);
 
     if (len < 0) {
-        free(buf.base);
+        tlsuv__free(buf.base);
         return len;
     }
 
