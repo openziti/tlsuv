@@ -35,10 +35,12 @@ static struct tlsuv_public_key_s pub_key_api;
 static struct tlsuv_certificate_s sec_cert_api;
 
 static int load_file(const char* path, char** content, size_t* l);
+static CFArrayRef certs_from_data(const char* buf, size_t len);
 
 // Callers may count the terminating NUL in the length (mbedTLS requires that for PEM,
-// OpenSSL ignores it), but SecItemImport() rejects PEM followed by NUL bytes with
-// errSecUnknownFormat. Only PEM is trimmed: DER may legitimately end in 0x00.
+// OpenSSL ignores it). Trailing NULs are dropped so they never reach a parser (the
+// keychain import in make_identity() rejects them). Only PEM is trimmed: DER may
+// legitimately end in 0x00.
 static size_t pem_trimmed_len(const char* buf, size_t len) {
     if (len == 0 || memmem(buf, len, "-----BEGIN ", strlen("-----BEGIN ")) == NULL) {
         return len;
@@ -116,16 +118,11 @@ static int load_ca(struct applesec_ctx* ctx, const char* ca, size_t ca_len) {
     }
 
     buflen = pem_trimmed_len(buf, buflen);
-    SecExternalItemType type = kSecItemTypeCertificate;
-    SecExternalFormat fmt = kSecFormatUnknown;
-    CFDataRef bundle = CFDataCreate(kCFAllocatorDefault, (const uint8_t*)buf, (CFIndex)buflen);
-    OSStatus rc = SecItemImport(bundle, NULL, &fmt, &type, 0, NULL, NULL, &ctx->ca_bundle);
-    CFRelease(bundle);
+    ctx->ca_bundle = certs_from_data(buf, buflen);
     free(file_buf);
 
-    if (rc != errSecSuccess) {
-        UM_LOG(WARN, "failed to load CA bundle: %d/%s", (int) rc, applesec_error(rc));
-        ctx->ca_bundle = NULL;
+    if (ctx->ca_bundle == NULL) {
+        UM_LOG(WARN, "failed to load CA bundle");
         return -1;
     }
     return 0;
@@ -340,6 +337,352 @@ static size_t der_write_tl(uint8_t* out, uint8_t tag, size_t len) {
         out[n++] = (uint8_t)len;
     }
     return n;
+}
+
+// --------------------------------------------------- PEM / DER (no SecItemImport)
+//
+// SecItemImport/SecItemExport are macOS only; certificates and keys are parsed and
+// encoded here instead, on top of SecCertificateCreateWithData/CopyData and
+// SecKeyCreateWithData/CopyExternalRepresentation, which exist on every Apple OS.
+
+static const uint8_t OID_EC_PUBLIC_KEY[] = {0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01};
+static const uint8_t OID_RSA_ENCRYPTION[] = {0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01};
+static const uint8_t OID_PKCS7_SIGNED_DATA[] = {0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02};
+static const uint8_t OID_P256[] = {0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07};
+static const uint8_t OID_P384[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22};
+static const uint8_t OID_P521[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23};
+
+// curve OID (full TLV) for a field size in bytes
+static const uint8_t* curve_oid(size_t field, size_t* len) {
+    switch (field) {
+    case 32: *len = sizeof(OID_P256); return OID_P256;
+    case 48: *len = sizeof(OID_P384); return OID_P384;
+    case 66: *len = sizeof(OID_P521); return OID_P521;
+    default: return NULL;
+    }
+}
+
+// growable byte buffer for building DER and PEM
+struct buf {
+    uint8_t* data;
+    size_t len;
+    size_t cap;
+};
+
+static void buf_put(struct buf* b, const void* bytes, size_t len) {
+    if (b->len + len > b->cap) {
+        size_t cap = b->cap ? b->cap : 256;
+        while (cap < b->len + len) cap *= 2;
+        b->data = tlsuv__realloc(b->data, cap);
+        b->cap = cap;
+    }
+    memcpy(b->data + b->len, bytes, len);
+    b->len += len;
+}
+
+// appends tag + length + content
+static void der_put(struct buf* b, uint8_t tag, const void* content, size_t len) {
+    uint8_t tl[8];
+    size_t n = der_write_tl(tl, tag, len);
+    buf_put(b, tl, n);
+    buf_put(b, content, len);
+}
+
+// appends a BIT STRING with no unused bits
+static void der_put_bits(struct buf* b, const uint8_t* bits, size_t len) {
+    uint8_t tl[8];
+    size_t n = der_write_tl(tl, 0x03, len + 1);
+    buf_put(b, tl, n);
+    buf_put(b, "\0", 1);
+    buf_put(b, bits, len);
+}
+
+static void b64_encode_lines(struct buf* out, const uint8_t* in, size_t len) {
+    static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int col = 0;
+    for (size_t i = 0; i < len; i += 3) {
+        uint32_t v = (uint32_t) in[i] << 16;
+        if (i + 1 < len) v |= (uint32_t) in[i + 1] << 8;
+        if (i + 2 < len) v |= in[i + 2];
+        char q[4] = {tbl[(v >> 18) & 63], tbl[(v >> 12) & 63],
+                     i + 1 < len ? tbl[(v >> 6) & 63] : '=', i + 2 < len ? tbl[v & 63] : '='};
+        buf_put(out, q, 4);
+        col += 4;
+        if (col == 64) {
+            buf_put(out, "\n", 1);
+            col = 0;
+        }
+    }
+    if (col > 0) buf_put(out, "\n", 1);
+}
+
+static void pem_put(struct buf* out, const char* label, const uint8_t* der, size_t len) {
+    char line[80];
+    snprintf(line, sizeof(line), "-----BEGIN %s-----\n", label);
+    buf_put(out, line, strlen(line));
+    b64_encode_lines(out, der, len);
+    snprintf(line, sizeof(line), "-----END %s-----\n", label);
+    buf_put(out, line, strlen(line));
+}
+
+// hands a PEM buffer to the caller as a NUL-terminated tlsuv__ allocation
+static int pem_result(struct buf* b, char** pem, size_t* pemlen) {
+    buf_put(b, "", 1); // NUL, not counted
+    *pem = (char*) b->data;
+    *pemlen = b->len - 1;
+    return 0;
+}
+
+static bool add_certificate(CFMutableArrayRef certs, const uint8_t* der, size_t len) {
+    CFDataRef data = CFDataCreate(kCFAllocatorDefault, der, (CFIndex) len);
+    SecCertificateRef cert = SecCertificateCreateWithData(kCFAllocatorDefault, data);
+    CFRelease(data);
+    if (cert == NULL) return false;
+    CFArrayAppendValue(certs, cert);
+    CFRelease(cert);
+    return true;
+}
+
+// every CERTIFICATE block of a PEM bundle, or a single DER certificate.
+// Other PEM blocks (keys etc.) are skipped. NULL if nothing could be parsed.
+static CFArrayRef certs_from_data(const char* buf, size_t len) {
+    static const char BEGIN[] = "-----BEGIN CERTIFICATE-----";
+    static const char END[] = "-----END CERTIFICATE-----";
+
+    CFMutableArrayRef certs = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+    bool ok = true;
+    if (memmem(buf, len, "-----BEGIN ", 11) != NULL) {
+        const char* p = buf;
+        const char* end = buf + len;
+        const char* begin;
+        while (ok && (begin = memmem(p, end - p, BEGIN, sizeof(BEGIN) - 1)) != NULL) {
+            const char* body = begin + sizeof(BEGIN) - 1;
+            const char* stop = memmem(body, end - body, END, sizeof(END) - 1);
+            if (stop == NULL) {
+                ok = false;
+                break;
+            }
+            size_t derlen = 0;
+            uint8_t* der = tlsuv__malloc(stop - body + 1);
+            ok = b64_decode(body, stop - body, der, &derlen) == 0 && add_certificate(certs, der, derlen);
+            tlsuv__free(der);
+            p = stop + sizeof(END) - 1;
+        }
+    } else {
+        ok = add_certificate(certs, (const uint8_t*) buf, len);
+    }
+
+    if (!ok || CFArrayGetCount(certs) == 0) {
+        CFRelease(certs);
+        return NULL;
+    }
+    return certs;
+}
+
+// PKCS#7 (CMS) SignedData, the certificates only:
+//   ContentInfo ::= SEQUENCE { contentType OID signedData, [0] EXPLICIT SignedData }
+//   SignedData ::= SEQUENCE { version, digestAlgorithms SET, encapContentInfo SEQUENCE,
+//                             certificates [0] IMPLICIT SET OF Certificate OPTIONAL, ... }
+static CFArrayRef certs_from_pkcs7(const uint8_t* der, size_t len) {
+    const uint8_t *p = der, *end = der + len;
+    const uint8_t* body;
+    size_t bodylen;
+    if (!der_next(&p, end, 0x30, &body, &bodylen)) return NULL;
+
+    const uint8_t *q = body, *qend = body + bodylen;
+    if ((size_t)(qend - q) < sizeof(OID_PKCS7_SIGNED_DATA) ||
+        memcmp(q, OID_PKCS7_SIGNED_DATA, sizeof(OID_PKCS7_SIGNED_DATA)) != 0) {
+        return NULL;
+    }
+    q += sizeof(OID_PKCS7_SIGNED_DATA);
+
+    const uint8_t* item;
+    size_t itemlen;
+    if (!der_next(&q, qend, 0xA0, &item, &itemlen)) return NULL; // [0] EXPLICIT
+    const uint8_t *r = item, *rend = item + itemlen;
+    if (!der_next(&r, rend, 0x30, &item, &itemlen)) return NULL; // SignedData
+    r = item;
+    rend = item + itemlen;
+    if (!der_next(&r, rend, 0x02, &item, &itemlen)) return NULL; // version
+    if (!der_next(&r, rend, 0x31, &item, &itemlen)) return NULL; // digestAlgorithms
+    if (!der_next(&r, rend, 0x30, &item, &itemlen)) return NULL; // encapContentInfo
+    if (!der_next(&r, rend, 0xA0, &item, &itemlen)) return NULL; // certificates
+
+    CFMutableArrayRef certs = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+    const uint8_t *c = item, *cend = item + itemlen;
+    while (c < cend) {
+        const uint8_t* tlv = c;
+        const uint8_t* cert;
+        size_t certlen;
+        if (!der_next(&c, cend, 0x30, &cert, &certlen) || !add_certificate(certs, tlv, c - tlv)) {
+            CFRelease(certs);
+            return NULL;
+        }
+    }
+    if (CFArrayGetCount(certs) == 0) {
+        CFRelease(certs);
+        return NULL;
+    }
+    return certs;
+}
+
+// SubjectPublicKeyInfo DER for a public key
+static bool spki_der(SecKeyRef key, enum applesec_key_type type, struct buf* out) {
+    CFErrorRef err = NULL;
+    CFDataRef rep = SecKeyCopyExternalRepresentation(key, &err);
+    if (rep == NULL) {
+        UM_LOG(WARN, "failed to export public key: %s", cferr(err));
+        if (err) CFRelease(err);
+        return false;
+    }
+    const uint8_t* raw = CFDataGetBytePtr(rep);
+    size_t rawlen = CFDataGetLength(rep);
+
+    struct buf alg = {0}, spki = {0};
+    bool ok = true;
+    if (type == APPLESEC_KEY_EC) {
+        // X9.63 uncompressed point: 04 || X || Y
+        size_t oidlen;
+        const uint8_t* oid = curve_oid((rawlen - 1) / 2, &oidlen);
+        ok = oid != NULL && raw[0] == 0x04;
+        if (ok) {
+            buf_put(&alg, OID_EC_PUBLIC_KEY, sizeof(OID_EC_PUBLIC_KEY));
+            buf_put(&alg, oid, oidlen);
+        }
+    } else if (type == APPLESEC_KEY_RSA) {
+        // PKCS#1 RSAPublicKey
+        buf_put(&alg, OID_RSA_ENCRYPTION, sizeof(OID_RSA_ENCRYPTION));
+        buf_put(&alg, "\x05\x00", 2); // NULL parameters
+    } else {
+        ok = false;
+    }
+
+    if (ok) {
+        der_put(&spki, 0x30, alg.data, alg.len);
+        der_put_bits(&spki, raw, rawlen);
+        der_put(out, 0x30, spki.data, spki.len);
+    } else {
+        UM_LOG(WARN, "unsupported public key type");
+    }
+    tlsuv__free(alg.data);
+    tlsuv__free(spki.data);
+    CFRelease(rep);
+    return ok;
+}
+
+// PEM for a private key: PKCS#8 "PRIVATE KEY", as the OpenSSL backend writes it
+//   PrivateKeyInfo ::= SEQUENCE { version 0, privateKeyAlgorithm AlgorithmIdentifier,
+//                                 privateKey OCTET STRING }
+static bool private_key_pem(SecKeyRef key, enum applesec_key_type type, struct buf* pem) {
+    CFErrorRef err = NULL;
+    CFDataRef rep = SecKeyCopyExternalRepresentation(key, &err);
+    if (rep == NULL) {
+        UM_LOG(WARN, "failed to export private key: %s", cferr(err));
+        if (err) CFRelease(err);
+        return false;
+    }
+    const uint8_t* raw = CFDataGetBytePtr(rep);
+    size_t rawlen = CFDataGetLength(rep);
+
+    struct buf alg = {0}, inner = {0}, body = {0}, der = {0};
+    bool ok = false;
+    if (type == APPLESEC_KEY_RSA) {
+        // AlgorithmIdentifier { rsaEncryption, NULL }; privateKey is the PKCS#1
+        // RSAPrivateKey Security exports as is
+        buf_put(&alg, OID_RSA_ENCRYPTION, sizeof(OID_RSA_ENCRYPTION));
+        buf_put(&alg, "\x05\x00", 2);
+        buf_put(&inner, raw, rawlen);
+        ok = true;
+    } else if (type == APPLESEC_KEY_EC && rawlen > 1 && raw[0] == 0x04 && (rawlen - 1) % 3 == 0) {
+        // X9.63 private: 04 || X || Y || K
+        size_t field = (rawlen - 1) / 3;
+        size_t oidlen;
+        const uint8_t* oid = curve_oid(field, &oidlen);
+        if (oid) {
+            // AlgorithmIdentifier { ecPublicKey, curve }; privateKey is
+            //   ECPrivateKey ::= SEQUENCE { version 1, privateKey OCTET STRING,
+            //                               [1] publicKey BIT STRING }
+            // (the curve is in the algorithm identifier, so ECPrivateKey leaves out
+            // [0] parameters; the public key is kept, load_key() needs it)
+            buf_put(&alg, OID_EC_PUBLIC_KEY, sizeof(OID_EC_PUBLIC_KEY));
+            buf_put(&alg, oid, oidlen);
+
+            struct buf pub = {0}, ec = {0};
+            der_put_bits(&pub, raw, 1 + 2 * field);
+            buf_put(&ec, "\x02\x01\x01", 3);
+            der_put(&ec, 0x04, raw + 1 + 2 * field, field);
+            der_put(&ec, 0xA1, pub.data, pub.len);
+            der_put(&inner, 0x30, ec.data, ec.len);
+            tlsuv__free(pub.data);
+            tlsuv__free(ec.data);
+            ok = true;
+        }
+    }
+    if (ok) {
+        buf_put(&body, "\x02\x01\x00", 3);
+        der_put(&body, 0x30, alg.data, alg.len);
+        der_put(&body, 0x04, inner.data, inner.len);
+        der_put(&der, 0x30, body.data, body.len);
+        pem_put(pem, "PRIVATE KEY", der.data, der.len);
+    }
+    tlsuv__free(alg.data);
+    tlsuv__free(inner.data);
+    tlsuv__free(body.data);
+    tlsuv__free(der.data);
+    if (!ok) {
+        UM_LOG(WARN, "unsupported private key type");
+    }
+    CFRelease(rep);
+    return ok;
+}
+
+// UTCTime (YYMMDDHHMMSSZ) or GeneralizedTime (YYYYMMDDHHMMSSZ), UTC only
+static bool parse_asn1_time(uint8_t tag, const uint8_t* s, size_t len, time_t* t) {
+    size_t ylen = tag == 0x17 ? 2 : 4;
+    if ((tag != 0x17 && tag != 0x18) || len != ylen + 11 || s[len - 1] != 'Z') return false;
+    for (size_t i = 0; i < len - 1; i++) {
+        if (s[i] < '0' || s[i] > '9') return false;
+    }
+#define DIGITS(off, n) ({ int v_ = 0; for (size_t i_ = 0; i_ < (n); i_++) v_ = v_ * 10 + (s[(off) + i_] - '0'); v_; })
+    struct tm tm = {0};
+    int year = DIGITS(0, ylen);
+    if (ylen == 2) year += year < 50 ? 2000 : 1900; // RFC 5280 4.1.2.5.1
+    tm.tm_year = year - 1900;
+    tm.tm_mon = DIGITS(ylen, 2) - 1;
+    tm.tm_mday = DIGITS(ylen + 2, 2);
+    tm.tm_hour = DIGITS(ylen + 4, 2);
+    tm.tm_min = DIGITS(ylen + 6, 2);
+    tm.tm_sec = DIGITS(ylen + 8, 2);
+#undef DIGITS
+    *t = timegm(&tm);
+    return true;
+}
+
+// notAfter of a DER certificate:
+//   Certificate ::= SEQUENCE { tbsCertificate SEQUENCE { [0] version OPTIONAL, serialNumber,
+//                              signature, issuer, validity SEQUENCE { notBefore, notAfter }, ... } ... }
+static bool cert_not_after(const uint8_t* der, size_t len, time_t* t) {
+    const uint8_t *p = der, *end = der + len;
+    const uint8_t* item;
+    size_t itemlen;
+    if (!der_next(&p, end, 0x30, &item, &itemlen)) return false; // Certificate
+    p = item;
+    end = item + itemlen;
+    if (!der_next(&p, end, 0x30, &item, &itemlen)) return false; // tbsCertificate
+    p = item;
+    end = item + itemlen;
+    if (p < end && *p == 0xA0 && !der_next(&p, end, 0xA0, &item, &itemlen)) return false; // version
+    if (!der_next(&p, end, 0x02, &item, &itemlen)) return false; // serialNumber
+    if (!der_next(&p, end, 0x30, &item, &itemlen)) return false; // signature
+    if (!der_next(&p, end, 0x30, &item, &itemlen)) return false; // issuer
+    if (!der_next(&p, end, 0x30, &item, &itemlen)) return false; // validity
+    p = item;
+    end = item + itemlen;
+    if (p >= end || !der_next(&p, end, *p, &item, &itemlen)) return false; // notBefore
+    if (p >= end) return false;
+    uint8_t tag = *p;
+    if (!der_next(&p, end, tag, &item, &itemlen)) return false; // notAfter
+    return parse_asn1_time(tag, item, itemlen, t);
 }
 
 // SecItemImport handles PKCS#8 RSA and SEC1 EC, but rejects PKCS#8 EC outright.
@@ -634,7 +977,7 @@ static int load_key(tlsuv_private_key_t* key_ref, const char* keystr, size_t len
     pk->api = sec_key_api;
     pk->key = k;
     pk->key_type = type;
-    pk->pem = data; // keeps the exact bytes for to_pem() and keychain re-import
+    pk->pem = data; // keeps the exact bytes for keychain re-import
     *key_ref = &pk->api;
     return 0;
 }
@@ -725,24 +1068,14 @@ static void privkey_free(struct tlsuv_private_key_s* pk) {
 
 static int privkey_to_pem(struct tlsuv_private_key_s* pk, char** pem, size_t* pemlen) {
     struct applesec_priv_key* key = container_of(pk, struct applesec_priv_key, api);
-    CFDataRef data = key->pem;
 
-    if (data == NULL) {
-        OSStatus rc = SecItemExport(key->key, kSecFormatPEMSequence, kSecItemPemArmour, NULL, &data);
-        if (rc != errSecSuccess) {
-            UM_LOG(WARN, "failed to export key as PEM: %s", applesec_error(rc));
-            return -1;
-        }
+    // always PKCS#8, whatever format the key was loaded from
+    struct buf out = {0};
+    if (!private_key_pem(key->key, key->key_type, &out)) {
+        tlsuv__free(out.data);
+        return -1;
     }
-
-    CFIndex size = CFDataGetLength(data);
-    *pem = tlsuv__calloc(1, size + 1);
-    memcpy(*pem, CFDataGetBytePtr(data), size);
-    *pemlen = size;
-    if (data != key->pem) {
-        CFRelease(data);
-    }
-    return 0;
+    return pem_result(&out, pem, pemlen);
 }
 
 static struct tlsuv_public_key_s* privkey_pubkey(struct tlsuv_private_key_s* pk) {
@@ -815,20 +1148,17 @@ static void pubkey_free(struct tlsuv_public_key_s* pk) {
 
 static int pubkey_to_pem(struct tlsuv_public_key_s* pk, char** pem, size_t* pemlen) {
     struct applesec_pub_key* key = container_of(pk, struct applesec_pub_key, api);
-    CFDataRef data = NULL;
-    OSStatus rc = SecItemExport(key->key, kSecFormatPEMSequence, kSecItemPemArmour, NULL, &data);
+    enum applesec_key_type type = key->key_type != APPLESEC_KEY_UNKNOWN ? key->key_type : key_type_of(key->key);
 
-    if (rc != errSecSuccess) {
-        UM_LOG(WARN, "failed to export key as PEM: %s", applesec_error(rc));
+    struct buf der = {0};
+    if (!spki_der(key->key, type, &der)) {
+        tlsuv__free(der.data);
         return -1;
     }
-
-    CFIndex size = CFDataGetLength(data);
-    *pem = tlsuv__calloc(1, size + 1);
-    memcpy(*pem, CFDataGetBytePtr(data), size);
-    *pemlen = size;
-    CFRelease(data);
-    return 0;
+    struct buf out = {0};
+    pem_put(&out, "PUBLIC KEY", der.data, der.len);
+    tlsuv__free(der.data);
+    return pem_result(&out, pem, pemlen);
 }
 
 static int pubkey_verify(struct tlsuv_public_key_s* pub,
@@ -856,49 +1186,32 @@ static void cert_free(struct tlsuv_certificate_s* c) {
 
 static int cert_to_pem(const struct tlsuv_certificate_s* c, int full, char** pem, size_t* pem_len) {
     struct applesec_cert* cert = container_of(c, struct applesec_cert, api);
-    CFTypeRef item = full ? (CFTypeRef)cert->chain : CFArrayGetValueAtIndex(cert->chain, 0);
-    CFDataRef data = NULL;
-    OSStatus rc = SecItemExport(item, kSecFormatPEMSequence, kSecItemPemArmour, NULL, &data);
-    if (rc != errSecSuccess) {
-        UM_LOG(WARN, "failed to export certificate as PEM: %s", applesec_error(rc));
-        return -1;
-    }
+    CFIndex count = full ? CFArrayGetCount(cert->chain) : 1;
 
-    CFIndex len = CFDataGetLength(data);
-    *pem = tlsuv__calloc(1, len + 1);
-    CFDataGetBytes(data, CFRangeMake(0, len), (uint8_t*)*pem);
-    *pem_len = len;
-    CFRelease(data);
-    return 0;
+    struct buf out = {0};
+    for (CFIndex i = 0; i < count; i++) {
+        SecCertificateRef crt = (SecCertificateRef) CFArrayGetValueAtIndex(cert->chain, i);
+        CFDataRef der = SecCertificateCopyData(crt);
+        pem_put(&out, "CERTIFICATE", CFDataGetBytePtr(der), CFDataGetLength(der));
+        CFRelease(der);
+    }
+    return pem_result(&out, pem, pem_len);
 }
 
 static int cert_expiration(const struct tlsuv_certificate_s* c, struct tm* exp) {
     struct applesec_cert* cert = container_of(c, struct applesec_cert, api);
     SecCertificateRef leaf = (SecCertificateRef)CFArrayGetValueAtIndex(cert->chain, 0);
 
-    CFStringRef oid = kSecOIDX509V1ValidityNotAfter;
-    CFArrayRef keys = CFArrayCreate(kCFAllocatorDefault, (const void**)&oid, 1, &kCFTypeArrayCallBacks);
-    CFErrorRef err = NULL;
-    CFDictionaryRef values = SecCertificateCopyValues(leaf, keys, &err);
-    CFRelease(keys);
-
-    int rc = -1;
-    if (values != NULL) {
-        CFDictionaryRef entry = CFDictionaryGetValue(values, oid);
-        CFNumberRef v = entry ? CFDictionaryGetValue(entry, kSecPropertyKeyValue) : NULL;
-        double abs;
-        if (v != NULL && CFNumberGetValue(v, kCFNumberDoubleType, &abs)) {
-            time_t t = (time_t)(abs + kCFAbsoluteTimeIntervalSince1970);
-            gmtime_r(&t, exp);
-            rc = 0;
-        }
-        CFRelease(values);
+    CFDataRef der = SecCertificateCopyData(leaf);
+    time_t t;
+    bool ok = cert_not_after(CFDataGetBytePtr(der), CFDataGetLength(der), &t);
+    CFRelease(der);
+    if (!ok) {
+        UM_LOG(WARN, "failed to read certificate expiration");
+        return -1;
     }
-    if (rc != 0) {
-        UM_LOG(WARN, "failed to read certificate expiration: %s", cferr(err));
-    }
-    if (err) CFRelease(err);
-    return rc;
+    gmtime_r(&t, exp);
+    return 0;
 }
 
 static int cert_verify(const struct tlsuv_certificate_s* c, enum hash_algo algo,
@@ -947,54 +1260,41 @@ static int load_cert(tlsuv_certificate_t* cert, const char* certstr, size_t len)
     }
 
     buflen = pem_trimmed_len(buf, buflen);
-    SecExternalItemType type = kSecItemTypeCertificate;
-    SecExternalFormat fmt = kSecFormatUnknown;
-    CFDataRef data = CFDataCreate(kCFAllocatorDefault, (const uint8_t*)buf, (CFIndex)buflen);
+    CFArrayRef certs = certs_from_data(buf, buflen);
     free(file_buf);
 
-    CFArrayRef items = NULL;
-    OSStatus rc = SecItemImport(data, NULL, &fmt, &type, 0, NULL, NULL, &items);
-    CFRelease(data);
-
-    if (rc != errSecSuccess || items == NULL || CFArrayGetCount(items) == 0) {
-        UM_LOG(WARN, "failed to load certificate: %s", applesec_error(rc));
-        if (items) CFRelease(items);
+    if (certs == NULL) {
+        UM_LOG(WARN, "failed to load certificate");
         return -1;
     }
 
-    *cert = applesec_cert_new(items);
+    *cert = applesec_cert_new(certs);
     return 0;
 }
 
-#define PKCS7_PEM_HEAD "-----BEGIN PKCS7-----\n"
-#define PKCS7_PEM_TAIL "\n-----END PKCS7-----\n"
-
+// `pkcs7` is base64 DER (as returned by the Ziti controller), optionally PEM armoured
 static int parse_pkcs7_certs(tlsuv_certificate_t* c, const char* pkcs7, size_t len) {
     *c = NULL;
 
-    // wrap the caller's base64 in PEM armour and let Security decode it -- the
-    // repo's own base64 decoder is URL-safe only and would truncate at the
-    // first '+'.
-    size_t armoured_len = strlen(PKCS7_PEM_HEAD) + len + strlen(PKCS7_PEM_TAIL);
-    char* armoured = tlsuv__malloc(armoured_len + 1);
-    snprintf(armoured, armoured_len + 1, "%s%.*s%s", PKCS7_PEM_HEAD, (int) len, pkcs7, PKCS7_PEM_TAIL);
+    uint8_t* der = NULL;
+    size_t derlen = 0;
+    if (pem_to_der(pkcs7, len, &der, &derlen) != 0) {
+        der = tlsuv__malloc(len + 1);
+        if (b64_decode(pkcs7, len, der, &derlen) != 0) {
+            tlsuv__free(der);
+            UM_LOG(WARN, "failed to parse pkcs7: invalid base64");
+            return -1;
+        }
+    }
 
-    CFDataRef data = CFDataCreate(kCFAllocatorDefault, (const uint8_t*)armoured, (CFIndex)armoured_len);
-    tlsuv__free(armoured);
-
-    SecExternalFormat fmt = kSecFormatPKCS7;
-    SecExternalItemType type = kSecItemTypeAggregate;
-    CFArrayRef items = NULL;
-    OSStatus rc = SecItemImport(data, NULL, &fmt, &type, kSecItemPemArmour, NULL, NULL, &items);
-    CFRelease(data);
-
-    if (rc != errSecSuccess || items == NULL || CFArrayGetCount(items) == 0) {
-        UM_LOG(WARN, "failed to parse pkcs7: %s", applesec_error(rc));
-        if (items) CFRelease(items);
+    CFArrayRef certs = certs_from_pkcs7(der, derlen);
+    tlsuv__free(der);
+    if (certs == NULL) {
+        UM_LOG(WARN, "failed to parse pkcs7");
         return -1;
     }
 
-    *c = applesec_cert_new(items);
+    *c = applesec_cert_new(certs);
     return 0;
 }
 

@@ -224,12 +224,21 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
 
 ## Keys, certificates and the client identity (`context.c`)
 
+- **No `SecItemImport`/`SecItemExport`** (macOS only) outside the macOS keychain
+  identity: certificates, keys and PKCS#7 are parsed and encoded in `context.c`
+  on top of `SecCertificateCreateWithData`/`SecCertificateCopyData` and
+  `SecKeyCreateWithData`/`SecKeyCopyExternalRepresentation`.
 - **PEM input**: `load_ca`, `load_cert` and `load_key` accept PEM/DER or a file
-  path. A length that counts the terminating NUL (as mbedTLS requires) is
-  accepted: `pem_trimmed_len()` drops trailing NULs, which `SecItemImport`
-  rejects.
-- **Keys** are `SecKeyRef`s (EC and RSA), created with `SecKeyCreateWithData`;
-  the original PEM is kept so `to_pem()` round-trips.
+  path. `certs_from_data()` takes every `CERTIFICATE` block of a PEM bundle (other
+  blocks and text between them are skipped) or a single DER certificate;
+  `parse_pkcs7_certs` reads the certificates of a PKCS#7 SignedData (base64 or
+  PEM). A length that counts the terminating NUL (as mbedTLS requires) is
+  accepted: `pem_trimmed_len()` drops trailing NULs.
+- **Keys** are `SecKeyRef`s (EC and RSA), created with `SecKeyCreateWithData` from
+  PKCS#8, PKCS#1 or SEC1. Private keys, loaded or generated, always export as
+  PKCS#8 `PRIVATE KEY` (the same encoding the OpenSSL backend writes), public keys
+  as SubjectPublicKeyInfo `PUBLIC KEY`, certificates as `CERTIFICATE`.
+- **Expiry** (`get_expiration`) is read from the certificate's DER (`notAfter`).
 - **Client identity**: TLS needs a `SecIdentityRef`, and the only public way to
   make one is `SecIdentityCreateWithCertificate`, which pairs a certificate with
   a key *stored in a keychain*. `make_identity()` therefore imports the key and
@@ -282,10 +291,11 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
 
 ## Limitations
 
-- **macOS only.** `SecItemImport`, `SecIdentityCreateWithCertificate` and file
-  keychains are unavailable on iOS; `context.c` would need a keychain-free
-  key/certificate layer (e.g. data-protection keychain items + `kSecClassIdentity`)
-  to run there. `engine.c` uses only APIs that exist on iOS.
+- **macOS only.** The client identity needs `SecIdentityCreateWithCertificate` and
+  a file keychain (`make_identity()`), which iOS does not have; that is the one
+  remaining macOS-only piece (an iOS version would add the key and certificate to
+  the app's keychain and fetch a `kSecClassIdentity`). Certificate/key parsing and
+  export, and all of `engine.c`, use only APIs that exist on iOS.
 - Not implemented: client certificates on server engines (see above),
   `allow_partial_chain`, CSR generation, PKCS#11 and platform keychain keys
   (keys must be extractable to go into the temporary keychain).
