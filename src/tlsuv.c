@@ -283,7 +283,7 @@ int tlsuv_stream_set_hostname(tlsuv_stream_t *clt, const char *host) {
 
 static void data_async_cb(uv_async_t *async) {
     tlsuv_stream_t *clt = container_of(async, tlsuv_stream_t, data_async);
-    UM_LOG(DEBG, "async[%p]", async);
+    TLS_LOG(TRACE, "async[%p]", async);
     int flags = UV_READABLE;
     // pending ciphertext to flush, or queued writes the engine may now accept
     if (async_load(&clt->async_out) > 0 || !TAILQ_EMPTY(&clt->queue)) flags |= UV_WRITABLE;
@@ -345,7 +345,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
 
         if (clt->tls_engine->setup_async) {
             if (clt->data_async.type != UV_ASYNC) {
-                UM_LOG(DEBG, "async[%p]", &clt->data_async);
+                TLS_LOG(DEBG, "setting up TLS async callback");
                 uv_async_init(clt->loop, &clt->data_async, data_async_cb);
             }
             clt->tls_engine->setup_async(clt->tls_engine, data_notify_cb, clt);
