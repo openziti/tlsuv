@@ -27,7 +27,7 @@
 
 #include <CommonCrypto/CommonDigest.h>
 #include <Security/Security.h>
-#if TARGET_OS_OSX
+#if APPLESEC_FILE_KEYCHAIN
 #include <Security/SecImportExport.h>
 #include <Security/SecKeychain.h>
 #endif
@@ -39,7 +39,7 @@ static struct tlsuv_certificate_s sec_cert_api;
 
 static int load_file(const char* path, char** content, size_t* l);
 static CFArrayRef certs_from_data(const char* buf, size_t len);
-#if !TARGET_OS_OSX
+#if !APPLESEC_FILE_KEYCHAIN
 static void remove_keychain_items(struct applesec_ctx* c);
 #endif
 
@@ -159,7 +159,7 @@ static void tls_free_ctx(tls_context* ctx) {
     struct applesec_ctx* c = (struct applesec_ctx*)ctx;
     if (c->ca_bundle) CFRelease(c->ca_bundle);
     if (c->ssl_chain) CFRelease(c->ssl_chain);
-#if TARGET_OS_OSX
+#if APPLESEC_FILE_KEYCHAIN
     if (c->tmp_keychain) {
         SecKeychainDelete(c->tmp_keychain);
         CFRelease(c->tmp_keychain);
@@ -695,7 +695,7 @@ static bool cert_not_after(const uint8_t* der, size_t len, time_t* t) {
     return parse_asn1_time(tag, item, itemlen, t);
 }
 
-#if TARGET_OS_OSX
+#if APPLESEC_FILE_KEYCHAIN
 // SecItemImport handles PKCS#8 RSA and SEC1 EC, but rejects PKCS#8 EC outright.
 //
 //   PrivateKeyInfo ::= SEQUENCE { version INTEGER,
@@ -930,7 +930,7 @@ static SecKeyRef create_private_key(CFDataRef blob, enum applesec_key_type* type
     return key;
 }
 
-#if TARGET_OS_OSX
+#if APPLESEC_FILE_KEYCHAIN
 // Still needed for the mTLS identity: SecKeyCreateWithData() produces a
 // floating key, but SecIdentityCreateWithCertificate() can only pair a
 // certificate with a key that lives in a keychain.
@@ -1329,7 +1329,7 @@ static bool cert_matches_key(SecCertificateRef cert, SecKeyRef pub) {
     return eq;
 }
 
-#if TARGET_OS_OSX
+#if APPLESEC_FILE_KEYCHAIN
 // the TLS client identity needs a SecIdentityRef, and the only public way to make
 // one is SecIdentityCreateWithCertificate(), which pairs a certificate with a
 // private key *that lives in a keychain*. So put both in a throwaway file
@@ -1440,13 +1440,16 @@ static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
     return 0;
 }
 
-#else // iOS and the other embedded platforms: no file keychains
+#else // the app's keychain: iOS and the other Apple platforms, macOS with APPLESEC_APP_KEYCHAIN
 
-// Neither SecIdentityCreateWithCertificate() nor file keychains exist here: the
-// only public way to get a SecIdentityRef is SecItemCopyMatching(kSecClassIdentity)
+// iOS has neither SecIdentityCreateWithCertificate() nor file keychains: the only
+// public way to get a SecIdentityRef is SecItemCopyMatching(kSecClassIdentity)
 // over the app's keychain, which pairs a certificate with the private key whose
 // public key it carries. So add both to the keychain, look the identity up, and
-// delete what was added (kc_items) when the context is freed.
+// delete what was added (kc_items) when the context is freed. On macOS the same
+// code uses the data protection keychain (the iOS-style one, not the login
+// keychain), which needs the same thing an iOS app has: a signed app with a
+// keychain-access-groups entitlement.
 //
 // The items are device-only and readable after first unlock, so the identity
 // keeps working in the background (e.g. from a network extension). Only items
@@ -1455,13 +1458,28 @@ static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
 // comes back as errSecDuplicateItem and is used, not deleted. Deleting items does
 // not invalidate identities already looked up, so a context whose items were
 // removed by another one keeps working.
+static CFMutableDictionaryRef keychain_query(CFTypeRef cls) {
+    CFMutableDictionaryRef q = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    if (cls) CFDictionarySetValue(q, kSecClass, cls);
+#if TARGET_OS_OSX
+    CFDictionarySetValue(q, kSecUseDataProtectionKeychain, kCFBooleanTrue);
+#endif
+    return q;
+}
+
+static const char* keychain_error(OSStatus rc) {
+    static char msg[1024];
+    snprintf(msg, sizeof(msg), "%s%s", applesec_error(rc),
+             rc == errSecMissingEntitlement ? " (the app needs a keychain-access-groups entitlement)" : "");
+    return msg;
+}
+
 static OSStatus add_keychain_item(struct applesec_ctx* c, CFTypeRef cls, CFTypeRef value) {
-    const void* keys[] = {kSecClass, kSecValueRef, kSecAttrAccessible, kSecReturnPersistentRef};
-    const void* vals[] = {cls, value, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                          kCFBooleanTrue};
-    CFDictionaryRef q = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, 4,
-                                           &kCFTypeDictionaryKeyCallBacks,
-                                           &kCFTypeDictionaryValueCallBacks);
+    CFMutableDictionaryRef q = keychain_query(cls);
+    CFDictionarySetValue(q, kSecValueRef, value);
+    CFDictionarySetValue(q, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly);
+    CFDictionarySetValue(q, kSecReturnPersistentRef, kCFBooleanTrue);
     CFTypeRef ref = NULL;
     OSStatus rc = SecItemAdd(q, &ref);
     CFRelease(q);
@@ -1478,15 +1496,12 @@ static OSStatus add_keychain_item(struct applesec_ctx* c, CFTypeRef cls, CFTypeR
 static void remove_keychain_items(struct applesec_ctx* c) {
     if (c->kc_items == NULL) return;
     for (CFIndex i = 0; i < CFArrayGetCount(c->kc_items); i++) {
-        const void* keys[] = {kSecValuePersistentRef};
-        const void* vals[] = {CFArrayGetValueAtIndex(c->kc_items, i)};
-        CFDictionaryRef q = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, 1,
-                                               &kCFTypeDictionaryKeyCallBacks,
-                                               &kCFTypeDictionaryValueCallBacks);
+        CFMutableDictionaryRef q = keychain_query(NULL);
+        CFDictionarySetValue(q, kSecValuePersistentRef, CFArrayGetValueAtIndex(c->kc_items, i));
         OSStatus rc = SecItemDelete(q);
         CFRelease(q);
         if (rc != errSecSuccess && rc != errSecItemNotFound) {
-            UM_LOG(WARN, "failed to remove keychain item: %s", applesec_error(rc));
+            UM_LOG(WARN, "failed to remove keychain item: %s", keychain_error(rc));
         }
     }
     CFRelease(c->kc_items);
@@ -1494,16 +1509,14 @@ static void remove_keychain_items(struct applesec_ctx* c) {
 }
 
 static SecIdentityRef find_identity(SecCertificateRef leaf) {
-    const void* keys[] = {kSecClass, kSecReturnRef, kSecMatchLimit};
-    const void* vals[] = {kSecClassIdentity, kCFBooleanTrue, kSecMatchLimitAll};
-    CFDictionaryRef q = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, 3,
-                                           &kCFTypeDictionaryKeyCallBacks,
-                                           &kCFTypeDictionaryValueCallBacks);
+    CFMutableDictionaryRef q = keychain_query(kSecClassIdentity);
+    CFDictionarySetValue(q, kSecReturnRef, kCFBooleanTrue);
+    CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitAll);
     CFTypeRef found = NULL;
     OSStatus rc = SecItemCopyMatching(q, &found);
     CFRelease(q);
     if (rc != errSecSuccess) {
-        UM_LOG(ERR, "failed to look up identity: %s", applesec_error(rc));
+        UM_LOG(ERR, "failed to look up identity: %s", keychain_error(rc));
         return NULL;
     }
 
@@ -1530,12 +1543,12 @@ static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
     // (e.g. certificate renewed, key kept); the identity lookup finds it
     OSStatus rc = add_keychain_item(c, kSecClassKey, key->key);
     if (rc != errSecSuccess && rc != errSecDuplicateItem) {
-        UM_LOG(ERR, "failed to add private key to keychain: %s", applesec_error(rc));
+        UM_LOG(ERR, "failed to add private key to keychain: %s", keychain_error(rc));
         return -1;
     }
     rc = add_keychain_item(c, kSecClassCertificate, leaf);
     if (rc != errSecSuccess && rc != errSecDuplicateItem) {
-        UM_LOG(ERR, "failed to add certificate to keychain: %s", applesec_error(rc));
+        UM_LOG(ERR, "failed to add certificate to keychain: %s", keychain_error(rc));
         return -1;
     }
 

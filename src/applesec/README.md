@@ -249,13 +249,15 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
   `openssl req`.
 - **Client identity**: TLS needs a `SecIdentityRef`, and a key must be *stored
   in a keychain* to become part of one. `make_identity()` has two versions:
-  - **macOS**: `SecIdentityCreateWithCertificate` pairs the certificate with the
+  - **macOS** (default): `SecIdentityCreateWithCertificate` pairs the certificate with the
     key, both imported into a per-context temporary file keychain in `$TMPDIR`
     (random passphrase, deleted with the context). The keychain's auto-lock is
     disabled and it is unlocked before each import, so a later `set_own_cert`
     (e.g. certificate renewal) works after the machine sleeps.
   - **iOS** (and the other non-macOS targets), which have neither that call nor
-    file keychains: the key and certificate are added to the app's keychain with
+    file keychains, and **macOS built with `-DTLSUV_APPLESEC_APP_KEYCHAIN=ON`**
+    (which then uses the data protection keychain, `kSecUseDataProtectionKeychain`,
+    rather than the login keychain): the key and certificate are added to the app's keychain with
     `SecItemAdd` (device-only, readable after first unlock, so it works from a
     network extension in the background), and the identity is found with
     `SecItemCopyMatching(kSecClassIdentity)`. The context records the persistent
@@ -263,7 +265,13 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
     already there (another context, or left behind by a process that crashed) is
     reused and not deleted; deleting items does not invalidate identities
     already looked up. The app needs a keychain access group, which every signed
-    app has by default.
+    iOS app has by default. On macOS that takes a `keychain-access-groups`
+    entitlement, which is restricted: the binary must be signed with a Developer ID
+    or development certificate and a provisioning profile (an ad-hoc signed binary
+    claiming it is killed at launch, an unsigned one gets
+    `errSecMissingEntitlement`), so the option suits apps rather than
+    command-line tools. The test suite has no such signature, so its client
+    certificate tests fail with the option on.
 
   On both, adding a key or certificate that is already there is not an error.
   `ssl_chain` holds `[identity, intermediates…]`, which `new_client_identity()`

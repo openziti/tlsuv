@@ -18,6 +18,16 @@
 
 #include "tlsuv/tls_engine.h"
 #include <Security/Security.h>
+#include <TargetConditionals.h>
+
+// Where the client identity's key and certificate live: a temporary file keychain
+// on macOS, unless built with TLSUV_APPLESEC_APP_KEYCHAIN; the app's (data
+// protection) keychain otherwise, and always on iOS and the other Apple platforms.
+#if TARGET_OS_OSX && !defined(APPLESEC_APP_KEYCHAIN)
+#define APPLESEC_FILE_KEYCHAIN 1
+#else
+#define APPLESEC_FILE_KEYCHAIN 0
+#endif
 
 // resolved once, at key load/generate time. The kSecAttrKeyType value from
 // SecKeyCopyAttributes() is only borrowed from the attribute dictionary, so it
@@ -36,7 +46,7 @@ struct applesec_ctx {
 
     // [SecIdentityRef, intermediate SecCertificateRef...]; engine.c turns it into a sec_identity_t
     CFArrayRef ssl_chain;
-#if TARGET_OS_OSX
+#if APPLESEC_FILE_KEYCHAIN
     // file keychain backing ssl_chain[0]; deleted with the context
     SecKeychainRef tmp_keychain;
     char *tmp_keychain_path;

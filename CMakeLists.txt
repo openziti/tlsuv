@@ -40,6 +40,9 @@ if (APPLE)
     # Network.framework backend: opt-in only, `openssl`
     # remains the default on macOS.
     list(APPEND supported_tls_libs applesec)
+    option(TLSUV_APPLESEC_APP_KEYCHAIN
+            "applesec on macOS: keep the client identity in the app's data protection keychain \
+instead of a temporary file keychain (the app needs a keychain-access-groups entitlement)" OFF)
 endif ()
 
 set(TLSUV_TLSLIB ${default_crypto} CACHE STRING "TLS implementation library ${supported_tls_libs}")

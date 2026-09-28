@@ -20,6 +20,10 @@ target_include_directories(applesec-impl
 # SecIdentityCreateWithCertificate() only pairs a certificate with a keychain key.
 target_compile_options(applesec-impl PRIVATE -Wno-deprecated-declarations)
 
+if (TLSUV_APPLESEC_APP_KEYCHAIN)
+    target_compile_definitions(applesec-impl PRIVATE APPLESEC_APP_KEYCHAIN=1)
+endif ()
+
 target_link_libraries(applesec-impl
         PUBLIC ${TLSUV_LIBUV_LIB}
         PUBLIC "-framework Network"
