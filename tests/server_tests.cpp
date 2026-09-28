@@ -615,6 +615,54 @@ TEST_CASE("server engine client cert verify callback", "[engine][server]") {
     }
 }
 
+// every TLS_ERR / TLS_HS_ERROR comes with a reason in strerror()
+TEST_CASE("engine reports an error on failure", "[engine][server]") {
+    auto make = GENERATE(as<transport_factory>{}, make_mem, make_socketpair, make_socket);
+
+    tls_ctx_holder srv(test_ca);
+    SKIP_UNLESS_SERVER_SUPPORTED(srv);
+    srv.set_identity();
+
+    // the client does not trust the test CA (system trust store only)
+    tls_ctx_holder clt(nullptr);
+
+    engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
+    engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
+
+#if defined(TEST_applesec)
+    SECTION("write before handshake") {
+        CHECK(clt_eng->write(clt_eng, "x", 1) == TLS_ERR);
+        const char *err = clt_eng->strerror(clt_eng);
+        REQUIRE(err != nullptr);
+        CHECK(strlen(err) > 0);
+    }
+#endif
+
+    SECTION("untrusted server certificate") {
+        auto t = make();
+        INFO("transport: " << t->name());
+        t->attach(clt_eng, srv_eng);
+
+        // pump like do_handshake(), but keep what handshake() returned: which side
+        // fails first depends on the backend, and whichever returns TLS_HS_ERROR
+        // must say why
+        tls_handshake_state cs = TLS_HS_BEFORE, ss = TLS_HS_BEFORE;
+        for (int i = 0; i < MAX_ITERATIONS && cs != TLS_HS_ERROR && ss != TLS_HS_ERROR; i++) {
+            cs = clt_eng->handshake(clt_eng);
+            ss = srv_eng->handshake(srv_eng);
+            uv_sleep(1);
+        }
+        REQUIRE((cs == TLS_HS_ERROR || ss == TLS_HS_ERROR));
+
+        for (auto [eng, st] : {std::pair{(tlsuv_engine_t) clt_eng, cs}, std::pair{(tlsuv_engine_t) srv_eng, ss}}) {
+            if (st != TLS_HS_ERROR) continue;
+            const char *err = eng->strerror(eng);
+            REQUIRE(err != nullptr);
+            CHECK(strlen(err) > 0);
+        }
+    }
+}
+
 TEST_CASE("server engine reset", "[engine][server]") {
     auto make = GENERATE(as<transport_factory>{}, make_socketpair, make_socket);
 

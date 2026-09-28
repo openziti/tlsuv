@@ -39,6 +39,7 @@ static int engine_flush(tlsuv_engine_t self);
 #define NW_WRITE_LIMIT (256 * 1024)
 struct applesec_engine_s;
 static void set_error(struct applesec_engine_s *e, CFErrorRef err);
+static void fail(struct applesec_engine_s *e, int posix_code);
 static CFErrorRef posix_error(int code);
 static void wake(struct applesec_engine_s *e);
 static void release_listener(struct applesec_engine_s *e);
@@ -185,6 +186,8 @@ static ssize_t engine_socket_read(void *io, char *buf, size_t len) {
         if (err == EWOULDBLOCK) {
             return TLS_AGAIN;
         }
+        UM_LOG(WARN, "read from peer failed: %s", strerror(err));
+        set_error(e, posix_error(err));
         return TLS_ERR;
     }
     return res;
@@ -226,6 +229,7 @@ static ssize_t read_inbound_record(struct applesec_engine_s *e) {
             // RFC 8446 5.2: TLSCiphertext is at most 2^14 + 256 bytes
             if (payload_len > (1 << 14) + 256) {
                 UM_LOG(WARN, "invalid TLS record length[%zu]", payload_len);
+                fail(e, EBADMSG);
                 return TLS_ERR;
             }
             size_t len = payload_len + 5;
@@ -254,6 +258,9 @@ static ssize_t read_inbound_record(struct applesec_engine_s *e) {
             continue;
         }
         if (rc < 0) {
+            if (rc == TLS_ERR) {
+                fail(e, EIO); // io callback failed (engine_socket_read recorded errno)
+            }
             return rc;
         }
         e->inbound_len += rc;
@@ -316,11 +323,35 @@ static void set_async(struct applesec_engine_s *e, void (*cb)(void *, size_t, si
 }
 
 // takes ownership of `err`
+// Keeps the first error: later ones are consequences of it (e.g. NW's generic
+// -9808 after the verify block rejected a certificate). engine_reset() clears it.
 static void set_error(struct applesec_engine_s *e, CFErrorRef err) {
+    if (err == NULL) return;
     pthread_mutex_lock(&e->decode_mutex);
-    if (e->error) CFRelease(e->error);
-    e->error = err;
+    if (e->error == NULL) {
+        e->error = err;
+        err = NULL;
+    }
     pthread_mutex_unlock(&e->decode_mutex);
+    if (err) CFRelease(err);
+}
+
+// record a failure unless one is recorded already (the first error is the cause:
+// later ones are usually consequences of it). Every TLS_ERR / TLS_HS_ERROR the
+// engine returns has an error behind it, so engine_strerror() can report it.
+static void fail(struct applesec_engine_s *e, int posix_code) {
+    set_error(e, posix_error(posix_code));
+}
+
+// an error with its own description (shown by engine_strerror())
+static CFErrorRef describe_error(CFIndex code, const char *desc) {
+    CFStringRef msg = CFStringCreateWithCString(kCFAllocatorDefault, desc, kCFStringEncodingUTF8);
+    const void *keys[] = {kCFErrorLocalizedDescriptionKey};
+    const void *values[] = {msg};
+    CFErrorRef err = CFErrorCreateWithUserInfoKeysAndValues(kCFAllocatorDefault, kCFErrorDomainOSStatus,
+                                                            code, keys, values, 1);
+    CFRelease(msg);
+    return err;
 }
 
 // e->queue only; takes ownership of `err`
@@ -570,8 +601,10 @@ static enum tls_handshake_st engine_create_client(struct applesec_engine_s *e) {
     };
     if (bind(lsoc, (struct sockaddr *) &addr, sizeof(addr)) < 0 ||
         listen(lsoc, 1) < 0) {
-        UM_LOG(WARN, "failed to bind or listen: %s", strerror(errno));
+        int err = errno;
+        UM_LOG(WARN, "failed to bind or listen: %s", strerror(err));
         close(lsoc);
+        set_error(e, posix_error(err));
         return TLS_HS_ERROR;
     }
 
@@ -638,6 +671,7 @@ static enum tls_handshake_st engine_create_server(struct applesec_engine_s *e) {
     nw_listener_t listener = nw_listener_create(e->protocol_parameters);
     if (listener == NULL) {
         UM_LOG(WARN, "failed to create TLS listener");
+        set_error(e, posix_error(errno ? errno : EIO));
         return TLS_HS_ERROR;
     }
 
@@ -877,6 +911,9 @@ static int engine_flush(tlsuv_engine_t self) {
             ssize_t wrote = e->write_f(e->io, b, len);
             if (wrote < 0) {
                 result = (int)wrote;
+                if (wrote == TLS_ERR) {
+                    fail(e, EIO); // io callback failed (engine_socket_write recorded errno)
+                }
                 return false;
             }
             total += wrote;
@@ -914,10 +951,11 @@ static int engine_flush(tlsuv_engine_t self) {
 
 static int engine_write(tlsuv_engine_t self, const char *data, size_t data_len) {
     struct applesec_engine_s *e = (struct applesec_engine_s *) self;
-    if (e->connection == NULL ||
-        e->hs_state != TLS_HS_COMPLETE) {
+    if (e->connection == NULL || e->hs_state != TLS_HS_COMPLETE) {
+        UM_LOG(WARN, "engine[%p] write before the handshake completed", e);
+        fail(e, ENOTCONN);
         return TLS_ERR;
-        }
+    }
 
     pthread_mutex_lock(&e->decode_mutex);
     bool failed = e->error != NULL;
@@ -1355,6 +1393,11 @@ tlsuv_engine_t applesec_new_engine(tls_context *ctx, const char *host) {
                         tlsuv_certificate_t tlsuv_cert = applesec_cert_new(certs);
                         int rc = e->cert_verify_f(tlsuv_cert, e->verify_ctx);
                         tlsuv_cert->free(tlsuv_cert);
+                        if (rc != 0) {
+                            UM_LOG(WARN, "server certificate rejected by the verify callback: %d", rc);
+                            set_error(e, describe_error(errSSLBadCert,
+                                                        "server certificate rejected by the verify callback"));
+                        }
                         complete(rc == 0);
                     },
                     e->queue);
@@ -1379,9 +1422,13 @@ tlsuv_engine_t applesec_new_engine(tls_context *ctx, const char *host) {
                                 CFStringRef desc = CFErrorCopyDescription(err);
                                 CFStringGetCString(desc, msg, sizeof(msg), kCFStringEncodingUTF8);
                                 CFRelease(desc);
-                                CFRelease(err);
+                            } else {
+                                err = describe_error(errSSLXCertChainInvalid, "server certificate verification failed");
                             }
                             UM_LOG(WARN, "server certificate verification failed: %s", msg);
+                            // the reason for engine_strerror(): NW's own error after this
+                            // is a generic -9808
+                            set_error(e, err);
                             complete(false);
                         }
                         CFRelease(ref);
