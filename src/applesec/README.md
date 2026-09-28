@@ -204,6 +204,12 @@ from the connection's TLS metadata.
   flags), so neither the owner nor pending handlers touch freed memory.
 - A failed `nw_connection_send` records the error and wakes the owner instead of
   cancelling the connection; the stream then sees `TLS_ERR`.
+- `engine_reset()` detaches the current `nw_connection_t` on the queue (its state
+  handler is removed so late events cannot reach the new session), stops
+  `tls_channel`, cancels the connection and clears all per-session state, so the
+  next `engine_handshake()` starts over; `set_io_fd` can then hand over a new socket.
+  Send/receive completions carry a connection generation (`conn_gen`) and ignore
+  results from a replaced connection.
 
 ## Limitations
 
@@ -214,8 +220,6 @@ from the connection's TLS metadata.
 - Not implemented: server engines (`new_server_engine`),
   `allow_partial_chain`, CSR generation, PKCS#11 and platform keychain keys
   (keys must be extractable to go into the temporary keychain).
-- `engine_reset()` only resets the handshake state; it does not tear down the
-  `nw_connection_t`, so an engine cannot be reused for a new handshake.
 - Backpressure: Network.framework encrypts asynchronously, so `engine_write()`
   bounds plaintext not yet sent by NW plus ciphertext not yet flushed to the peer
   (`NW_WRITE_LIMIT`, 256 KiB). Beyond that it accepts a partial write or returns
@@ -230,5 +234,6 @@ The regular suites run against this backend (`all_tests` built with
 `TLSUV_TLSLIB=applesec`). Backend-specific coverage includes
 `stream ALPN negotiation`, `stream peer certificate`,
 `load multi-cert PEM with and without NUL`,
-`set_own_cert repeatedly on one context` and `https over custom src`
+`set_own_cert repeatedly on one context`, `engine reset and reuse` and
+`https over custom src`
 (the `tls_link` path).

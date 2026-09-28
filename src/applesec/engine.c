@@ -105,6 +105,9 @@ struct applenw_engine_s {
     // whichever happens second deallocates the engine
     bool freed;
     bool conn_cancelled;
+    // bumped by engine_reset(): completions from a replaced connection compare
+    // against it and leave the new session alone
+    _Atomic uint32_t conn_gen;
 
     dispatch_queue_t queue;
     nw_connection_t connection;
@@ -261,6 +264,10 @@ static bool discard_inbound_frame(struct applenw_engine_s *e) {
 static void engine_set_io_fd(tlsuv_engine_t self, tlsuv_sock_t fd) {
     struct applenw_engine_s *e = (struct applenw_engine_s *) self;
     e->io_is_socket = true;
+    // set again after engine_reset() for a new connection: drop the old dup
+    if (e->sock != -1) {
+        close(e->sock);
+    }
     int sock = dup(fd);
     e->sock = sock;
     engine_set_io(self, e, engine_socket_read, engine_socket_write);
@@ -750,9 +757,14 @@ static int engine_write(tlsuv_engine_t self, const char *data, size_t data_len) 
 
     UM_LOG(TRACE, "engine[%p] write: %zu/%zu", e, n, data_len);
     dispatch_data_t dd = dispatch_data_create(data, n, e->queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    uint32_t gen = e->conn_gen;
     nw_connection_send(e->connection, dd, NW_CONNECTION_DEFAULT_STREAM_CONTEXT, false, ^(nw_error_t error) {
-        // ECANCELED: engine_free() cancelled the connection, `e` may be gone
+        // ECANCELED: engine_free()/engine_reset() cancelled the connection, `e` may be gone
         if (error && nw_error_get_error_code(error) == ECANCELED) {
+            return;
+        }
+        if (gen != e->conn_gen) {
+            // from a connection replaced by engine_reset(); nw_pending was reset with it
             return;
         }
 
@@ -776,12 +788,18 @@ static int engine_write(tlsuv_engine_t self, const char *data, size_t data_len) 
     return (int) n;
 }
 
-static bool process_decoded(struct applenw_engine_s *e, dispatch_data_t dd, nw_content_context_t ctx, bool done, nw_error_t er){
+static bool process_decoded(struct applenw_engine_s *e, uint32_t gen, dispatch_data_t dd, nw_content_context_t ctx, bool done, nw_error_t er){
     UM_LOG(TRACE, "dd[%p] done[%d] er[%d]", dd, done, er ? nw_error_get_error_code(er) : 0);
+    // ECANCELED: the connection was cancelled (engine_free/engine_reset), `e` may be gone
+    if (er != NULL && nw_error_get_error_code(er) == ECANCELED) {
+        return false;
+    }
+    if (gen != e->conn_gen) {
+        // from a connection replaced by engine_reset()
+        return false;
+    }
     if (er != NULL) {
         int code = nw_error_get_error_code(er);
-        if (code == ECANCELED)
-            return false;
 
         set_error(e, nw_error_copy_cf_error(er));
         switch (nw_error_get_error_domain(er)) {
@@ -812,7 +830,7 @@ static bool process_decoded(struct applenw_engine_s *e, dispatch_data_t dd, nw_c
         nw_connection_receive(
             e->connection, 0, sizeof(e->decoded) - e->decoded_len,
             ^(dispatch_data_t d, nw_content_context_t c, bool done1, nw_error_t er1){
-                process_decoded(e, d, c, done1, er1);
+                process_decoded(e, gen, d, c, done1, er1);
             });
     }
     if (e->decoded_len > 0) {
@@ -859,13 +877,14 @@ static int engine_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t
 
     // re-arm whenever no receive is pending: process_decoded stops once `decoded` is full,
     // and the remaining plaintext may already be inside NW with no new ciphertext coming
-    if (e->error == NULL && !e->reading_conn && !e->conn_eof &&
+    if (e->connection != NULL && e->error == NULL && !e->reading_conn && !e->conn_eof &&
         e->decoded_len < sizeof(e->decoded)) {
         UM_LOG(TRACE, "engine[%p] starting decode receive", e);
         e->reading_conn = true;
+        uint32_t gen = e->conn_gen;
         nw_connection_receive(e->connection, 0, sizeof(e->decoded) - e->decoded_len,
                               ^(dispatch_data_t dd, nw_content_context_t ctx, bool done, nw_error_t er){
-                                  process_decoded(e, dd, ctx, done, er);
+                                  process_decoded(e, gen, dd, ctx, done, er);
                               });
     }
 
@@ -905,8 +924,59 @@ static const char* engine_strerror(tlsuv_engine_t self) {
     return res;
 }
 
+// drop the current connection and all per-session state, so the next
+// engine_handshake() starts a fresh handshake over the same io
 static int engine_reset(tlsuv_engine_t self) {
     struct applenw_engine_s *e = (struct applenw_engine_s *) self;
+
+    // everything tied to the connection runs on e->queue: detach it there
+    __block nw_connection_t old = NULL;
+    dispatch_sync(e->queue, ^{
+        old = e->connection;
+        e->connection = NULL;
+        e->conn_gen++;
+        if (old) {
+            // its remaining events (errors, cancelled) must not reach the new session
+            nw_connection_set_state_changed_handler(old, NULL);
+        }
+        if (e->tls_channel) {
+            dispatch_io_close(e->tls_channel, DISPATCH_IO_STOP);
+            dispatch_release((dispatch_object_t)e->tls_channel);
+            e->tls_channel = NULL;
+        }
+
+        pthread_mutex_lock(&e->outbound_mutex);
+        dispatch_release((dispatch_object_t)e->outbound_buf);
+        e->outbound_buf = dispatch_data_empty;
+        e->outbound_len = 0;
+        e->shutdown_pending = false;
+        pthread_mutex_unlock(&e->outbound_mutex);
+
+        pthread_mutex_lock(&e->decode_mutex);
+        e->decoded_len = 0;
+        e->conn_eof = false;
+        e->reading_conn = false;
+        if (e->error) {
+            CFRelease(e->error);
+            e->error = NULL;
+        }
+        pthread_mutex_unlock(&e->decode_mutex);
+    });
+
+    if (old) {
+        nw_connection_cancel(old);
+        nw_release(old);
+    }
+
+    // loop-thread state
+    e->inbound_len = 0;
+    memset(&e->inbound_frame, 0, sizeof(e->inbound_frame));
+    e->read_eof = false;
+    e->eof_forwarded = false;
+    e->nw_pending = 0;
+    e->write_blocked = false;
+    e->conn_cancelled = false;
+    e->alpn[0] = 0;
     e->hs_state = TLS_HS_BEFORE;
     return 0;
 }

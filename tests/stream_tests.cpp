@@ -18,6 +18,19 @@
 #include <uv.h>
 
 #include "fixtures.h"
+
+#if _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#define close_socket closesocket
+#define poll WSAPoll
+#else
+#include <netdb.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <unistd.h>
+#define close_socket close
+#endif
 #include <catch2/catch_all.hpp>
 
 #define to_str_(x) #x
@@ -800,6 +813,105 @@ TEST_CASE("stream peer certificate", "[stream]") {
     tlsuv_stream_close(&s, nullptr);
     test.run();
     tls->free_ctx(tls);
+}
+
+// drive an engine directly over a blocking TCP socket (no tlsuv_stream_t)
+static uv_os_sock_t connect_tcp(const char *host, const char *port) {
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo *ai = nullptr;
+    if (getaddrinfo(host, port, &hints, &ai) != 0) return (uv_os_sock_t) -1;
+    uv_os_sock_t s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    if (connect(s, ai->ai_addr, (int) ai->ai_addrlen) != 0) {
+        close_socket(s);
+        s = (uv_os_sock_t) -1;
+    }
+    freeaddrinfo(ai);
+
+    // engines expect a non-blocking socket (they read until it would block)
+    if (s != (uv_os_sock_t) -1) {
+#if _WIN32
+        u_long nb = 1;
+        ioctlsocket(s, FIONBIO, &nb);
+#else
+        fcntl(s, F_SETFL, fcntl(s, F_GETFL) | O_NONBLOCK);
+#endif
+    }
+    return s;
+}
+
+static void wait_readable(uv_os_sock_t s, int ms) {
+    pollfd pfd{};
+    pfd.fd = s;
+    pfd.events = POLLIN;
+    poll(&pfd, 1, ms);
+}
+
+static bool engine_handshake_sync(tlsuv_engine_t eng, uv_os_sock_t s) {
+    // async engines make progress between calls, so keep calling with a short wait
+    for (int i = 0; i < 200; i++) {
+        tls_handshake_state st = eng->handshake(eng);
+        if (st == TLS_HS_COMPLETE) return true;
+        if (st == TLS_HS_ERROR) return false;
+        wait_readable(s, 25);
+    }
+    return false;
+}
+
+static std::string engine_echo_sync(tlsuv_engine_t eng, uv_os_sock_t s, const std::string &msg) {
+    size_t sent = 0;
+    for (int i = 0; i < 200 && sent < msg.size(); i++) {
+        int rc = eng->write(eng, msg.data() + sent, msg.size() - sent);
+        if (rc > 0) {
+            sent += rc;
+        } else if (rc != TLS_AGAIN) {
+            return "<write failed>";
+        } else {
+            wait_readable(s, 25);
+        }
+    }
+
+    std::string got;
+    char buf[1024];
+    for (int i = 0; i < 200 && got.size() < msg.size(); i++) {
+        size_t n = 0;
+        int rc = eng->read(eng, buf, &n, sizeof(buf));
+        got.append(buf, n);
+        if (rc == TLS_EOF || rc == TLS_ERR) break;
+        if (n == 0) wait_readable(s, 25);
+    }
+    return got;
+}
+
+// reset() must leave the engine able to run a new handshake on a new connection
+TEST_CASE("engine reset and reuse", "[stream]") {
+    UvLoopTest test; // initializes the socket library on windows
+    tls_context *tls = testServerTLS();
+    tlsuv_engine_t eng = tls->new_engine(tls, "localhost");
+    REQUIRE(eng->reset != nullptr);
+
+    uv_os_sock_t prev = (uv_os_sock_t) -1;
+    for (int round = 0; round < 3; round++) {
+        INFO("round " << round);
+        if (round > 0) {
+            REQUIRE(eng->reset(eng) == 0);
+            close_socket(prev);
+        }
+
+        uv_os_sock_t s = connect_tcp(TEST_SERVER, "7443");
+        REQUIRE(s != (uv_os_sock_t) -1);
+        eng->set_io_fd(eng, (tlsuv_sock_t) s);
+
+        REQUIRE(engine_handshake_sync(eng, s));
+        std::string msg = "hello #" + std::to_string(round);
+        CHECK(engine_echo_sync(eng, s, msg) == msg);
+        prev = s;
+    }
+
+    eng->close(eng);
+    eng->free(eng);
+    close_socket(prev);
 }
 
 TEST_CASE("connect to address", "[stream]") {
