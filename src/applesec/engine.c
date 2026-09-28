@@ -86,7 +86,7 @@ struct tls_frame {
 // per-connection engine
 struct applenw_engine_s {
     struct tlsuv_engine_s api;
-
+    bool server;
     // written on e->queue (state handler, accept block), read on the loop thread
     _Atomic(tls_handshake_state) hs_state;
 
@@ -427,6 +427,102 @@ static void tls_to_socket(struct applenw_engine_s *e, int socket) {
                      });
 }
 
+static enum tls_handshake_st engine_create_client(struct applenw_engine_s *e) {
+    assert(e);
+    assert(e->connection == NULL);
+    assert(e->server == false);
+
+    int lsoc = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_addr = htonl(INADDR_LOOPBACK),
+    };
+    if (bind(lsoc, (struct sockaddr *) &addr, sizeof(addr)) < 0 ||
+        listen(lsoc, 1) < 0) {
+        UM_LOG(WARN, "failed to bind or listen: %s", strerror(errno));
+        close(lsoc);
+        return TLS_HS_ERROR;
+    }
+
+    socklen_t len = sizeof(addr);
+    getsockname(lsoc, (struct sockaddr *) &addr, &len);
+
+    char port[10];
+    snprintf(port, sizeof(port), "%d", ntohs(addr.sin_port));
+    nw_endpoint_t ep = nw_endpoint_create_host("127.0.0.1", port);
+    nw_connection_t conn = nw_connection_create(ep, e->protocol_parameters);
+    nw_release(ep);
+
+    nw_connection_set_state_changed_handler(conn, ^(nw_connection_state_t state, nw_error_t error) {
+        if (error) {
+            UM_LOG(WARN, "connection error: %d", nw_error_get_error_code(error));
+            // wakes the stream so process_connect/process_inbound sees the failure
+            handshake_failed(e, nw_error_copy_cf_error(error));
+        }
+        switch (state) {
+        case nw_connection_state_preparing: {
+            // don't clobber TLS_HS_ERROR set by a failed accept
+            tls_handshake_state expected = TLS_HS_BEFORE;
+            atomic_compare_exchange_strong(&e->hs_state, &expected, TLS_HS_CONTINUE);
+            break;
+        }
+        case nw_connection_state_ready:
+            e->hs_state = TLS_HS_COMPLETE;
+            UM_LOG(DEBG, "Handshake completed successfully!");
+            wake(e);
+            break;
+        case nw_connection_state_failed:
+            UM_LOG(DEBG, "Connection failed");
+            break;
+        case nw_connection_state_cancelled:
+            e->conn_cancelled = true;
+            // cancelled without engine_free() (NW gave up on its own):
+            // the stream still owns the engine, engine_free() deallocates it
+            if (e->freed) {
+                engine_dealloc(e);
+            }
+            UM_LOG(DEBG, "Connection cancelled");
+            break;
+        default:
+            UM_LOG(WARN, "unhandled state: %d", state);
+            break;
+        }
+    });
+
+    nw_connection_set_queue(conn, e->queue);
+    nw_connection_start(conn);
+    e->connection = conn;
+
+    dispatch_async(e->queue, ^{
+        struct pollfd pfd = {
+            .fd = lsoc,
+            .events = POLLIN,
+        };
+
+        if (poll(&pfd, 1, 1000) < 1) {
+            UM_LOG(WARN, "nw_connection did not connect in time");
+            close(lsoc);
+            handshake_failed(e, posix_error(ETIMEDOUT));
+            return;
+        }
+        int tls_sock = accept(lsoc, NULL, 0);
+        int accept_err = errno;
+        close(lsoc);
+        if (tls_sock < 0) {
+            UM_LOG(WARN, "accept failed: %s", strerror(accept_err));
+            handshake_failed(e, posix_error(accept_err));
+            return;
+        }
+        int true_val = 1;
+        setsockopt(tls_sock, SOL_SOCKET, SO_NOSIGPIPE, &true_val, sizeof(true_val));
+        setsockopt(tls_sock, IPPROTO_TCP, TCP_NODELAY, &true_val, sizeof(true_val));
+
+        tls_to_socket(e, tls_sock);
+    });
+
+    return TLS_HS_BEFORE;
+}
+
 static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
     struct applenw_engine_s *e = (struct applenw_engine_s *) self;
     assert(e->read_f != NULL);
@@ -470,95 +566,8 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
         return e->hs_state;
     }
 
-    if (e->connection == NULL) {
-        int lsoc = socket(AF_INET, SOCK_STREAM, 0);
-        struct sockaddr_in addr = {
-            .sin_family = AF_INET,
-            .sin_addr = htonl(INADDR_LOOPBACK),
-        };
-        if (bind(lsoc, (struct sockaddr *) &addr, sizeof(addr)) < 0 ||
-            listen(lsoc, 1) < 0) {
-            UM_LOG(WARN, "failed to bind or listen: %s", strerror(errno));
-            close(lsoc);
-            e->hs_state = TLS_HS_ERROR;
-            return e->hs_state;
-        }
-
-        socklen_t len = sizeof(addr);
-        getsockname(lsoc, (struct sockaddr *) &addr, &len);
-
-        char port[10];
-        snprintf(port, sizeof(port), "%d", ntohs(addr.sin_port));
-        nw_endpoint_t ep = nw_endpoint_create_host("127.0.0.1", port);
-        nw_connection_t conn = nw_connection_create(ep, e->protocol_parameters);
-        nw_release(ep);
-
-        nw_connection_set_state_changed_handler(conn, ^(nw_connection_state_t state, nw_error_t error) {
-            if (error) {
-                UM_LOG(WARN, "connection error: %d", nw_error_get_error_code(error));
-                // wakes the stream so process_connect/process_inbound sees the failure
-                handshake_failed(e, nw_error_copy_cf_error(error));
-            }
-            switch (state) {
-            case nw_connection_state_preparing: {
-                // don't clobber TLS_HS_ERROR set by a failed accept
-                tls_handshake_state expected = TLS_HS_BEFORE;
-                atomic_compare_exchange_strong(&e->hs_state, &expected, TLS_HS_CONTINUE);
-                break;
-            }
-            case nw_connection_state_ready:
-                e->hs_state = TLS_HS_COMPLETE;
-                UM_LOG(DEBG, "Handshake completed successfully!");
-                wake(e);
-                break;
-            case nw_connection_state_failed:
-                UM_LOG(DEBG, "Connection failed");
-                break;
-            case nw_connection_state_cancelled:
-                e->conn_cancelled = true;
-                // cancelled without engine_free() (NW gave up on its own):
-                // the stream still owns the engine, engine_free() deallocates it
-                if (e->freed) {
-                    engine_dealloc(e);
-                }
-                UM_LOG(DEBG, "Connection cancelled");
-                break;
-            default:
-                UM_LOG(WARN, "unhandled state: %d", state);
-                break;
-            }
-        });
-
-        nw_connection_set_queue(conn, e->queue);
-        nw_connection_start(conn);
-        e->connection = conn;
-
-        dispatch_async(e->queue, ^{
-            struct pollfd pfd = {
-                .fd = lsoc,
-                .events = POLLIN,
-            };
-
-            if (poll(&pfd, 1, 1000) < 1) {
-                UM_LOG(WARN, "nw_connection did not connect in time");
-                close(lsoc);
-                handshake_failed(e, posix_error(ETIMEDOUT));
-                return;
-            }
-            int tls_sock = accept(lsoc, NULL, 0);
-            int accept_err = errno;
-            close(lsoc);
-            if (tls_sock < 0) {
-                UM_LOG(WARN, "accept failed: %s", strerror(accept_err));
-                handshake_failed(e, posix_error(accept_err));
-                return;
-            }
-            int true_val = 1;
-            setsockopt(tls_sock, SOL_SOCKET, SO_NOSIGPIPE, &true_val, sizeof(true_val));
-            setsockopt(tls_sock, IPPROTO_TCP, TCP_NODELAY, &true_val, sizeof(true_val));
-
-            tls_to_socket(e, tls_sock);
-        });
+    if (engine_create_client(e) == TLS_HS_ERROR) {
+        e->hs_state = TLS_HS_ERROR;
     }
 
     return e->hs_state;
