@@ -46,6 +46,14 @@ set(test_srcs
         connector_tests.cpp
 )
 
+# win32crypto peer-chain verification proof: mints test certificates with OpenSSL
+# (from OPENSSL_ROOT_DIR, e.g. the mingw64 toolchain) at test time. The backend
+# under test is win32crypto; OpenSSL is only the certificate factory here.
+if (TLSUV_TLSLIB STREQUAL "win32crypto")
+    find_package(OpenSSL REQUIRED)
+    list(APPEND test_srcs win32crypto_verify_tests.cpp)
+endif ()
+
 if (TLSUV_HTTP)
     list(APPEND test_srcs
             http_tests.cpp
@@ -86,6 +94,10 @@ target_link_libraries(all_tests
         parson::parson
         )
 
+if (TLSUV_TLSLIB STREQUAL "win32crypto")
+    target_link_libraries(all_tests OpenSSL::Crypto)
+endif ()
+
 target_include_directories(all_tests PRIVATE ../src)
 
 add_custom_target(test-server
@@ -108,6 +120,10 @@ mk_test(key)
 mk_test(engine)
 mk_test(server)
 mk_test(stream)
+
+if (TLSUV_TLSLIB STREQUAL "win32crypto")
+    mk_test(verify)
+endif ()
 
 if (TLSUV_HTTP)
     mk_test(http)
