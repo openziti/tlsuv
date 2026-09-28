@@ -55,6 +55,11 @@
         {
           "name": "parson",
           "$comment": "test response parsing/validations"
+        },
+        {
+          "name": "openssl",
+          "platform": "windows | mingw",
+          "$comment": "wincrypto tests use OpenSSL for setup"
         }
       ]
     },
