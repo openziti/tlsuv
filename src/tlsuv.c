@@ -476,6 +476,18 @@ static void process_outbound(tlsuv_stream_t *clt) {
     }
 }
 
+// re-check for readable data on the next loop iteration: the engine may hold
+// decrypted data that the socket will never signal (it is already drained)
+static void schedule_idle_read(tlsuv_stream_t *clt) {
+    if (clt->watcher.data == NULL) {
+        uv_idle_t *idle = tlsuv__calloc(1, sizeof(*idle));
+        clt->watcher.data = idle;
+        uv_idle_init(clt->loop, idle);
+        idle->data = clt;
+    }
+    uv_idle_start(clt->watcher.data, check_read);
+}
+
 // returns the terminal condition reported to read_cb (UV_EOF, UV_ECONNABORTED, UV_ENOBUFS),
 // UV_EAGAIN if the engine ran out of data, or 0 if reading stopped for another reason
 // (read_cb cleared, MAX_INBOUND_ITERATIONS reached)
@@ -551,6 +563,11 @@ static ssize_t process_inbound(tlsuv_stream_t *clt) {
     }
     TLS_LOG(TRACE, "finished reading after %d iterations: %zd/%s", iter,
             code, code ? uv_strerror((int)code) : "OK");
+    if (iter == MAX_INBOUND_ITERATIONS && clt->read_cb != NULL) {
+        // stopped to let the loop run other work, not because the engine ran dry:
+        // with small read buffers it can still hold decrypted data
+        schedule_idle_read(clt);
+    }
     return code;
 }
 
@@ -742,13 +759,7 @@ int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_c
     } else {
         // schedule idle read (if nothing on the wire)
         // in case reading was stopped with data buffered in TLS engine
-        if (clt->watcher.data == NULL) {
-            uv_idle_t* idle = tlsuv__calloc(1, sizeof(*idle));
-            clt->watcher.data = idle;
-            uv_idle_init(clt->loop, idle);
-            idle->data = clt;
-        }
-        uv_idle_start(clt->watcher.data, check_read);
+        schedule_idle_read(clt);
     }
     return rc;
 }

@@ -580,6 +580,70 @@ TEST_CASE("large/partial writes", "[stream]") {
     CHECK(successes + cancelled == w_res.results.size());
 }
 
+// the app reads into buffers much smaller than what the engine decrypts at once:
+// process_inbound() stops after MAX_INBOUND_ITERATIONS reads per wakeup, with the
+// rest still inside the engine and nothing left on the socket to signal it
+TEST_CASE("small read buffers", "[stream]") {
+    UvLoopTest test;
+    tlsuv_stream_t s;
+    tlsuv_stream_init(test.loop, &s, testServerTLS());
+
+    struct echo_state {
+        std::vector<char> sent;
+        std::vector<char> got;
+        size_t read_size;
+        int connect_status = 1;
+        int read_error = 0;
+        bool closed = false;
+    } st;
+    st.read_size = GENERATE(97, 1000);
+    CAPTURE(st.read_size);
+    for (size_t i = 0; i < 64 * 1024; i++) {
+        st.sent.push_back((char) (i * 7 + i / 251));
+    }
+    s.data = &st;
+
+    uv_connect_t cr;
+    cr.data = &st;
+    tlsuv_stream_connect(&cr, &s, TEST_SERVER, 7443, [](uv_connect_t *r, int status) {
+        auto st = (echo_state *) r->data;
+        st->connect_status = status;
+    });
+    test.run(UNTIL(st.connect_status != 1));
+    REQUIRE(st.connect_status == 0);
+
+    tlsuv_stream_read_start(&s,
+        [](uv_handle_t *h, size_t, uv_buf_t *b) {
+            auto st = (echo_state *) h->data;
+            *b = uv_buf_init((char *) malloc(st->read_size), (unsigned int) st->read_size);
+        },
+        [](uv_stream_t *h, ssize_t n, const uv_buf_t *b) {
+            auto st = (echo_state *) h->data;
+            if (n > 0) {
+                st->got.insert(st->got.end(), b->base, b->base + n);
+            } else if (n < 0) {
+                st->read_error = (int) n;
+            }
+            free(b->base);
+        });
+
+    uv_write_t wr;
+    uv_buf_t buf = uv_buf_init(st.sent.data(), (unsigned int) st.sent.size());
+    REQUIRE(tlsuv_stream_write(&wr, &s, &buf, [](uv_write_t *, int status) {
+        CHECK(status == 0);
+    }) == 0);
+
+    test.run(UNTIL(st.got.size() >= st.sent.size() || st.read_error != 0));
+    CHECK(st.read_error == 0);
+    REQUIRE(st.got.size() == st.sent.size());
+    CHECK(st.got == st.sent);
+
+    tlsuv_stream_close(&s, [](uv_handle_t *h) {
+        ((echo_state *) h->data)->closed = true;
+    });
+    test.run(UNTIL(st.closed));
+}
+
 TEST_CASE_METHOD(UvLoopTest, "stream/global proxy", "[stream]") {
     auto const proxy_port = "13128";
     auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, TEST_SERVER, proxy_port);
