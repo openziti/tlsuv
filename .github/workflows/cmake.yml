@@ -166,9 +166,11 @@ jobs:
     - name: boot iOS simulator
       if: matrix.target == 'arm64-ios-simulator'
       run: |
-        dev=$(xcrun simctl list devices available -j |
-              jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')
-        echo "booting simulator $dev"
+        read -r dev runtime name < <(xcrun simctl list devices available -j |
+              jq -r '[.devices | to_entries[] | .key as $rt | .value[]
+                      | select(.name | startswith("iPhone"))
+                      | "\(.udid) \($rt | sub("com.apple.CoreSimulator.SimRuntime."; "")) \(.name)"][0]')
+        echo "$(xcodebuild -version | head -1), booting simulator: $name, $runtime ($dev)"
         xcrun simctl bootstatus "$dev" -b
 
     - name: Test
