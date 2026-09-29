@@ -1371,6 +1371,8 @@ static sec_identity_t new_client_identity(struct applesec_ctx *ctx) {
     if (ctx->ssl_chain == NULL || CFArrayGetCount(ctx->ssl_chain) == 0) {
         return NULL;
     }
+    // the handshake signs with this key: its keychain must not be locked by then
+    applesec_unlock_identity(ctx);
 
     SecIdentityRef id_ref = (SecIdentityRef) CFArrayGetValueAtIndex(ctx->ssl_chain, 0);
     CFIndex n = CFArrayGetCount(ctx->ssl_chain);

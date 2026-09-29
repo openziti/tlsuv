@@ -93,4 +93,7 @@ extern tlsuv_engine_t applesec_new_server_engine(tls_context *ctx);
 // takes ownership of `chain`.
 extern tlsuv_certificate_t applesec_cert_new(CFArrayRef chain);
 
+// context.c: make sure the key behind ssl_chain[0] is usable (see context.c)
+extern void applesec_unlock_identity(struct applesec_ctx *c);
+
 #endif //TLSUV_CONTEXT_H

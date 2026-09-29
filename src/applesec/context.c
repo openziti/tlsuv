@@ -1329,6 +1329,24 @@ static bool cert_matches_key(SecCertificateRef cert, SecKeyRef pub) {
     return eq;
 }
 
+// The temporary file keychain can be locked after set_own_cert() (explicitly, e.g.
+// `security lock-keychain`), and its key is then unusable: signing fails, or macOS
+// asks the user for a password they cannot know. Unlocking an unlocked keychain is
+// cheap, so do it before every import and whenever an engine takes the identity.
+// Keychain UI is left alone: SecKeychainSetUserInteractionAllowed() is process wide.
+void applesec_unlock_identity(struct applesec_ctx* c) {
+#if APPLESEC_FILE_KEYCHAIN
+    if (c->tmp_keychain == NULL) return;
+    OSStatus rc = SecKeychainUnlock(c->tmp_keychain, (UInt32)strlen(c->tmp_keychain_pw),
+                                    c->tmp_keychain_pw, true);
+    if (rc != errSecSuccess) {
+        UM_LOG(WARN, "failed to unlock temp keychain: %s", applesec_error(rc));
+    }
+#else
+    (void)c; // the app's keychain is unlocked by the system
+#endif
+}
+
 #if APPLESEC_FILE_KEYCHAIN
 // the TLS client identity needs a SecIdentityRef, and the only public way to make
 // one is SecIdentityCreateWithCertificate(), which pairs a certificate with a
@@ -1368,7 +1386,6 @@ static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
             UM_LOG(ERR, "failed to create temp keychain: %s", applesec_error(rc));
             return -1;
         }
-        SecKeychainSetUserInteractionAllowed(false);
 
         // new keychains lock on sleep: a later import (cert renewal, context
         // reconfiguration) would then fail with errSecAuthFailed
@@ -1387,12 +1404,7 @@ static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
         c->tmp_keychain_path = tlsuv__strdup(path);
     }
 
-    // it may still have been locked explicitly (e.g. `security lock-keychain -a`)
-    OSStatus unlock_rc = SecKeychainUnlock(c->tmp_keychain, (UInt32)strlen(c->tmp_keychain_pw),
-                                           c->tmp_keychain_pw, true);
-    if (unlock_rc != errSecSuccess) {
-        UM_LOG(WARN, "failed to unlock temp keychain: %s", applesec_error(unlock_rc));
-    }
+    applesec_unlock_identity(c);
 
     // the key has to go in as PEM/DER; use the bytes it was loaded from, or
     // encode a generated key (PKCS#8, which import_key() converts as needed)
