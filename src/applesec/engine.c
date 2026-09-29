@@ -37,8 +37,15 @@ static int engine_flush(tlsuv_engine_t self);
 // max plaintext handed to NW but not yet sent, plus ciphertext not yet flushed to
 // the peer; engine_write() accepts no more than this is in flight
 #define NW_WRITE_LIMIT (256 * 1024)
-// max plaintext received from NW but not yet read by the owner
-#define DECODED_LIMIT (32 * 1024)
+// max ciphertext from the peer handed to NW (queued on the relay) but not yet taken
+// by it; forward_inbound() leaves the rest in the socket, so TCP slows the peer down.
+// Without it the engine drains the socket as fast as the loop can read, and a peer
+// faster than NW's decryption fills memory (a 256 MiB download held ~250 MiB here)
+#define NW_READ_LIMIT (256 * 1024)
+// max plaintext received from NW but not yet read by the owner. More than one 64 KiB
+// read: with NW_READ_LIMIT keeping NW's backlog short, a 32 KiB limit left each
+// stream read about half full (twice the callbacks, and less throughput)
+#define DECODED_LIMIT (128 * 1024)
 // how long a client engine waits for NW to connect to its loopback listener. That
 // normally takes about a millisecond; this only bounds NW neither connecting nor
 // failing
@@ -158,6 +165,12 @@ struct applesec_engine_s {
     _Atomic size_t nw_pending;
     // engine_write() turned a writer away (fully or partially): wake it when space frees up
     _Atomic bool write_blocked;
+    // peer ciphertext forwarded to NW (forward_record) whose relay write has not
+    // completed yet; bounded by NW_READ_LIMIT
+    _Atomic size_t nw_inbound;
+    // forward_inbound() stopped at NW_READ_LIMIT: wake the owner when NW catches up,
+    // since records may wait in inbound_buf with nothing new on the socket to signal it
+    _Atomic bool read_blocked;
 
     void (*async_cb)(void *async_ctx, size_t in, size_t out);
     void *async_ctx;
@@ -395,16 +408,36 @@ static bool is_current(struct applesec_engine_s *e, uint32_t gen) {
 }
 
 // hand a copy of the record at the front of inbound_buf to NW (via tls_channel)
+// e->queue only: a forwarded record is no longer pending (written, failed or dropped)
+static void inbound_done(struct applesec_engine_s *e, uint32_t gen, size_t len) {
+    if (gen != e->conn_gen) {
+        // from a session replaced by engine_reset(); nw_inbound was reset with it
+        return;
+    }
+    size_t left = (e->nw_inbound -= len);
+    // hysteresis: resume forwarding once half the window is free
+    if (e->read_blocked && left < NW_READ_LIMIT / 2 && atomic_exchange(&e->read_blocked, false)) {
+        wake(e);
+    }
+}
+
 static void forward_record(struct applesec_engine_s *e, size_t len) {
     dispatch_data_t frame = dispatch_data_create(e->inbound_buf, len,
                                                  e->queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    e->nw_inbound += len;
+    uint32_t gen = e->conn_gen;
     dispatch_async(e->queue, ^{
         if (e->tls_channel) {
             dispatch_io_write(e->tls_channel, 0, frame, e->queue, ^(bool done, dispatch_data_t d, int err){
                 if (err != 0) {
                     UM_LOG(WARN, "Write error: %s", strerror(err));
                 }
+                if (done) {
+                    inbound_done(e, gen, len);
+                }
             });
+        } else {
+            inbound_done(e, gen, len);
         }
         dispatch_release((dispatch_object_t)frame);
     });
@@ -418,13 +451,26 @@ static void close_tls_channel(struct applesec_engine_s *e) {
     });
 }
 
-// forward every complete record received from the peer: a record that decodes to no
-// plaintext (e.g. NewSessionTicket) triggers no async wakeup, so anything left
-// behind it would sit in inbound_buf until the socket becomes readable again.
+// forward the complete records received from the peer, up to NW_READ_LIMIT in flight:
+// a record that decodes to no plaintext (e.g. NewSessionTicket) triggers no async
+// wakeup, so records left behind in inbound_buf are only forwarded on the next
+// read/handshake call; at the limit, inbound_done() wakes the owner for that.
 // Returns why it stopped: TLS_AGAIN, TLS_EOF or TLS_ERR.
 static int forward_inbound(struct applesec_engine_s *e) {
-    ssize_t len;
-    while ((len = read_inbound_record(e)) > 0) {
+    ssize_t len = TLS_AGAIN;
+    for (;;) {
+        if (e->nw_inbound >= NW_READ_LIMIT) {
+            e->read_blocked = true;
+            // a relay write may have completed between the check and the flag
+            if (e->nw_inbound >= NW_READ_LIMIT) {
+                UM_LOG(TRACE, "engine[%p] read limit reached: %zu in flight", e, (size_t) e->nw_inbound);
+                return TLS_AGAIN;
+            }
+            e->read_blocked = false;
+        }
+        if ((len = read_inbound_record(e)) <= 0) {
+            break;
+        }
         forward_record(e, (size_t) len);
         memmove(e->inbound_buf, e->inbound_buf + len, e->inbound_len - len);
         e->inbound_len -= len;
@@ -1133,7 +1179,9 @@ static bool process_decoded(struct applesec_engine_s *e, uint32_t gen, dispatch_
                 process_decoded(e, gen, d, c, done1, er1);
             });
     }
-    if (e->decoded_len > 0) {
+    // EOF and errors too, even without data: the owner may have drained the socket
+    // and wait only for this wakeup to learn the stream ended
+    if (e->decoded_len > 0 || done || er != NULL) {
         wake(e);
     }
     pthread_mutex_unlock(&e->decode_mutex);
@@ -1269,6 +1317,8 @@ static int engine_reset(tlsuv_engine_t self) {
     e->read_eof = false;
     e->nw_pending = 0;
     e->write_blocked = false;
+    e->nw_inbound = 0;
+    e->read_blocked = false;
     e->alpn[0] = 0;
     e->hs_state = TLS_HS_BEFORE;
     return 0;

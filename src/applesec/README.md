@@ -31,7 +31,8 @@ and relays ciphertext between that connection and the caller's IO:
   `outbound_buf`, and written to the caller's IO by `engine_flush()`.
 - Ciphertext from the peer is split into TLS records (`read_inbound_record()`) and
   each complete record is written into `tls_channel` (`forward_inbound()`), where
-  Network.framework decrypts it.
+  Network.framework decrypts it; at most `NW_READ_LIMIT` is queued there at a time
+  (see Limitations, backpressure).
 - The application talks to the `nw_connection_t` directly:
   `engine_write()` → `nw_connection_send()`, and decrypted data arrives through
   `nw_connection_receive()` into the `decoded` buffer (`process_decoded()`), from
@@ -329,14 +330,28 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
 - **Minimum OS**: ECDSA signing uses the `kSecKeyAlgorithmECDSASignatureDigestRFC4754*`
   algorithms, which need macOS 14 / iOS 17.
 - Not implemented: client certificates on server engines (see above),
-  `allow_partial_chain`, PKCS#11 and platform keychain keys
-  (keys must be extractable to go into a keychain for the identity).
+  `allow_partial_chain`, PKCS#11 keys.
+- **Keychain keys** (`generate/load/remove_keychain_key`) come from the platform
+  keychain (`src/apple/keychain.c`, P-256) and only while it is the active one: a
+  keychain set with `tlsuv_set_keychain()` has keys Security cannot use. They are
+  not extractable, so `set_own_cert()` pairs the certificate with them where they
+  are (`keychain_identity()`) instead of importing them. Other keys must be
+  extractable. Network.framework sends an invalid TLS 1.3 CertificateVerify for
+  P-521 client keys, so those fail (e.g. P-521 keys generated before
+  `src/apple/keychain.c` switched to P-256).
 - Backpressure: Network.framework encrypts asynchronously, so `engine_write()`
   bounds plaintext not yet sent by NW plus ciphertext not yet flushed to the peer
   (`NW_WRITE_LIMIT`, 256 KiB). Beyond that it accepts a partial write or returns
   `TLS_AGAIN`, and wakes the owner once half the window is free. For such async
   engines `tlsuv_stream_t` does not poll `UV_WRITABLE` for queued writes (the
   socket is writable while the engine is full); it retries on the wakeup.
+  Inbound, `forward_inbound()` stops once 256 KiB of peer ciphertext is queued for
+  NW and not yet taken (`NW_READ_LIMIT`), leaving the rest in the socket so TCP
+  slows the peer down; the relay write completions wake the owner once half of it
+  is free (`read_blocked`). Without that limit the engine drained the socket as fast
+  as the loop could read it: a 256 MiB loopback download peaked at ~250 MiB queued
+  for NW (~365 MB resident, against ~30 MB with the limit). `decoded` holds up to
+  128 KiB (`DECODED_LIMIT`), so one read can fill a 64 KiB stream buffer.
 - `engine_reset()` is synchronous (see Teardown); close/free are not.
 - Each connection costs a loopback TCP connection and a dispatch queue.
 
