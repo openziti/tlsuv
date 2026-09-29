@@ -644,6 +644,78 @@ TEST_CASE("small read buffers", "[stream]") {
     test.run(UNTIL(st.closed));
 }
 
+// the app has no buffer (alloc_cb returns an empty one, read_cb gets UV_ENOBUFS)
+// while the peer has already closed: reading must go on once it has buffers again,
+// and deliver the rest of the data and the EOF
+TEST_CASE("no buffer after peer close", "[stream]") {
+    UvLoopTest test;
+    tlsuv_stream_t s;
+    tlsuv_stream_init(test.loop, &s, testServerTLS());
+
+    struct state {
+        int connect_status = 1;
+        bool written = false;
+        int empty_allocs = 3; // the idle read, then poll events that report the disconnect
+        int enobufs = 0;
+        std::string data;
+        int end = 0; // UV_EOF, or the error that ended reading
+        bool closed = false;
+    } st;
+    s.data = &st;
+
+    uv_connect_t cr;
+    cr.data = &st;
+    tlsuv_stream_connect(&cr, &s, TEST_SERVER, 8443, [](uv_connect_t *r, int status) {
+        ((state *) r->data)->connect_status = status;
+    });
+    test.run(UNTIL(st.connect_status != 1));
+    REQUIRE(st.connect_status == 0);
+
+    // the server answers and closes before we start reading
+    std::string req = "GET /json HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    uv_write_t wr;
+    wr.data = &st;
+    uv_buf_t buf = uv_buf_init(req.data(), (unsigned int) req.size());
+    REQUIRE(tlsuv_stream_write(&wr, &s, &buf, [](uv_write_t *w, int status) {
+        CHECK(status == 0);
+        ((state *) w->data)->written = true;
+    }) == 0);
+    test.run(UNTIL(st.written));
+    test.run(1); // let the request out, and the response and the close come in
+
+    tlsuv_stream_read_start(&s,
+        [](uv_handle_t *h, size_t suggested, uv_buf_t *b) {
+            auto st = (state *) h->data;
+            if (st->empty_allocs > 0) {
+                st->empty_allocs--;
+                *b = uv_buf_init(nullptr, 0);
+            } else {
+                *b = uv_buf_init((char *) malloc(suggested), (unsigned int) suggested);
+            }
+        },
+        [](uv_stream_t *h, ssize_t n, const uv_buf_t *b) {
+            auto st = (state *) h->data;
+            if (n > 0) {
+                st->data.append(b->base, n);
+            } else if (n == UV_ENOBUFS) {
+                st->enobufs++;
+            } else if (n < 0) {
+                st->end = (int) n;
+            }
+            free(b->base);
+        });
+
+    test.run(UNTIL(st.end != 0));
+    CHECK(st.enobufs > 0);
+    CHECK(st.end == UV_EOF);
+    CHECK_THAT(st.data, Catch::Matchers::StartsWith("HTTP/1.1 200 OK"));
+
+    tlsuv_stream_close(&s, [](uv_handle_t *h) {
+        ((state *) h->data)->closed = true;
+    });
+    test.run(UNTIL(st.closed));
+}
+
 TEST_CASE_METHOD(UvLoopTest, "stream/global proxy", "[stream]") {
     auto const proxy_port = "13128";
     auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, TEST_SERVER, proxy_port);

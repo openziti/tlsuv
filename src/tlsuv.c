@@ -491,7 +491,8 @@ static void schedule_idle_read(tlsuv_stream_t *clt) {
     uv_idle_start(clt->watcher.data, check_read);
 }
 
-// returns the terminal condition reported to read_cb (UV_EOF, UV_ECONNABORTED, UV_ENOBUFS),
+// returns the condition reported to read_cb: terminal (UV_EOF, UV_ECONNABORTED) or
+// not (UV_ENOBUFS: the app had no buffer, reading continues on the next event),
 // UV_EAGAIN if the engine ran out of data, or 0 if reading stopped for another reason
 // (read_cb cleared, MAX_INBOUND_ITERATIONS reached)
 static ssize_t process_inbound(tlsuv_stream_t *clt) {
@@ -617,7 +618,9 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
     // EOF/error was already delivered, or an async engine drained the socket and will
     // wake us via data_async. otherwise more bytes may still be in the kernel buffer.
     if (events & UV_DISCONNECT) {
-        bool terminal = rc < 0 && rc != UV_EAGAIN;
+        // UV_ENOBUFS: the app had no buffer this time, not the end of the stream; what
+        // is still in the socket or the engine, and the EOF, come once it has one
+        bool terminal = rc < 0 && rc != UV_EAGAIN && rc != UV_ENOBUFS;
         bool async_pending = rc == UV_EAGAIN && clt->tls_engine->setup_async != NULL;
         if (terminal || async_pending) {
             clt->read_events = 0;
