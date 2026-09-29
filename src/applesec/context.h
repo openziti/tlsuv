@@ -69,6 +69,9 @@ struct applesec_priv_key {
     // PEM as it was handed to load_key(); kept so the key can be re-imported
     // into the macOS temporary keychain as it was loaded.
     CFDataRef pem;
+    // held by the platform keychain (generate/load_keychain_key): not extractable,
+    // so the TLS identity pairs the certificate with it where it is
+    bool in_keychain;
 };
 
 struct applesec_pub_key {

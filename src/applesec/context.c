@@ -14,6 +14,7 @@
 
 
 #include "context.h"
+#include "../keychain.h"
 #include "tlsuv/tls_engine.h"
 #include "tlsuv/tlsuv.h"
 #include "um_debug.h"
@@ -39,6 +40,10 @@ static struct tlsuv_certificate_s sec_cert_api;
 
 static int load_file(const char* path, char** content, size_t* l);
 static CFArrayRef certs_from_data(const char* buf, size_t len);
+static bool keychain_is_platform(void);
+static int gen_keychain_key(tlsuv_private_key_t* key_ref, const char* name);
+static int load_keychain_key(tlsuv_private_key_t* key_ref, const char* name);
+static int remove_keychain_key(const char* name);
 #if !APPLESEC_FILE_KEYCHAIN
 static void remove_keychain_items(struct applesec_ctx* c);
 #endif
@@ -143,6 +148,11 @@ static int tls_set_ca_bundle(tls_context* ctx, const char* ca, size_t ca_len) {
 tls_context* new_applesec_ctx(const char* ca, size_t ca_len) {
     struct applesec_ctx* ctx = tlsuv__calloc(1, sizeof(*ctx));
     ctx->api = ctx_api;
+    if (keychain_is_platform()) {
+        ctx->api.generate_keychain_key = gen_keychain_key;
+        ctx->api.load_keychain_key = load_keychain_key;
+        ctx->api.remove_keychain_key = remove_keychain_key;
+    }
 
     UM_LOG(INFO, "using %s", ctx->api.version());
 
@@ -1083,6 +1093,11 @@ static void privkey_free(struct tlsuv_private_key_s* pk) {
 static int privkey_to_pem(struct tlsuv_private_key_s* pk, char** pem, size_t* pemlen) {
     struct applesec_priv_key* key = container_of(pk, struct applesec_priv_key, api);
 
+    if (key->in_keychain) {
+        UM_LOG(WARN, "keychain keys cannot be exported");
+        return -1;
+    }
+
     // always PKCS#8, whatever format the key was loaded from
     struct buf out = {0};
     if (!private_key_pem(key->key, key->key_type, &out)) {
@@ -1353,9 +1368,9 @@ void applesec_unlock_identity(struct applesec_ctx* c) {
 // private key *that lives in a keychain*. So put both in a throwaway file
 // keychain that is deleted with the context.
 //
-// Consequence: the private key has to be extractable. That rules out keys held
-// by the platform keychain (src/apple/keychain.c creates those non-extractable),
-// which is why the keychain key slots are not implemented for this backend.
+// Consequence: the private key has to be extractable. Keys held by the platform
+// keychain (src/apple/keychain.c creates those non-extractable) take
+// keychain_identity() instead.
 static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
                          SecCertificateRef leaf, SecIdentityRef* identity) {
     *identity = NULL;
@@ -1524,6 +1539,10 @@ static SecIdentityRef find_identity(SecCertificateRef leaf) {
     CFMutableDictionaryRef q = keychain_query(kSecClassIdentity);
     CFDictionarySetValue(q, kSecReturnRef, kCFBooleanTrue);
     CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitAll);
+    // the public half of a key pair can be in the keychain too, with the same
+    // identifier (src/apple/keychain.c stores it): without this the certificate may
+    // come back paired with the public key, which cannot sign
+    CFDictionarySetValue(q, kSecAttrKeyClass, kSecAttrKeyClassPrivate);
     CFTypeRef found = NULL;
     OSStatus rc = SecItemCopyMatching(q, &found);
     CFRelease(q);
@@ -1569,6 +1588,34 @@ static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
 }
 #endif
 
+// A platform keychain key cannot be copied into another keychain: pair the
+// certificate with it where it lives
+static int keychain_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
+                             SecCertificateRef leaf, SecIdentityRef* identity) {
+#if TARGET_OS_OSX
+    (void)c;
+    (void)key;
+    // NULL: the default keychain search list, where src/apple/keychain.c keeps its keys;
+    // the certificate itself does not have to be in a keychain
+    OSStatus rc = SecIdentityCreateWithCertificate(NULL, leaf, identity);
+    if (rc != errSecSuccess) {
+        UM_LOG(ERR, "failed to create identity with keychain key: %s", applesec_error(rc));
+        return -1;
+    }
+    return 0;
+#else
+    // the key is in the app's keychain already: add only the certificate next to it
+    (void)key;
+    OSStatus rc = add_keychain_item(c, kSecClassCertificate, leaf);
+    if (rc != errSecSuccess && rc != errSecDuplicateItem) {
+        UM_LOG(ERR, "failed to add certificate to keychain: %s", keychain_error(rc));
+        return -1;
+    }
+    *identity = find_identity(leaf);
+    return *identity ? 0 : -1;
+#endif
+}
+
 static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t pk, tlsuv_certificate_t cert) {
     if (ctx == NULL) return -1;
     struct applesec_ctx* c = (struct applesec_ctx*)ctx;
@@ -1610,7 +1657,9 @@ static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t pk, tlsuv_cert
 
     SecCertificateRef leaf = (SecCertificateRef)CFArrayGetValueAtIndex(cer->chain, leaf_idx);
     SecIdentityRef identity = NULL;
-    if (make_identity(c, key, leaf, &identity) != 0) {
+    int id_rc = key->in_keychain ? keychain_identity(c, key, leaf, &identity)
+                                 : make_identity(c, key, leaf, &identity);
+    if (id_rc != 0) {
         return -1;
     }
 
@@ -1624,6 +1673,66 @@ static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t pk, tlsuv_cert
     }
     c->ssl_chain = chain;
     return 0;
+}
+
+// ------------------------------------------------------------- keychain keys
+
+// The platform keychain (src/apple/keychain.c) hands out SecKeyRefs, the same thing
+// this backend's keys are, so keychain keys are used as they are: signing, the
+// public key and the TLS identity all go through Security. A keychain installed
+// with tlsuv_set_keychain() has keys of its own kind, which Security cannot use.
+extern keychain_t* platform_keychain(void);
+
+static bool keychain_is_platform(void) {
+    return tlsuv_keychain() != NULL && tlsuv_keychain() == platform_keychain();
+}
+
+// takes ownership of `k`
+static int wrap_keychain_key(tlsuv_private_key_t* key_ref, keychain_key_t k) {
+    SecKeyRef key = (SecKeyRef)k;
+    enum applesec_key_type type = key_type_of(key);
+    if (type == APPLESEC_KEY_UNKNOWN) {
+        UM_LOG(WARN, "unsupported keychain key type");
+        CFRelease(key);
+        return -1;
+    }
+    struct applesec_priv_key* pk = tlsuv__calloc(1, sizeof(*pk));
+    pk->api = sec_key_api;
+    pk->key = key;
+    pk->key_type = type;
+    pk->in_keychain = true;
+    *key_ref = &pk->api;
+    return 0;
+}
+
+static int gen_keychain_key(tlsuv_private_key_t* key_ref, const char* name) {
+    if (!keychain_is_platform()) {
+        UM_LOG(WARN, "keychain keys need the platform keychain");
+        return -1;
+    }
+    keychain_key_t k = NULL;
+    if (keychain_gen_key(&k, keychain_key_ec, name) != 0) {
+        if (k) keychain_free_key(k);
+        return -1;
+    }
+    return wrap_keychain_key(key_ref, k);
+}
+
+static int load_keychain_key(tlsuv_private_key_t* key_ref, const char* name) {
+    if (!keychain_is_platform()) {
+        UM_LOG(WARN, "keychain keys need the platform keychain");
+        return -1;
+    }
+    keychain_key_t k = NULL;
+    if (keychain_load_key(&k, name) != 0) {
+        if (k) keychain_free_key(k);
+        return -1;
+    }
+    return wrap_keychain_key(key_ref, k);
+}
+
+static int remove_keychain_key(const char* name) {
+    return keychain_rem_key(name);
 }
 
 // ------------------------------------------------------------------ CSR (PKCS#10)
@@ -1826,10 +1935,11 @@ static tls_context ctx_api = {
     .load_cert = load_cert,
     .fips_status = tls_fips_status,
     .generate_csr_to_pem = generate_csr,
+    // .generate_keychain_key, .load_keychain_key, .remove_keychain_key: set by
+    // new_applesec_ctx() when the platform keychain is in use
     // not supported by this backend:
     // .allow_partial_chain
     // .load_pkcs11_key, .generate_pkcs11_key
-    // .generate_keychain_key, .load_keychain_key, .remove_keychain_key
 };
 
 static int load_file(const char* path, char** content, size_t* l) {
