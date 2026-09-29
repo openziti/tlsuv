@@ -436,9 +436,11 @@ static int load_pkcs11_rsa(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id,
 
     size_t len;
     uint8_t *value = NULL;
-    int rc;
 
     BIGNUM *n = NULL, *e = NULL;
+
+    (void)id;
+    (void)label;
 
     if (p11_get_key_attr(p11_key, CKA_PUBLIC_EXPONENT, (char**)&value, &len) != 0) {
         goto error;
@@ -446,6 +448,9 @@ static int load_pkcs11_rsa(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id,
     e = BN_bin2bn(value, (int)len, NULL);
     tlsuv__free(value);
     value = NULL;
+    if (e == NULL) {
+        goto error;
+    }
 
     if (p11_get_key_attr(p11_key, CKA_MODULUS, (char**)&value, &len) != 0) {
         goto error;
@@ -453,6 +458,9 @@ static int load_pkcs11_rsa(EVP_PKEY *pkey, p11_key_ctx *p11_key, const char *id,
     n = BN_bin2bn(value, (int)len, NULL);
     tlsuv__free(value);
     value = NULL;
+    if (n == NULL) {
+        goto error;
+    }
 
     RSA_set0_key(rsa, n, e, NULL);
     set_rsa_p11_impl(rsa, p11_key);
@@ -464,6 +472,7 @@ error:
     BN_free(e);
     BN_free(n);
     tlsuv__free(value);
+    RSA_free(rsa);
     return -1;
 }
 

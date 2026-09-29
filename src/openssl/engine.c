@@ -385,7 +385,7 @@ static int by_subj_old_hash(X509_LOOKUP *lu, X509_LOOKUP_TYPE t, const X509_NAME
             X509_NAME_hash(name),
     };
     int count = 0;
-    for (int i = 0; i < sizeof(h)/sizeof(h[0]); i++) {
+    for (size_t i = 0; i < sizeof(h)/sizeof(h[0]); i++) {
         for (int idx = 0; ; idx ++) {
             snprintf(path, sizeof(path), "%s/%08lx.%d", dir, h[i], idx);
             struct stat s;
@@ -1104,12 +1104,10 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
     // by subject name hash, not insertion order, so the leaf may not be
     // at index 0.
     X509* leaf = NULL;
-    int leaf_idx = -1;
     for (int i = 0; i < num; i++) {
         X509* x509 = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(certs, i));
         if (x509 && X509_check_private_key(x509, pk->pkey) == 1) {
             leaf = x509;
-            leaf_idx = i;
             break;
         }
     }
