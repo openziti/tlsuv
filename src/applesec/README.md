@@ -81,11 +81,14 @@ Two threads touch an engine:
 - the **event loop thread**, which calls the vtable (`handshake`, `read`,
   `write`, `close`, `free`) and does all IO on the caller's socket/callbacks;
 - the engine's **serial dispatch queue** (`e->queue`), on which all
-  Network.framework handlers, the `dispatch_io` handlers and the accept block run.
+  Network.framework handlers, the `dispatch_io` handlers and the client's accept
+  source run. Nothing on the queue blocks: the client waits for Network.framework's
+  loopback connection with a dispatch source, not a blocking `poll()`, so the
+  connection's state changes (delivered on the same queue) are never held up.
 
 Rules the code relies on:
 
-- `tls_channel` is created on the queue (by the client's accept block or the
+- `tls_channel` is created on the queue (by the client's accept source or the
   server's listener-ready handler, in `tls_to_socket()`, which also moves the
   session to `SESSION_RELAYING`), and every other use of it is dispatched to the
   queue too. `engine_handshake()` forwards peer ciphertext only once the session
@@ -132,7 +135,7 @@ sequenceDiagram
     alt client engine (new_engine)
         E->>E: listen on 127.0.0.1:0
         E->>N: nw_connection_start(127.0.0.1:port, TLS client params)
-        E->>Q: accept block (poll ≤ 1s)
+        E->>Q: accept source on the listener (1 s timeout)
         N-->>Q: connects to the engine's listener
         Q->>Q: accept → tls_sock, start tls_channel (RELAYING)
         N-->>Q: ClientHello on tls_sock
@@ -295,7 +298,7 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
   picked up even after its handler is replaced, so the engine is kept alive by
   references (`refs`): the owner's, one per `nw_connection_t` and `nw_listener_t`
   (dropped by its `cancelled` state, the last callback), one for the client's
-  accept block, one for `tls_channel` (dropped by the `dispatch_io` cleanup
+  pending accept source (dropped by its cancel handler), one for `tls_channel` (dropped by the `dispatch_io` cleanup
   handler, which runs after all its read handlers), and those of a pending
   `engine_close()` and its 200 ms timer. `engine_free()` marks the session closed
   (unless a graceful close is still flushing), cancels the connection and drops the
@@ -313,8 +316,13 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
   queue, bumps `conn_gen` so its late events are ignored, stops `tls_channel`,
   cancels the connection and clears all per-session state, so the next
   `engine_handshake()` starts over; `set_io_fd` can then hand over a new socket.
-  Unlike close/free it uses `dispatch_sync`, so it can block for up to 1 s behind a
-  client accept block that is still polling.
+  Unlike close/free it uses `dispatch_sync`, so it waits for whatever is running on
+  the queue; since nothing there blocks, that is microseconds (0.01 ms on average,
+  measured resetting right after a client handshake starts). The client's accept
+  source is cancelled with the rest. If Network.framework fails before connecting
+  to the loopback listener, its state handler fails the handshake right away with
+  NW's error; the accept source's 1 s timer (`ETIMEDOUT`) only covers NW neither
+  connecting nor reporting a failure.
 
 ## Limitations
 
@@ -329,7 +337,7 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
   `TLS_AGAIN`, and wakes the owner once half the window is free. For such async
   engines `tlsuv_stream_t` does not poll `UV_WRITABLE` for queued writes (the
   socket is writable while the engine is full); it retries on the wakeup.
-- `engine_reset()` blocks (see Teardown); close/free do not.
+- `engine_reset()` is synchronous (see Teardown); close/free are not.
 - Each connection costs a loopback TCP connection and a dispatch queue.
 
 ## Tests

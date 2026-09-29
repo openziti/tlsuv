@@ -37,12 +37,18 @@ static int engine_flush(tlsuv_engine_t self);
 // max plaintext handed to NW but not yet sent, plus ciphertext not yet flushed to
 // the peer; engine_write() accepts no more than this is in flight
 #define NW_WRITE_LIMIT (256 * 1024)
+// how long a client engine waits for NW to connect to its loopback listener. That
+// normally takes about a millisecond; this only bounds NW neither connecting nor
+// failing
+#define ACCEPT_TIMEOUT_NS (1 * NSEC_PER_SEC)
+
 struct applesec_engine_s;
 static void set_error(struct applesec_engine_s *e, CFErrorRef err);
 static void fail(struct applesec_engine_s *e, int posix_code);
 static CFErrorRef posix_error(int code);
 static void wake(struct applesec_engine_s *e);
 static void release_listener(struct applesec_engine_s *e);
+static void cancel_accept(struct applesec_engine_s *e);
 static void engine_release(struct applesec_engine_s *e);
 
 static inline void log_frame(const char *dir, const char *bytes, size_t len) {
@@ -99,7 +105,13 @@ struct applesec_engine_s {
     pthread_mutex_t async_mutex;
     // server engines: TLS listener on 127.0.0.1 the relay connects to
     nw_listener_t listener;
-    // written on e->queue (state handler, accept block), read on the loop thread
+    // client engines: wait on e->queue for NW's connection to the loopback listener,
+    // and time it out. Sources, not a blocking poll(): NW reports the connection's
+    // state on the same queue, so a failure reaches the state handler at once.
+    // e->queue only.
+    dispatch_source_t accept_src;
+    dispatch_source_t accept_timer;
+    // written on e->queue (state handler, accept source), read on the loop thread
     _Atomic(tls_handshake_state) hs_state;
 
     bool io_is_socket;
@@ -113,7 +125,7 @@ struct applesec_engine_s {
     // guarded by outbound_mutex
     bool shutdown_pending;
 
-    // owner + each NW object (connection, listener) + in-flight accept block;
+    // owner + each NW object (connection, listener) + pending accept source;
     // the engine is deallocated when the last one lets go (see engine_release())
     _Atomic int refs;
     // bumped by engine_reset(): completions from a replaced connection compare
@@ -357,6 +369,7 @@ static CFErrorRef describe_error(CFIndex code, const char *desc) {
 // e->queue only; takes ownership of `err`
 static void handshake_failed(struct applesec_engine_s *e, CFErrorRef err) {
     set_error(e, err);
+    cancel_accept(e); // NW failed before connecting: stop waiting for it
     if (e->hs_state != TLS_HS_COMPLETE) {
         e->hs_state = TLS_HS_ERROR;
         if (e->tls_channel) {
@@ -422,6 +435,7 @@ static int forward_inbound(struct applesec_engine_s *e) {
 // e->queue only: stop the relay and close the engine's dup of the caller's socket
 static void stop_io(struct applesec_engine_s *e) {
     release_listener(e);
+    cancel_accept(e);
     if (e->tls_channel) {
         dispatch_io_close(e->tls_channel, DISPATCH_IO_STOP);
         dispatch_release((dispatch_object_t)e->tls_channel);
@@ -589,6 +603,70 @@ static void set_connection_handler(struct applesec_engine_s *e, nw_connection_t 
     });
 }
 
+// e->queue only: stop waiting for NW's connection (accepted, failed, timed out,
+// reset or closed). The cancel handler closes the listening socket.
+static void cancel_accept(struct applesec_engine_s *e) {
+    if (e->accept_timer) {
+        dispatch_source_cancel(e->accept_timer);
+        dispatch_release((dispatch_object_t)e->accept_timer);
+        e->accept_timer = NULL;
+    }
+    if (e->accept_src) {
+        dispatch_source_cancel(e->accept_src);
+        dispatch_release((dispatch_object_t)e->accept_src);
+        e->accept_src = NULL;
+    }
+}
+
+// e->queue only: wait for NW to connect to `lsoc` (engine_create_client) without
+// blocking the queue; owns `lsoc` and one engine reference
+static void start_accept(struct applesec_engine_s *e, uint32_t gen, int lsoc) {
+    if (!is_current(e, gen) || e->hs_state == TLS_HS_ERROR) {
+        // reset/closed/freed, or NW already failed, before this ran
+        close(lsoc);
+        engine_release(e);
+        return;
+    }
+
+    dispatch_source_t src = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, lsoc, 0, e->queue);
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, e->queue);
+    e->accept_src = src;
+    e->accept_timer = timer;
+
+    dispatch_source_set_cancel_handler(src, ^{
+        close(lsoc);
+        engine_release(e);
+    });
+
+    // both are cancelled together (cancel_accept) before any of these could run
+    // for a replaced session, so they only ever act for session `gen`
+    dispatch_source_set_event_handler(src, ^{
+        int tls_sock = accept(lsoc, NULL, 0);
+        int accept_err = errno;
+        cancel_accept(e);
+        if (tls_sock < 0) {
+            UM_LOG(WARN, "accept failed: %s", strerror(accept_err));
+            handshake_failed(e, posix_error(accept_err));
+            return;
+        }
+        int true_val = 1;
+        setsockopt(tls_sock, SOL_SOCKET, SO_NOSIGPIPE, &true_val, sizeof(true_val));
+        setsockopt(tls_sock, IPPROTO_TCP, TCP_NODELAY, &true_val, sizeof(true_val));
+        tls_to_socket(e, tls_sock);
+    });
+
+    // backstop for NW neither connecting nor reporting a failure
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, ACCEPT_TIMEOUT_NS),
+                              DISPATCH_TIME_FOREVER, ACCEPT_TIMEOUT_NS / 10);
+    dispatch_source_set_event_handler(timer, ^{
+        UM_LOG(WARN, "nw_connection did not connect in time");
+        handshake_failed(e, posix_error(ETIMEDOUT)); // cancels the accept
+    });
+
+    dispatch_resume((dispatch_object_t)src);
+    dispatch_resume((dispatch_object_t)timer);
+}
+
 static enum tls_handshake_st engine_create_client(struct applesec_engine_s *e) {
     assert(e);
     assert(e->connection == NULL);
@@ -623,38 +701,12 @@ static enum tls_handshake_st engine_create_client(struct applesec_engine_s *e) {
     nw_connection_start(conn);
     e->connection = conn;
 
-    engine_retain(e); // for the accept block
+    // the listening socket and the engine reference belong to the accept source
+    // (released by its cancel handler); it is set up on the queue, which owns it
+    engine_retain(e);
     uint32_t gen = e->conn_gen;
     dispatch_async(e->queue, ^{
-        struct pollfd pfd = {
-            .fd = lsoc,
-            .events = POLLIN,
-        };
-
-        int ready = poll(&pfd, 1, 1000);
-        bool stale = !is_current(e, gen);
-        if (stale) {
-            // engine reset or freed while waiting
-            close(lsoc);
-        } else if (ready < 1) {
-            UM_LOG(WARN, "nw_connection did not connect in time");
-            close(lsoc);
-            handshake_failed(e, posix_error(ETIMEDOUT));
-        } else {
-            int tls_sock = accept(lsoc, NULL, 0);
-            int accept_err = errno;
-            close(lsoc);
-            if (tls_sock < 0) {
-                UM_LOG(WARN, "accept failed: %s", strerror(accept_err));
-                handshake_failed(e, posix_error(accept_err));
-            } else {
-                int true_val = 1;
-                setsockopt(tls_sock, SOL_SOCKET, SO_NOSIGPIPE, &true_val, sizeof(true_val));
-                setsockopt(tls_sock, IPPROTO_TCP, TCP_NODELAY, &true_val, sizeof(true_val));
-                tls_to_socket(e, tls_sock);
-            }
-        }
-        engine_release(e);
+        start_accept(e, gen, lsoc);
     });
 
     return TLS_HS_BEFORE;
@@ -1165,6 +1217,7 @@ static int engine_reset(tlsuv_engine_t self) {
         e->connection = NULL;
         e->conn_gen++;
         release_listener(e);
+        cancel_accept(e);
         e->session = SESSION_IDLE;
         if (e->tls_channel) {
             dispatch_io_close(e->tls_channel, DISPATCH_IO_STOP);
