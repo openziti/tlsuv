@@ -839,25 +839,12 @@ int tlsuv_http_set_url(tlsuv_http_t *clt, const char *url) {
 }
 
 int tlsuv_http_init_with_src(uv_loop_t *l, tlsuv_http_t *clt, const char *url, tlsuv_src_t *src) {
+    void *data = clt->data; // callers may set it before init, as libuv allows
+    memset(clt, 0, sizeof(*clt));
+    clt->data = data;
     STAILQ_INIT(&clt->requests);
     LIST_INIT(&clt->headers);
-
-    clt->tr = NULL;
-    clt->tr_close = NULL;
-    clt->tr_write = NULL;
-    clt->connector = NULL;
-    clt->connect_req = NULL;
-    clt->ssl = false;
-    clt->tls = NULL;
-    clt->engine = NULL;
-    clt->active = NULL;
-    clt->connected = Disconnected;
     clt->src = src;
-    clt->host_change = false;
-    clt->host = NULL;
-    clt->prefix = NULL;
-    clt->conn_timer = NULL;
-    clt->proc = (uv_idle_t){0};
 
     int rc = tlsuv_http_set_url(clt, url);
     if (rc != 0) {

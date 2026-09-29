@@ -70,6 +70,9 @@ static const uv_link_methods_t ws_methods = {
 
 
 int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_src_t *src) {
+    void *data = ws->data; // callers may set it before init, as libuv allows
+    memset(ws, 0, sizeof(tlsuv_websocket_t));
+    ws->data = data;
     ws->loop = loop;
     ws->type = UV_IDLE;
     ws->src = src;
@@ -104,7 +107,6 @@ int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_
 }
 
 int tlsuv_websocket_init(uv_loop_t *loop, tlsuv_websocket_t *ws) {
-    memset(ws, 0, sizeof(tlsuv_websocket_t));
     return tlsuv_websocket_init_with_src(loop, ws, NULL);
 }
 
