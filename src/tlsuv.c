@@ -426,13 +426,16 @@ static void process_outbound(tlsuv_stream_t *clt) {
         TLS_LOG(TRACE, "processing %zu queued write requests", clt->queue_len);
     } else if (async_load(&clt->async_out) > 0) {
         TLS_LOG(TRACE, "flushing TLS pending data[%zd]", async_load(&clt->async_out));
+        // no clearing async_out after a flush: the engine reports its own drained state
+        // (see setup_async), and a store here could overwrite a newer value it sent from
+        // its thread, leaving queued output with nothing polling for writability
         int rc = clt->tls_engine->write(clt->tls_engine, NULL, 0);
-        if (rc != TLS_AGAIN) {
+        if (rc == TLS_ERR) {
+            // the engine cannot send anymore and will not report a drain: stop polling
+            // for writability (a dead socket stays writable). There is no callback to
+            // notify the application, but the read side gets the corresponding error
             async_store(&clt->async_out, 0);
         }
-        // if we get TLS_ERR here it means something is wrong with the socket
-        // there is no callback to notify the application
-        // but the read side should get corresponding error
     }
     while (!TAILQ_EMPTY(&clt->queue)) {
         req = TAILQ_FIRST(&clt->queue);
