@@ -37,6 +37,8 @@ static int engine_flush(tlsuv_engine_t self);
 // max plaintext handed to NW but not yet sent, plus ciphertext not yet flushed to
 // the peer; engine_write() accepts no more than this is in flight
 #define NW_WRITE_LIMIT (256 * 1024)
+// max plaintext received from NW but not yet read by the owner
+#define DECODED_LIMIT (32 * 1024)
 // how long a client engine waits for NW to connect to its loopback listener. That
 // normally takes about a millisecond; this only bounds NW neither connecting nor
 // failing
@@ -138,8 +140,11 @@ struct applesec_engine_s {
     pthread_mutex_t decode_mutex;
     bool reading_conn;
     bool conn_eof;
-    uint8_t decoded[32 * 1024];
-    // modified under decode_mutex; atomic so wake() can read it without the lock
+    // plaintext NW delivered and the owner has not read yet, kept as the data NW
+    // hands over (no copy, nothing held while idle). guarded by decode_mutex
+    dispatch_data_t decoded;
+    // dispatch_data_get_size(decoded), set whenever decoded changes (under
+    // decode_mutex); a copy because wake() reads it without the lock
     _Atomic size_t decoded_len;
 
     char inbound_buf[32 * 1024];
@@ -477,6 +482,7 @@ static void engine_dealloc(struct applesec_engine_s *e) {
     if (e->error) CFRelease(e->error);
     if (e->policies) CFRelease(e->policies);
     dispatch_release((dispatch_object_t)e->outbound_buf);
+    dispatch_release((dispatch_object_t)e->decoded);
     pthread_mutex_destroy(&e->outbound_mutex);
     pthread_mutex_destroy(&e->decode_mutex);
     pthread_mutex_destroy(&e->async_mutex);
@@ -1107,23 +1113,22 @@ static bool process_decoded(struct applesec_engine_s *e, uint32_t gen, dispatch_
     }
 
     pthread_mutex_lock(&e->decode_mutex);
-    if (dd) {
-        dispatch_data_apply(dd, ^bool(dispatch_data_t r, size_t off, const void* bytes, size_t len) {
-            UM_LOG(TRACE, "engine[%p] decoded %zd bytes", e, len);
-            memcpy(e->decoded + e->decoded_len, bytes, len);
-            e->decoded_len += len;
-            return true;
-        });
+    if (dd && dispatch_data_get_size(dd) > 0) {
+        UM_LOG(TRACE, "engine[%p] decoded %zd bytes", e, dispatch_data_get_size(dd));
+        dispatch_data_t orig = e->decoded;
+        e->decoded = dispatch_data_create_concat(orig, dd);
+        e->decoded_len = dispatch_data_get_size(e->decoded);
+        dispatch_release((dispatch_object_t)orig);
     }
     if (done) {
         e->conn_eof = true;
     }
     e->reading_conn = false;
 
-    if (er == NULL && !done && e->decoded_len < sizeof(e->decoded)) {
+    if (er == NULL && !done && e->decoded_len < DECODED_LIMIT) {
         e->reading_conn = true;
         nw_connection_receive(
-            e->connection, 0, sizeof(e->decoded) - e->decoded_len,
+            e->connection, 0, DECODED_LIMIT - e->decoded_len,
             ^(dispatch_data_t d, nw_content_context_t c, bool done1, nw_error_t er1){
                 process_decoded(e, gen, d, c, done1, er1);
             });
@@ -1148,9 +1153,18 @@ static int engine_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t
     pthread_mutex_lock(&e->decode_mutex);
     if (e->decoded_len > 0) {
         size_t to_copy = MIN(e->decoded_len, maxout);
-        memcpy(out, e->decoded, to_copy);
-        memmove(e->decoded, e->decoded + to_copy, e->decoded_len - to_copy);
-        e->decoded_len -= to_copy;
+        __block size_t copied = 0;
+        dispatch_data_apply(e->decoded, ^bool(dispatch_data_t r, size_t off, const void *bytes, size_t len) {
+            size_t n = MIN(len, to_copy - copied);
+            memcpy(out + copied, bytes, n);
+            copied += n;
+            return copied < to_copy;
+        });
+        // the rest stays where NW put it
+        dispatch_data_t rest = dispatch_data_create_subrange(e->decoded, to_copy, e->decoded_len - to_copy);
+        dispatch_release((dispatch_object_t)e->decoded);
+        e->decoded = rest;
+        e->decoded_len = dispatch_data_get_size(rest);
 
         *out_bytes = to_copy;
         rc = e->decoded_len > 0 ? TLS_MORE_AVAILABLE : TLS_OK;
@@ -1159,11 +1173,11 @@ static int engine_read(tlsuv_engine_t self, char *out, size_t *out_bytes, size_t
     // re-arm whenever no receive is pending: process_decoded stops once `decoded` is full,
     // and the remaining plaintext may already be inside NW with no new ciphertext coming
     if (e->connection != NULL && e->error == NULL && !e->reading_conn && !e->conn_eof &&
-        e->decoded_len < sizeof(e->decoded)) {
+        e->decoded_len < DECODED_LIMIT) {
         UM_LOG(TRACE, "engine[%p] starting decode receive", e);
         e->reading_conn = true;
         uint32_t gen = e->conn_gen;
-        nw_connection_receive(e->connection, 0, sizeof(e->decoded) - e->decoded_len,
+        nw_connection_receive(e->connection, 0, DECODED_LIMIT - e->decoded_len,
                               ^(dispatch_data_t dd, nw_content_context_t ctx, bool done, nw_error_t er){
                                   process_decoded(e, gen, dd, ctx, done, er);
                               });
@@ -1233,6 +1247,8 @@ static int engine_reset(tlsuv_engine_t self) {
         pthread_mutex_unlock(&e->outbound_mutex);
 
         pthread_mutex_lock(&e->decode_mutex);
+        dispatch_release((dispatch_object_t)e->decoded);
+        e->decoded = dispatch_data_empty;
         e->decoded_len = 0;
         e->conn_eof = false;
         e->reading_conn = false;
@@ -1392,6 +1408,7 @@ static struct applesec_engine_s *engine_alloc(struct applesec_ctx *sec_ctx) {
     e->cert_verify_f = sec_ctx->cert_verify_f;
     e->verify_ctx = sec_ctx->verify_ctx;
     e->outbound_buf = dispatch_data_empty;
+    e->decoded = dispatch_data_empty;
 
     dispatch_queue_t global = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
     e->queue = dispatch_queue_create_with_target(
