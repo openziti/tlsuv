@@ -274,8 +274,7 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
     or development certificate and a provisioning profile (an ad-hoc signed binary
     claiming it is killed at launch, an unsigned one gets
     `errSecMissingEntitlement`), so the option suits apps rather than
-    command-line tools. The test suite has no such signature, so its client
-    certificate tests fail with the option on.
+    command-line tools. To run the test suite with it, see Tests.
 
   On both, adding a key or certificate that is already there is not an error.
   `ssl_chain` holds `[identity, intermediates…]`, which `new_client_identity()`
@@ -386,3 +385,81 @@ cd build/ios-sim && SIMCTL_CHILD_TLSUV_TEST_LOG=7 ctest -C Debug --output-on-fai
 `simctl spawn` passes the test only environment variables prefixed with
 `SIMCTL_CHILD_`, and runs it in the simulator's data directory, not the build
 directory.
+
+**macOS with the app keychain** (`-DTLSUV_APPLESEC_APP_KEYCHAIN=ON`). The client
+identity then lives in the data protection keychain, which macOS only opens to a
+binary signed with a development (or Developer ID) certificate whose
+`keychain-access-groups` entitlement a provisioning profile allows. The profile has
+to be embedded in an app bundle: a plain executable claiming the entitlement is
+killed at launch, and without it every `set_own_cert()` fails with
+`errSecMissingEntitlement` (-34018). So the test binary is wrapped in a bundle and
+signed. CTest does not know about the bundle; run the executable inside it.
+
+One-time setup:
+
+1. **Signing certificate**: Xcode → Settings → Accounts → your team → Manage
+   Certificates… → + → Apple Development. `security find-identity -v -p codesigning`
+   must then list it as valid. If `codesign` warns that it is "unable to build chain
+   to self-signed root", the intermediate that issued it is missing: install
+   [AppleWWDRCAG3.cer](https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer)
+   into the login keychain. The team ID is the certificate's `OU`
+   (`openssl x509 -noout -subject`), not the ID in parentheses in its name.
+2. **Provisioning profile**: create a throwaway macOS App project in Xcode with
+   bundle identifier `io.openziti.tlsuv.tests` (Organization Identifier
+   `io.openziti.tlsuv`, Product Name `tests`), your team, automatic signing, and the
+   Keychain Sharing capability; build it once. A bundle identifier can be registered
+   by one team only: if Xcode reports it is taken, pick another (e.g.
+   `io.openziti.tlsuv.tests.<you>`) and pass it as `BUNDLE_ID` below. Xcode registers the App ID and
+   downloads a "Mac Team Provisioning Profile" to
+   `~/Library/Developer/Xcode/UserData/Provisioning Profiles/`, with
+   `keychain-access-groups` = `<TEAM>.*` for this Mac. Profiles of a free (personal)
+   team expire after 7 days; building that project again renews them.
+
+Then build, bundle, sign and run, from the repository root with `TEAM` set to your
+team ID (and `BUNDLE_ID` if you used another); the Go test server must be running,
+as for the other suites. Run it as a script (`TEAM=... bash app-keychain-tests.sh`):
+it stops with `exit` when something is missing, which would end an interactive shell.
+
+```sh
+TEAM=${TEAM:?set TEAM to your team ID}   # the certificate's OU, not the ID in its name
+BUNDLE_ID=${BUNDLE_ID:-io.openziti.tlsuv.tests}   # the bundle ID the profile was made for
+IDENTITY="Apple Development"        # or the certificate's SHA-1 from `security find-identity`
+
+# the Mac profile Xcode downloaded for $BUNDLE_ID
+PROFILE=$(for p in ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/*.provisionprofile; do
+  security cms -D -i "$p" 2>/dev/null | grep -q "<string>$TEAM.$BUNDLE_ID</string>" && echo "$p"; done | head -1)
+[ -n "$PROFILE" ] || { echo "no provisioning profile for $TEAM.$BUNDLE_ID"; exit 1; }
+
+cmake --preset dev-apple -B build/dev-apple-appkc -DTLSUV_APPLESEC_APP_KEYCHAIN=ON
+cmake --build build/dev-apple-appkc --target all_tests
+
+APP=build/dev-apple-appkc/all_tests.app
+rm -rf "$APP" && mkdir -p "$APP/Contents/MacOS"
+cp build/dev-apple-appkc/tests/Debug/all_tests "$APP/Contents/MacOS/"
+cp "$PROFILE" "$APP/Contents/embedded.provisionprofile"
+cat > "$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyLists-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+<key>CFBundleExecutable</key><string>all_tests</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+PLIST
+cat > build/dev-apple-appkc/entitlements.plist <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyLists-1.0.dtd">
+<plist version="1.0"><dict>
+<key>com.apple.application-identifier</key><string>$TEAM.$BUNDLE_ID</string>
+<key>com.apple.developer.team-identifier</key><string>$TEAM</string>
+<key>keychain-access-groups</key><array><string>$TEAM.$BUNDLE_ID</string></array>
+</dict></plist>
+PLIST
+codesign -f -s "$IDENTITY" --entitlements build/dev-apple-appkc/entitlements.plist "$APP"
+
+"$APP/Contents/MacOS/all_tests"
+```
+
+Rebuilding the tests replaces the binary, so it has to be copied into the bundle
+and signed again (the script does both). The bundle's executable also takes the
+usual Catch2 arguments, e.g. `"$APP/Contents/MacOS/all_tests" "[http]"`.
