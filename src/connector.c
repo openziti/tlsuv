@@ -158,17 +158,43 @@ static void free_conn_req(struct conn_req_s *cr) {
     tlsuv__free(cr);
 }
 
-/** resolve a numeric `ip[:port]` local address into a sockaddr of the given family */
-static int parse_source_addr(const char *source_addr, int family, struct sockaddr_storage *out, socklen_t *out_len) {
-    char ip[128];
-    strncpy(ip, source_addr, sizeof(ip) - 1);
-    ip[sizeof(ip) - 1] = 0;
+/**
+ * splits a `host[:port]` string in place. recognizes `[addr]:port` / `[addr]` (required for an
+ * IPv6 literal with a port, since the address itself contains colons) and plain `addr:port` /
+ * `addr` for everything else. a bare, unbracketed address with more than one colon is assumed to
+ * be an IPv6 literal with no port -- splitting on any of its colons would silently corrupt it.
+ */
+static char *split_host_port(char *buf, char **port_out) {
+    *port_out = NULL;
 
-    char *port = strrchr(ip, ':');
-    if (port != NULL) {
-        *port = 0;
-        port++;
+    if (buf[0] == '[') {
+        char *end = strchr(buf, ']');
+        if (end != NULL) {
+            *end = 0;
+            if (end[1] == ':') {
+                *port_out = end + 2;
+            }
+            return buf + 1;
+        }
+        // malformed: unterminated '[' -- fall through and treat the whole thing as the host
     }
+
+    char *first_colon = strchr(buf, ':');
+    if (first_colon != NULL && strchr(first_colon + 1, ':') == NULL) {
+        *first_colon = 0;
+        *port_out = first_colon + 1;
+    }
+    return buf;
+}
+
+/** resolve a numeric `[ip6]:port` / `ip4:port` / numeric-ip local address into a sockaddr of the given family */
+static int parse_source_addr(const char *source_addr, int family, struct sockaddr_storage *out, socklen_t *out_len) {
+    char buf[128];
+    strncpy(buf, source_addr, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = 0;
+
+    char *port;
+    char *ip = split_host_port(buf, &port);
 
     struct addrinfo hints = {0};
     hints.ai_family = family;
