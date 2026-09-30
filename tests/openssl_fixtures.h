@@ -22,6 +22,9 @@
 #if defined(TEST_openssl) || defined(TEST_boringssl)
 #define TEST_HAVE_OPENSSL_API 1
 
+// the helpers use the legacy EC/RSA APIs (OpenSSL 3 deprecates them, BoringSSL does not)
+#define OPENSSL_SUPPRESS_DEPRECATED
+
 #include <openssl/bio.h>
 #include <openssl/ec.h>
 #include <openssl/evp.h>

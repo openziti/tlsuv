@@ -784,7 +784,7 @@ gVR4vMEhZP3bGvqSofXMxTlVj56IQFruBV3B+cKmOavMgEFw/4gzPCCHmMbFkorf
 }
 
 #ifdef TEST_HAVE_OPENSSL_API
-TEST_CASE("keychain csr", "[key]") {
+TEST_CASE("keychain_csr", "[key]") {
     mock_keychain_register(); // platforms without a keychain use the software one
     auto tls = default_tls_context(nullptr, 0);
     if (tls->generate_keychain_key == nullptr || tls->generate_csr_to_pem == nullptr) {
@@ -817,11 +817,9 @@ TEST_CASE("keychain csr", "[key]") {
 }
 
 // Keys in a software keychain, in the shapes real keychains report them
-// (see mock_keychain.h). Only where the platform has no keychain of its own.
-TEST_CASE("keychain mock keys", "[key]") {
-    if (!mock_keychain_register()) {
-        SKIP("platform has its own keychain");
-    }
+// (see mock_keychain.h). Replaces the platform keychain, if any, for the test.
+TEST_CASE("keychain_mock_keys", "[key]") {
+    MockKeychainScope mock_scope;
 
     auto format = GENERATE(MockFormat::SPKI, MockFormat::Raw, MockFormat::RawNoBits);
     auto type = GENERATE(keychain_key_ec, keychain_key_rsa);
@@ -878,9 +876,10 @@ TEST_CASE("keychain mock keys", "[key]") {
     }
 
     // buffer smaller than the largest signature is refused instead of overflowed
-    char small[8];
-    size_t smalllen = sizeof(small);
-    CHECK(pk->sign(pk, hash_SHA256, data, sizeof(data), small, &smalllen) != 0);
+    // (`small` is a macro in the Windows headers, hence the name)
+    char tiny[8];
+    size_t tinylen = sizeof(tiny);
+    CHECK(pk->sign(pk, hash_SHA256, data, sizeof(data), tiny, &tinylen) != 0);
 
     // the private key cannot be exported
     char *pem = nullptr;

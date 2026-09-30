@@ -1733,9 +1733,7 @@ TEST_CASE("keychain_client_cert_test", "[http]") {
 
 // software keychain: EC (TLS 1.3 capable) and RSA (PKCS#1 v1.5 only, so TLS 1.2)
 TEST_CASE("mock_keychain_client_cert_test", "[http]") {
-    if (!mock_keychain_register()) {
-        SKIP("platform has its own keychain");
-    }
+    MockKeychainScope mock_scope;
 
     auto type = GENERATE(keychain_key_ec, keychain_key_rsa);
     auto &mock = mock_keychain();

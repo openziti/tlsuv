@@ -17,8 +17,10 @@
 // keychains have: the Android one returns SubjectPublicKeyInfo and has no
 // key_bits(), Apple's returns the raw EC point.
 //
-// A keychain can be registered with tlsuv only once per process and only if the
-// platform did not register its own, see mock_keychain_register().
+// Tests of the mock itself use MockKeychainScope, which replaces the platform
+// keychain for the duration of a test. Tests of real keychain keys run against
+// the platform keychain, or against the mock where there is none, see
+// mock_keychain_register().
 
 #ifndef TLSUV_TESTS_MOCK_KEYCHAIN_H
 #define TLSUV_TESTS_MOCK_KEYCHAIN_H
@@ -180,7 +182,9 @@ private:
     }
 
     // same contract as the real keychains: EC signs a digest and returns DER;
-    // RSA signs a DigestInfo with PKCS#1 v1.5 padding
+    // RSA signs a DigestInfo with PKCS#1 v1.5 padding, or (as the Apple keychain
+    // does) the raw, already padded block with RSA_NO_PADDING: OpenSSL uses that
+    // for RSA-PSS in TLS 1.3
     static int key_sign(keychain_key_t k, const uint8_t *data, size_t datalen,
                         uint8_t *sig, size_t *siglen, int padding) {
         auto pkey = (EVP_PKEY *)k;
@@ -192,7 +196,7 @@ private:
         }
 
         RSA *rsa = (RSA *)EVP_PKEY_get0_RSA(pkey);
-        if (padding != RSA_PKCS1_PADDING) return -1;
+        if (padding != RSA_PKCS1_PADDING && padding != RSA_NO_PADDING) return -1;
 #ifdef TEST_boringssl
         size_t l = 0;
         if (RSA_sign_raw(rsa, &l, sig, RSA_size(rsa), data, datalen, padding) != 1) return -1;
@@ -219,16 +223,34 @@ inline MockKeychain &MockKeychain::self() {
     return mock_keychain();
 }
 
-// Registers the mock with tlsuv. Returns false when that is not possible: the
-// platform has its own keychain (macOS, Windows), which tests use instead.
-// Contexts created before registration do not have keychain support.
-inline bool mock_keychain_register() {
-    static bool registered = false;
-    if (!registered) {
-        if (tlsuv_keychain() != nullptr) return false;
+// Makes tlsuv use the mock keychain for the lifetime of the object, even if the
+// platform has its own (macOS, Windows), then puts the previous keychain back.
+// Declare it first in a test: keys and contexts created while it is active have
+// to be freed before it goes out of scope.
+class MockKeychainScope {
+public:
+    MockKeychainScope() : previous(const_cast<keychain_t *>(tlsuv_keychain())) {
         tlsuv_set_keychain(&mock_keychain().api);
-        registered = true;
     }
+
+    ~MockKeychainScope() {
+        tlsuv_set_keychain(previous);
+    }
+
+    MockKeychainScope(const MockKeychainScope &) = delete;
+    MockKeychainScope &operator=(const MockKeychainScope &) = delete;
+
+private:
+    keychain_t *previous;
+};
+
+// For tests of real keychain keys: on platforms without a keychain (Linux,
+// Android) install the mock for the rest of the process so those tests have
+// something to run against. Returns false, and changes nothing, if the platform
+// has a keychain. Contexts created before registration do not have keychain support.
+inline bool mock_keychain_register() {
+    if (tlsuv_keychain() != nullptr) return false;
+    tlsuv_set_keychain(&mock_keychain().api);
     return true;
 }
 
