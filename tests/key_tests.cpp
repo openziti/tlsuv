@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <catch2/catch_all.hpp>
+#include "fixtures.h"
 #include "p11.h"
 #include "util.h"
 
@@ -353,6 +354,9 @@ TEST_CASE("keychain", "[key]") {
         tls->free_ctx(tls);
         SKIP("keychain not supported");
     }
+    DEFER {
+        tls->free_ctx(tls);
+    };
 
     uv_timeval64_t now;
     uv_gettimeofday(&now);
@@ -364,6 +368,12 @@ TEST_CASE("keychain", "[key]") {
         REQUIRE(tls->load_keychain_key(&pk, name.c_str()) != 0);
 
         REQUIRE(tls->generate_keychain_key(&pk, name.c_str()) == 0);
+        // a failed check must not leave the key behind in the (user's) keychain
+        bool removed = false;
+        DEFER {
+            if (pk) pk->free(pk);
+            if (!removed) tls->remove_keychain_key(name.c_str());
+        };
 
         char data[1024];
         uv_random(nullptr, nullptr, data, sizeof(data), 0, nullptr);
@@ -403,10 +413,10 @@ TEST_CASE("keychain", "[key]") {
         }
 
         pk->free(pk);
+        pk = nullptr;
+        removed = true;
         REQUIRE(0 == tls->remove_keychain_key(name.c_str()));
     }
-
-    tls->free_ctx(tls);
 }
 
 TEST_CASE("keychain-manual", "[.]") {

@@ -25,6 +25,14 @@
 #include <unistd.h>
 #endif
 
+static void close_sock(uv_os_sock_t s) {
+#if _WIN32
+    closesocket(s);
+#else
+    close(s);
+#endif
+}
+
 TEST_CASE_METHOD(UvLoopTest, "default connect fail", "[connector]") {
     auto connector = tlsuv_global_connector();
 
@@ -33,6 +41,9 @@ TEST_CASE_METHOD(UvLoopTest, "default connect fail", "[connector]") {
         int err;
         uv_os_sock_t sock;
     } result = {false, 0,0};
+    DEFER {
+        if (result.called && result.err == 0) close_sock(result.sock);
+    };
 
     auto cr = connector->connect(loop, connector, "127.0.0.1", "7553",
                                  [](uv_os_sock_t s, int err, void *ctx) {
@@ -47,13 +58,6 @@ TEST_CASE_METHOD(UvLoopTest, "default connect fail", "[connector]") {
 
     INFO("error => " << uv_strerror(result.err));
     REQUIRE(result.err == UV_ECONNREFUSED);
-
-#if _WIN32
-    closesocket(result.sock);
-#else
-    close(result.sock);
-#endif
-
 }
 
 TEST_CASE_METHOD(UvLoopTest, "default connector", "[connector]") {
@@ -64,6 +68,9 @@ TEST_CASE_METHOD(UvLoopTest, "default connector", "[connector]") {
         int err;
         uv_os_sock_t sock;
     } result = {false, 0,0};
+    DEFER {
+        if (result.called && result.err == 0) close_sock(result.sock);
+    };
 
     connector->connect(loop, connector, "localhost", "7443",
                        [](uv_os_sock_t s, int err, void *ctx){
@@ -92,13 +99,6 @@ TEST_CASE_METHOD(UvLoopTest, "default connector", "[connector]") {
         INFO("connected to address: " << dest << ":" << ntohs(peer.sin6_port));
         REQUIRE(peer.sin6_port == htons(7443));
     }
-
-#if _WIN32
-    closesocket
-#else
-    close
-#endif
-         (result.sock);
 }
 
 TEST_CASE_METHOD(UvLoopTest, "proxy connector", "[connector]") {
@@ -114,6 +114,11 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connector", "[connector]") {
         int err;
         uv_os_sock_t sock;
     } result = {false, 0, (uv_os_sock_t)-1};
+    DEFER {
+        if (result.called && result.err == 0) close_sock(result.sock);
+        // not while a connect is still pending (the test timed out): it would use it
+        if (result.called) connector->free(connector);
+    };
 
     connector->connect(loop, connector, "127.0.0.1", target_port,
                        [](uv_os_sock_t s, int err, void* ctx){
@@ -135,15 +140,6 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connector", "[connector]") {
     char dest[256];
     uv_ip4_name((sockaddr_in*)&peer, dest, sizeof(dest));
     fprintf(stderr, "dest = %s\n", dest);
-
-#if _WIN32
-    closesocket
-#else
-    close
-#endif
-         (result.sock);
-
-    connector->free(connector);
 }
 
 TEST_CASE("base64 encode", "[connector]") {

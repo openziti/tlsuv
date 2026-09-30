@@ -525,7 +525,17 @@ TEST_CASE("large/partial writes", "[stream]") {
     } conn_res = { false, 0 };
     cr.data = &conn_res;
 
+    struct write_res {
+        int count;
+        std::vector<int> results;
+    } w_res = {0};
+
     tlsuv_stream_init(loopTest.loop, &s, testServerTLS());
+    // after w_res: closing cancels queued writes, whose callbacks record into it
+    DEFER {
+        tlsuv_stream_close(&s, (uv_close_cb) tlsuv_stream_free); // UV_EALREADY if closed below
+        loopTest.drain();
+    };
 
     tlsuv_stream_connect(&cr, &s, TEST_SERVER, 7443, [](uv_connect_t *r, int status){
         auto res = (connect_res*) r->data;
@@ -537,11 +547,6 @@ TEST_CASE("large/partial writes", "[stream]") {
     REQUIRE(conn_res.err == 0);
 
 #define MSG_SIZE (1024*1024)
-
-    struct write_res {
-        int count;
-        std::vector<int> results;
-    } w_res = {0};
 
     s.data = &w_res;
     for (int i = 0; i < 20; i++) {
@@ -594,7 +599,6 @@ TEST_CASE("small read buffers", "[stream]") {
         size_t read_size;
         int connect_status = 1;
         int read_error = 0;
-        bool closed = false;
     } st;
     st.read_size = GENERATE(97, 1000);
     CAPTURE(st.read_size);
@@ -604,6 +608,12 @@ TEST_CASE("small read buffers", "[stream]") {
     s.data = &st;
 
     uv_connect_t cr;
+    uv_write_t wr;
+    // after st, cr and wr: closing cancels pending requests, whose callbacks use them
+    DEFER {
+        tlsuv_stream_close(&s, (uv_close_cb) tlsuv_stream_free);
+        test.drain();
+    };
     cr.data = &st;
     tlsuv_stream_connect(&cr, &s, TEST_SERVER, 7443, [](uv_connect_t *r, int status) {
         auto st = (echo_state *) r->data;
@@ -627,7 +637,6 @@ TEST_CASE("small read buffers", "[stream]") {
             free(b->base);
         });
 
-    uv_write_t wr;
     uv_buf_t buf = uv_buf_init(st.sent.data(), (unsigned int) st.sent.size());
     REQUIRE(tlsuv_stream_write(&wr, &s, &buf, [](uv_write_t *, int status) {
         CHECK(status == 0);
@@ -637,11 +646,6 @@ TEST_CASE("small read buffers", "[stream]") {
     CHECK(st.read_error == 0);
     REQUIRE(st.got.size() == st.sent.size());
     CHECK(st.got == st.sent);
-
-    tlsuv_stream_close(&s, [](uv_handle_t *h) {
-        ((echo_state *) h->data)->closed = true;
-    });
-    test.run(UNTIL(st.closed));
 }
 
 // the app has no buffer (alloc_cb returns an empty one, read_cb gets UV_ENOBUFS)
@@ -659,11 +663,17 @@ TEST_CASE("no buffer after peer close", "[stream]") {
         int enobufs = 0;
         std::string data;
         int end = 0; // UV_EOF, or the error that ended reading
-        bool closed = false;
     } st;
     s.data = &st;
 
     uv_connect_t cr;
+    uv_write_t wr;
+    std::string req = "GET /json HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    // after st, cr, wr and req: closing cancels pending requests, whose callbacks use them
+    DEFER {
+        tlsuv_stream_close(&s, (uv_close_cb) tlsuv_stream_free);
+        test.drain();
+    };
     cr.data = &st;
     tlsuv_stream_connect(&cr, &s, TEST_SERVER, 8443, [](uv_connect_t *r, int status) {
         ((state *) r->data)->connect_status = status;
@@ -672,8 +682,6 @@ TEST_CASE("no buffer after peer close", "[stream]") {
     REQUIRE(st.connect_status == 0);
 
     // the server answers and closes before we start reading
-    std::string req = "GET /json HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    uv_write_t wr;
     wr.data = &st;
     uv_buf_t buf = uv_buf_init(req.data(), (unsigned int) req.size());
     REQUIRE(tlsuv_stream_write(&wr, &s, &buf, [](uv_write_t *w, int status) {
@@ -709,11 +717,6 @@ TEST_CASE("no buffer after peer close", "[stream]") {
     CHECK(st.enobufs > 0);
     CHECK(st.end == UV_EOF);
     CHECK_THAT(st.data, Catch::Matchers::StartsWith("HTTP/1.1 200 OK"));
-
-    tlsuv_stream_close(&s, [](uv_handle_t *h) {
-        ((state *) h->data)->closed = true;
-    });
-    test.run(UNTIL(st.closed));
 }
 
 TEST_CASE_METHOD(UvLoopTest, "stream/global proxy", "[stream]") {
@@ -736,6 +739,13 @@ TEST_CASE_METHOD(UvLoopTest, "stream/global proxy", "[stream]") {
     s.data = &result;
 
     uv_connect_t cr;
+    // after result and cr; also puts the global connector back for the tests after this one
+    DEFER {
+        tlsuv_stream_close(&s, (uv_close_cb) tlsuv_stream_free);
+        drain();
+        tlsuv_set_global_connector(nullptr);
+        proxy->free(proxy);
+    };
     cr.data = &s;
     tlsuv_stream_connect(&cr, &s, TEST_SERVER, 7443, [](uv_connect_t *r, int status){
         auto clt = (tlsuv_stream_t*)r->data;
@@ -786,12 +796,6 @@ TEST_CASE_METHOD(UvLoopTest, "stream/global proxy", "[stream]") {
     while(result.data != "12345") {
         uv_run(loop, UV_RUN_ONCE);
     }
-
-    tlsuv_stream_close(&s, (uv_close_cb)tlsuv_stream_free);
-    uv_run(loop, UV_RUN_DEFAULT);
-
-    tlsuv_set_global_connector(nullptr);
-    proxy->free(proxy);
 }
 
 
@@ -828,6 +832,11 @@ TEST_CASE("stream ALPN negotiation", "[stream]") {
     } res{};
 
     uv_connect_t cr;
+    // after res and cr, which the connect callback uses
+    DEFER {
+        tlsuv_stream_close(&s, (uv_close_cb) tlsuv_stream_free);
+        test.drain();
+    };
     cr.data = &res;
     REQUIRE(tlsuv_stream_connect(&cr, &s, TEST_SERVER, tc.port, [](uv_connect_t *r, int status) {
         auto res = (connect_res *) r->data;
@@ -850,9 +859,6 @@ TEST_CASE("stream ALPN negotiation", "[stream]") {
         // backends report "no ALPN" as either NULL or ""
         CHECK_FALSE(res.has_proto);
     }
-
-    tlsuv_stream_close(&s, (uv_close_cb) tlsuv_stream_free);
-    test.run();
 }
 
 // base64 body of a PEM, whitespace and armour stripped, for comparing encodings
@@ -916,6 +922,14 @@ TEST_CASE("stream peer certificate", "[stream]") {
         int status;
     } res{};
     uv_connect_t cr;
+    tlsuv_certificate_t peer = nullptr;
+    // after res and cr, which the connect callback uses; the stream goes before tls
+    DEFER {
+        if (peer) peer->free(peer);
+        tlsuv_stream_close(&s, (uv_close_cb) tlsuv_stream_free);
+        test.drain();
+        tls->free_ctx(tls);
+    };
     cr.data = &res;
     REQUIRE(tlsuv_stream_connect(&cr, &s, "localhost", 8443, [](uv_connect_t *r, int status) {
         auto res = (connect_res *) r->data;
@@ -926,7 +940,6 @@ TEST_CASE("stream peer certificate", "[stream]") {
     REQUIRE(res.status == 0);
     REQUIRE_FALSE(verified_leaf.empty());
 
-    tlsuv_certificate_t peer = nullptr;
     REQUIRE(s.tls_engine->get_peer_cert(s.tls_engine, &peer) == 0);
     REQUIRE(peer != nullptr);
 
@@ -944,11 +957,6 @@ TEST_CASE("stream peer certificate", "[stream]") {
 
     struct tm exp{};
     CHECK(peer->get_expiration(peer, &exp) == 0);
-    peer->free(peer);
-
-    tlsuv_stream_close(&s, nullptr);
-    test.run();
-    tls->free_ctx(tls);
 }
 
 // drive an engine directly over a blocking TCP socket (no tlsuv_stream_t)
@@ -1025,29 +1033,31 @@ TEST_CASE("engine reset and reuse", "[stream]") {
     UvLoopTest test; // initializes the socket library on windows
     tls_context *tls = testServerTLS();
     tlsuv_engine_t eng = tls->new_engine(tls, "localhost");
+    uv_os_sock_t s = (uv_os_sock_t) -1;
+    // an async engine's own threads keep its connection going until it is freed
+    DEFER {
+        eng->close(eng);
+        eng->free(eng);
+        if (s != (uv_os_sock_t) -1) close_socket(s);
+    };
     REQUIRE(eng->reset != nullptr);
 
-    uv_os_sock_t prev = (uv_os_sock_t) -1;
     for (int round = 0; round < 3; round++) {
         INFO("round " << round);
         if (round > 0) {
             REQUIRE(eng->reset(eng) == 0);
-            close_socket(prev);
+            close_socket(s);
+            s = (uv_os_sock_t) -1;
         }
 
-        uv_os_sock_t s = connect_tcp(TEST_SERVER, "7443");
+        s = connect_tcp(TEST_SERVER, "7443");
         REQUIRE(s != (uv_os_sock_t) -1);
         eng->set_io_fd(eng, (tlsuv_sock_t) s);
 
         REQUIRE(engine_handshake_sync(eng, s));
         std::string msg = "hello #" + std::to_string(round);
         CHECK(engine_echo_sync(eng, s, msg) == msg);
-        prev = s;
     }
-
-    eng->close(eng);
-    eng->free(eng);
-    close_socket(prev);
 }
 
 TEST_CASE("connect to address", "[stream]") {

@@ -92,6 +92,10 @@ TEST_CASE("https over custom src", "[http]") {
     // note: not "small" -- windows headers #define small char
     resp_capture json_resp(resp_body_cb);
     resp_capture bytes_resp(resp_body_cb);
+    DEFER {
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+    };
     tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &json_resp);
     tlsuv_http_req(&clt, "GET", "/bytes/100000", resp_capture_cb, &bytes_resp);
 
@@ -105,7 +109,4 @@ TEST_CASE("https over custom src", "[http]") {
     REQUIRE(bytes_resp.code == HTTP_STATUS_OK);
     CHECK(bytes_resp.resp_body_end_called);
     CHECK(bytes_resp.body.size() == 100000);
-
-    tlsuv_http_close(&clt, nullptr);
-    test.run();
 }

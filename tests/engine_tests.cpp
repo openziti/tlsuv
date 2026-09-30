@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 #include <catch2/catch_all.hpp>
+#include "fixtures.h"
 #include "tlsuv/tlsuv.h"
 
 #include <cstring>
@@ -328,6 +329,18 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     engine->set_protocols(engine, protos, num_protos);
 
     SOCKET sock = socket(addr->ai_family, SOCK_STREAM, 0);
+    // an async engine's own threads keep its connection going until it is freed
+    DEFER {
+        engine->close(engine);
+#if _WIN32
+        closesocket(sock);
+#else
+        close(sock);
+#endif
+        freeaddrinfo(addr);
+        engine->free(engine);
+        tls->free_ctx(tls);
+    };
 
     auto address = reinterpret_cast<sockaddr_in *>(addr->ai_addr);
     int addrlen = addr->ai_addrlen;
@@ -356,16 +369,4 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     const char *alpn = engine->get_alpn(engine);
     REQUIRE(alpn != nullptr);
     CHECK_THAT(alpn, Catch::Matchers::Matches("h2"));
-
-    engine->close(engine);
-
-#if _WIN32
-    closesocket(sock);
-#else
-    close(sock);
-#endif
-
-    freeaddrinfo(addr);
-    engine->free(engine);
-    tls->free_ctx(tls);
 }

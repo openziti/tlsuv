@@ -131,8 +131,12 @@ TEST_CASE("conn failures", "[http]") {
     auto scheme = GENERATE(as < std::string > {}, "http", "https");
     UvLoopTest test;
 
-    tlsuv_http_t clt;
+    tlsuv_http_t clt{};
     resp_capture resp(resp_body_cb);
+    DEFER {
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+    };
 
     string url = scheme + "://localhost:1222";
     INFO(url);
@@ -144,9 +148,6 @@ TEST_CASE("conn failures", "[http]") {
     test.run();
 
     REQUIRE(resp.code == UV_ECONNREFUSED);
-
-    tlsuv_http_close(&clt, nullptr);
-    test.run();
 }
 
 
@@ -180,7 +181,14 @@ TEST_CASE("http_tests", "[http]") {
     std::string testType = scheme + '(' + (connector ? "proxy" : "direct") + ")";
     tlsuv_set_global_connector(connector);
 
+    // requests' callbacks point at these: declared before DEFER, so they outlive it
     resp_capture resp(resp_body_cb);
+    resp_capture resp2(resp_body_cb);
+    DEFER {
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+        tlsuv_set_global_connector(nullptr);
+    };
 
     WHEN(testType << " redirect") {
         tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
@@ -217,7 +225,6 @@ TEST_CASE("http_tests", "[http]") {
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/get", resp_capture_cb, &resp);
         tlsuv_http_req_header(req, "Request-Header", "this is request header");
 
-        resp_capture resp2(resp_body_cb);
         tlsuv_http_req_t *req2 = tlsuv_http_req(&clt, "GET", "/get", resp_capture_cb, &resp2);
 
         test.run();
@@ -310,9 +317,6 @@ TEST_CASE("http_tests", "[http]") {
             REQUIRE(resp.req_body_cb_called);
         }
     }
-    tlsuv_http_close(&clt, nullptr);
-    tlsuv_set_global_connector(nullptr);
-    test.run();
 }
 
 #if defined(HSM_LIB)
@@ -355,8 +359,14 @@ TEST_CASE("client_cert_test","[http]") {
     UvLoopTest test;
     tls_context *tls = nullptr;
 
-    tlsuv_http_t clt;
+    tlsuv_http_t clt{};
     resp_capture resp(resp_body_cb);
+    DEFER {
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+        if (tls)
+            tls->free_ctx(tls);
+    };
 
     WHEN("client cert NOT set") {
         tlsuv_http_init(test.loop, &clt, testServerURL("auth").c_str());
@@ -459,9 +469,6 @@ TEST_CASE("client_cert_test","[http]") {
         test.run();
     }
 
-    tlsuv_http_close(&clt, nullptr);
-    if (tls)
-        tls->free_ctx(tls);
     test.run();
 }
 
@@ -475,7 +482,7 @@ static long duration(uv_timeval64_t &start, uv_timeval64_t &stop) {
 TEST_CASE("client_idle_test","[http]") {
     UvLoopTest test;
 
-    tlsuv_http_t clt;
+    tlsuv_http_t clt{};
 
     tlsuv_http_body_cb bodyCb = [](tlsuv_http_req_t *req, char *b, ssize_t len) {
         auto r = static_cast<resp_capture *>(req->data);
@@ -485,6 +492,10 @@ TEST_CASE("client_idle_test","[http]") {
         }
     };
     resp_capture resp(bodyCb);
+    DEFER {
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+    };
     tlsuv_http_init(test.loop, &clt, testServerURL("https").c_str());
     tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_idle_keepalive(&clt, 5000);
@@ -502,8 +513,6 @@ TEST_CASE("client_idle_test","[http]") {
             CHECK(duration(start, resp.resp_endtime) < 2 * ONE_SECOND);
             CHECK(duration(resp.resp_endtime, stop) >= (5 * ONE_SECOND - ONE_MILLI));
         }
-
-        tlsuv_http_close(&clt, nullptr);
     }
     test.run();
 }
@@ -601,8 +610,12 @@ TEST_CASE("invalid CA", "[http]") {
 TEST_CASE("http_prefix", "[http]") {
     UvLoopTest test;
 
-    tlsuv_http_t clt;
+    tlsuv_http_t clt{};
     resp_capture resp(resp_body_cb);
+    DEFER {
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+    };
     tlsuv_http_init(test.loop, &clt, (testServerURL("http") + "/bytes").c_str());
     tlsuv_http_set_ssl(&clt, testServerTLS());
     tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/256", resp_capture_cb, &resp);
@@ -611,16 +624,17 @@ TEST_CASE("http_prefix", "[http]") {
 
     REQUIRE(resp.code == HTTP_STATUS_OK);
     CHECK_THAT(resp.headers["Content-Length"], Equals("256"));
-
-    tlsuv_http_close(&clt, nullptr);
-    test.run();
 }
 
 TEST_CASE("http_prefix_after", "[http]") {
     UvLoopTest test;
 
-    tlsuv_http_t clt;
+    tlsuv_http_t clt{};
     resp_capture resp(resp_body_cb);
+    DEFER {
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+    };
     tlsuv_http_init(test.loop, &clt, testServerURL("http").c_str());
     tlsuv_http_set_ssl(&clt, testServerTLS());
 
@@ -631,9 +645,6 @@ TEST_CASE("http_prefix_after", "[http]") {
 
     REQUIRE(resp.code == HTTP_STATUS_OK);
     CHECK_THAT(resp.headers["Content-Length"], Equals("256"));
-
-    tlsuv_http_close(&clt, nullptr);
-    test.run();
 }
 
 TEST_CASE("content_length_test", "[http]") {
@@ -1196,8 +1207,12 @@ TEST_CASE("form test too big", "[http]") {
     std::string scheme = GENERATE("http", "https");
     UvLoopTest test;
 
-    tlsuv_http_t clt;
+    tlsuv_http_t clt{};
     resp_capture resp(resp_body_cb);
+    DEFER {
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+    };
 
     tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
     tlsuv_http_set_ssl(&clt, testServerTLS());
@@ -1220,9 +1235,6 @@ TEST_CASE("form test too big", "[http]") {
 
     REQUIRE(resp.code == UV_ENOMEM);
     REQUIRE(resp.status == "form data too big");
-
-    tlsuv_http_close(&clt, nullptr);
-    test.run();
 }
 
 TEST_CASE("test req header too big", "[http]") {
