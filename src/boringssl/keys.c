@@ -78,7 +78,7 @@ void pub_key_init(struct pub_key_s* pubkey) {
     *pubkey = PUB_KEY_API;
 }
 
-static tlsuv_private_key_t new_private_key(EVP_PKEY* pkey) {
+tlsuv_private_key_t new_private_key(EVP_PKEY* pkey) {
     struct priv_key_s* private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
     *private_key = PRIV_KEY_API;
     private_key->pkey = pkey;
@@ -179,8 +179,6 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char* d
                         size_t* siglen) {
     struct priv_key_s* priv = (struct priv_key_s*)pk;
     int rc = 0;
-    EVP_MD_CTX* digest = EVP_MD_CTX_new();
-    EVP_PKEY_CTX* pctx = NULL;
 
     const EVP_MD* hash = NULL;
     switch (md) {
@@ -193,6 +191,19 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char* d
     default:
         break;
     }
+
+    if (pkey_keychain_key(priv->pkey) != NULL) {
+        uint8_t dgst[EVP_MAX_MD_SIZE];
+        unsigned int dgstlen = 0;
+        if (hash == NULL || EVP_Digest(data, datalen, dgst, &dgstlen, hash, NULL) != 1) {
+            UM_LOG(WARN, "failed to hash data for keychain signature");
+            return -1;
+        }
+        return keychain_sign_digest(priv->pkey, hash, dgst, dgstlen, (uint8_t*)sig, siglen);
+    }
+
+    EVP_MD_CTX* digest = EVP_MD_CTX_new();
+    EVP_PKEY_CTX* pctx = NULL;
 
     if ((EVP_DigestSignInit(digest, &pctx, hash, NULL, priv->pkey) != 1) ||
         (EVP_DigestSignUpdate(digest, data, datalen) != 1)) {
@@ -228,12 +239,17 @@ static tlsuv_public_key_t privkey_pubkey(tlsuv_private_key_t pk) {
 }
 
 static int privkey_to_pem(tlsuv_private_key_t pk, char** pem, size_t* pemlen) {
-    BIO* b = BIO_new(BIO_s_mem());
     struct priv_key_s* privkey = (struct priv_key_s*)pk;
 
     *pem = NULL;
     *pemlen = 0;
 
+    if (pkey_keychain_key(privkey->pkey) != NULL) {
+        UM_LOG(WARN, "cannot export a private key stored in the keychain");
+        return -1;
+    }
+
+    BIO* b = BIO_new(BIO_s_mem());
     if (!PEM_write_bio_PKCS8PrivateKey(b, privkey->pkey, NULL, NULL, 0, NULL, NULL)) {
         unsigned long err = ERR_get_error();
         UM_LOG(WARN, "failed to generate PEM for private key: %ld/%s", err, ERR_lib_error_string(err));

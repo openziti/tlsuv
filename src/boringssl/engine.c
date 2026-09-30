@@ -63,6 +63,10 @@ struct openssl_engine {
     io_read read_f;
     io_write write_f;
 
+    // client/server key when it lives in the keychain: signing goes through
+    // kc_key_method. Holds a reference, it keeps the keychain handle alive.
+    EVP_PKEY* kc_pkey;
+
     unsigned long error;
 };
 
@@ -139,7 +143,8 @@ static tls_context openssl_context_api = {
     .parse_pkcs7_certs = parse_pkcs7_certs,
     .generate_key = gen_key,
     .load_key = load_key,
-    // no PKCS11/keychain support in the BoringSSL backend
+    // no PKCS11 support in the BoringSSL backend;
+    // keychain hooks are set per context, see new_boringssl_ctx()
     .load_cert = load_cert,
     .generate_csr_to_pem = generate_csr,
 };
@@ -214,6 +219,13 @@ tls_context* new_boringssl_ctx(const char* ca, size_t ca_len) {
 
     struct openssl_ctx* c = tlsuv__calloc(1, sizeof(struct openssl_ctx));
     c->api = openssl_context_api;
+    // the keychain may be registered by the application (tlsuv_set_keychain()),
+    // it has to be in place before the context is created
+    if (tlsuv_keychain() != NULL) {
+        c->api.generate_keychain_key = gen_keychain_key;
+        c->api.load_keychain_key = load_keychain_key;
+        c->api.remove_keychain_key = remove_keychain_key;
+    }
     init_ssl_context(c, ca, ca_len);
 
     return &c->api;
@@ -793,6 +805,7 @@ static int tls_reset(tlsuv_engine_t self) {
 static void tls_free(tlsuv_engine_t self) {
     struct openssl_engine* e = (struct openssl_engine*)self;
     SSL_free(e->ssl);
+    EVP_PKEY_free(e->kc_pkey);
 
     if (e->alpn) {
         tlsuv__free(e->alpn);
@@ -809,6 +822,83 @@ if ((op) != 1) { \
         return TLS_ERR; \
     }} while(0)
 
+
+static enum ssl_private_key_result_t kc_sign(SSL* ssl, uint8_t* out, size_t* out_len, size_t max_out,
+                                             uint16_t sigalg, const uint8_t* in, size_t in_len) {
+    struct openssl_engine* e = SSL_get_app_data(ssl);
+    const EVP_MD* md = SSL_get_signature_algorithm_digest(sigalg);
+    if (e == NULL || e->kc_pkey == NULL || md == NULL || SSL_is_signature_algorithm_rsa_pss(sigalg)) {
+        UM_LOG(ERR, "keychain key cannot sign with signature algorithm 0x%04x", sigalg);
+        return ssl_private_key_failure;
+    }
+
+    uint8_t digest[EVP_MAX_MD_SIZE];
+    unsigned int digestlen = 0;
+    if (EVP_Digest(in, in_len, digest, &digestlen, md, NULL) != 1) {
+        return ssl_private_key_failure;
+    }
+
+    size_t siglen = max_out;
+    if (keychain_sign_digest(e->kc_pkey, md, digest, digestlen, out, &siglen) != 0) {
+        return ssl_private_key_failure;
+    }
+    *out_len = siglen;
+    return ssl_private_key_success;
+}
+
+// keychain signing is synchronous, there is nothing to decrypt (RSA key exchange
+// is not used in TLS 1.3/ECDHE) and nothing to complete
+static enum ssl_private_key_result_t kc_decrypt(SSL* ssl, uint8_t* out, size_t* out_len, size_t max_out,
+                                                const uint8_t* in, size_t in_len) {
+    return ssl_private_key_failure;
+}
+
+static enum ssl_private_key_result_t kc_complete(SSL* ssl, uint8_t* out, size_t* out_len, size_t max_out) {
+    return ssl_private_key_failure;
+}
+
+static const SSL_PRIVATE_KEY_METHOD kc_key_method = {
+    .sign = kc_sign,
+    .decrypt = kc_decrypt,
+    .complete = kc_complete,
+};
+
+// keychain keys only hold the public key in the EVP_PKEY: sign through the keychain
+static int set_keychain_key(SSL* ssl, EVP_PKEY* pkey) {
+    struct openssl_engine* e = SSL_get_app_data(ssl);
+    assert(e);
+
+    // keychains sign ECDSA and RSA PKCS#1 v1.5 only (no RSA-PSS)
+    static const uint16_t ec_algs[] = {
+        SSL_SIGN_ECDSA_SECP256R1_SHA256,
+        SSL_SIGN_ECDSA_SECP384R1_SHA384,
+        SSL_SIGN_ECDSA_SECP521R1_SHA512,
+    };
+    static const uint16_t rsa_algs[] = {
+        SSL_SIGN_RSA_PKCS1_SHA256,
+        SSL_SIGN_RSA_PKCS1_SHA384,
+        SSL_SIGN_RSA_PKCS1_SHA512,
+    };
+
+    int rc;
+    if (EVP_PKEY_id(pkey) == EVP_PKEY_RSA) {
+        rc = SSL_set_signing_algorithm_prefs(ssl, rsa_algs, sizeof(rsa_algs) / sizeof(rsa_algs[0]));
+        // TLS 1.3 requires RSA-PSS for RSA keys
+        if (rc == 1) rc = SSL_set_max_proto_version(ssl, TLS1_2_VERSION);
+    } else {
+        rc = SSL_set_signing_algorithm_prefs(ssl, ec_algs, sizeof(ec_algs) / sizeof(ec_algs[0]));
+    }
+    if (rc != 1) {
+        UM_LOG(ERR, "failed to configure signing for keychain key: %s", tls_error(ERR_get_error()));
+        return -1;
+    }
+
+    EVP_PKEY_up_ref(pkey);
+    EVP_PKEY_free(e->kc_pkey);
+    e->kc_pkey = pkey;
+    SSL_set_private_key_method(ssl, &kc_key_method);
+    return 0;
+}
 
 static int tls_set_cert_internal(SSL* ssl, X509_STORE* store, EVP_PKEY* pkey) {
     STACK_OF(X509_OBJECT) * certs = X509_STORE_get0_objects(store);
@@ -837,13 +927,20 @@ static int tls_set_cert_internal(SSL* ssl, X509_STORE* store, EVP_PKEY* pkey) {
         UM_LOG(ERR, "failed to set certificate");
         return -1;
     }
-    if (SSL_use_PrivateKey(ssl, pkey) != 1) {
-        UM_LOG(ERR, "failed to set private key");
-        return -1;
-    }
-    if (SSL_check_private_key(ssl) != 1) {
-        UM_LOG(ERR, "cert/key mismatch");
-        return -1;
+    if (pkey_keychain_key(pkey) != NULL) {
+        // cert/key match is already verified by the caller (public key comparison)
+        if (set_keychain_key(ssl, pkey) != 0) {
+            return -1;
+        }
+    } else {
+        if (SSL_use_PrivateKey(ssl, pkey) != 1) {
+            UM_LOG(ERR, "failed to set private key");
+            return -1;
+        }
+        if (SSL_check_private_key(ssl) != 1) {
+            UM_LOG(ERR, "cert/key mismatch");
+            return -1;
+        }
     }
 
     // rest of certs go to chain
@@ -1173,7 +1270,17 @@ goto on_error;            \
 }}while(0)
 
     ssl_check(X509_REQ_set_pubkey(req, pk));
-    ssl_check(X509_REQ_sign(req, pk, EVP_sha256()));
+    if (pkey_keychain_key(pk) != NULL) {
+        // BoringSSL cannot sign with an external key: sign the request body through the keychain
+        if (keychain_sign_csr(req, pk) != 0) {
+            // keychain_sign_csr() already logged the details
+            op = "keychain_sign_csr";
+            ret = -1;
+            goto on_error;
+        }
+    } else {
+        ssl_check(X509_REQ_sign(req, pk, EVP_sha256()));
+    }
     ssl_check(PEM_write_bio_X509_REQ(b, req));
 
 on_error:
