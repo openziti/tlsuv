@@ -42,6 +42,8 @@
 
 #include <string.h>
 #include <sys/poll.h>
+#include <sys/socket.h>
+#include <netdb.h>
 #include <unistd.h>
 
 #endif
@@ -58,6 +60,7 @@ struct conn_req_s {
     uv_getaddrinfo_t resolve;
     void *ctx;
     tlsuv_connect_cb cb;
+    char *source_addr;
 
     uv_poll_t polls[max_connect_socks];
     int count;
@@ -68,9 +71,11 @@ struct conn_req_s {
 static tlsuv_connector_req direct_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
                                           const char *host, const char *port, tlsuv_connect_cb cb, void *ctx);
 static void direct_cancel(tlsuv_connector_req req);
+static int direct_bind(tlsuv_connector_req req, const char *source_addr);
 static tlsuv_connector_req proxy_connect(uv_loop_t *l, const tlsuv_connector_t *self,
                                          const char *host, const char *port, tlsuv_connect_cb cb, void *ctx);
 static void proxy_cancel(tlsuv_connector_req req);
+static int proxy_bind(tlsuv_connector_req req, const char *source_addr);
 
 // prevent freeing default connector
 static void direct_connector_free(void *self){
@@ -84,6 +89,7 @@ static int direct_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const cha
 static tlsuv_connector_t direct_connector = {
         .connect = direct_connect,
         .set_auth = direct_set_auth,
+        .bind = direct_bind,
         .cancel = direct_cancel,
         .free = direct_connector_free,
 };
@@ -93,6 +99,7 @@ static const tlsuv_connector_t *global_connector;
 struct tlsuv_proxy_connector_s {
     tlsuv_connect connect;
     int (*set_auth)(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *username, const char *password);
+    int (*bind)(tlsuv_connector_req req, const char *source_addr);
     void (*cancel)(tlsuv_connector_req);
     void (*free)(tlsuv_connector_t *self);
     
@@ -149,7 +156,50 @@ const tlsuv_connector_t* tlsuv_global_connector() {
 }
 
 static void free_conn_req(struct conn_req_s *cr) {
+    tlsuv__free(cr->source_addr);
     tlsuv__free(cr);
+}
+
+int tlsuv_bind(const tlsuv_connector_t *connector, tlsuv_connector_req req, const char *source_addr) {
+    if (connector == NULL || connector->bind == NULL) {
+        return UV_ENOTSUP;
+    }
+    return connector->bind(req, source_addr);
+}
+
+static int direct_bind(tlsuv_connector_req req, const char *source_addr) {
+    struct conn_req_s *cr = (struct conn_req_s *) req;
+    tlsuv__free(cr->source_addr);
+    cr->source_addr = (source_addr != NULL && source_addr[0] != '\0') ? tlsuv__strdup(source_addr) : NULL;
+    return 0;
+}
+
+/** resolve a numeric `ip[:port]` local address into a sockaddr of the given family */
+static int parse_source_addr(const char *source_addr, int family, struct sockaddr_storage *out, socklen_t *out_len) {
+    char ip[128];
+    strncpy(ip, source_addr, sizeof(ip) - 1);
+    ip[sizeof(ip) - 1] = 0;
+
+    char *port = strrchr(ip, ':');
+    if (port != NULL) {
+        *port = 0;
+        port++;
+    }
+
+    struct addrinfo hints = {0};
+    hints.ai_family = family;
+    hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
+
+    struct addrinfo *res = NULL;
+    // numeric host/port only -- resolves locally, safe to call synchronously on the loop thread
+    if (getaddrinfo(ip, port, &hints, &res) != 0 || res == NULL) {
+        return UV_EINVAL;
+    }
+
+    memcpy(out, res->ai_addr, res->ai_addrlen);
+    *out_len = (socklen_t) res->ai_addrlen;
+    freeaddrinfo(res);
+    return 0;
 }
 
 static const char *get_name(const struct sockaddr *addr) {
@@ -293,6 +343,26 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
                    strerror(err), get_name(addr->ai_addr));
             addr = addr->ai_next;
             continue;
+        }
+
+        if (cr->source_addr != NULL) {
+            struct sockaddr_storage src_addr;
+            socklen_t src_addr_len;
+            if (parse_source_addr(cr->source_addr, addr->ai_family, &src_addr, &src_addr_len) != 0) {
+                CR_LOG(TRACE, "fd[%ld] failed to parse source address[%s]", (long)s, cr->source_addr);
+                err = EINVAL;
+                closesocket(s);
+                addr = addr->ai_next;
+                continue;
+            }
+            if (bind(s, (struct sockaddr *) &src_addr, src_addr_len) != 0) {
+                err = get_error();
+                CR_LOG(TRACE, "fd[%ld] failed to bind source address[%s]: %s",
+                       (long)s, cr->source_addr, strerror(err));
+                closesocket(s);
+                addr = addr->ai_next;
+                continue;
+            }
         }
 
         CR_LOG(TRACE, "fd[%ld] connecting to %s", (long)s, get_name(addr->ai_addr));
@@ -459,7 +529,8 @@ static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
 }
 
 tlsuv_connector_req proxy_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
-                                  const char *host, const char *port, tlsuv_connect_cb cb, void *ctx) {
+                                  const char *host, const char *port,
+                                  tlsuv_connect_cb cb, void *ctx) {
 
     assert(loop);
     assert(self);
@@ -476,6 +547,17 @@ tlsuv_connector_req proxy_connect(uv_loop_t *loop, const tlsuv_connector_t *self
     r->work.loop = loop;
     r->conn_req = direct_connect(loop, &direct_connector, proxy->host, proxy->port, on_proxy_connect, r);
     return r;
+}
+
+// binds the leg this process makes to the proxy itself -- the proxy's own connection to `host`
+// happens on the proxy server and can't be influenced from here.
+static int proxy_bind(tlsuv_connector_req req, const char *source_addr) {
+    struct proxy_connect_req *r = (struct proxy_connect_req *) req;
+    if (r->conn_req == NULL) {
+        // already past the connect-to-proxy stage
+        return UV_ENOTSUP;
+    }
+    return direct_bind(r->conn_req, source_addr);
 }
 
 int proxy_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *username, const char *password) {
@@ -542,6 +624,7 @@ static void init_proxy_connector(struct tlsuv_proxy_connector_s *c, tlsuv_proxy_
     c->connect = proxy_connect;
     c->cancel = proxy_cancel;
     c->set_auth = proxy_set_auth;
+    c->bind = proxy_bind;
     c->free = proxy_free;
 }
 

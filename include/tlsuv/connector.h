@@ -45,9 +45,20 @@ const tlsuv_connector_t *tlsuv_global_connector();
 // proxy connector connects to proxy and does proxy negotiation
 tlsuv_connector_t *tlsuv_new_proxy_connector(tlsuv_proxy_t type, const char* host, const char *port);
 
+// binds the local address the given in-flight request will connect from. `source_addr` is a
+// numeric local IP[:port]. must be called synchronously, before returning control to the event
+// loop, on the `req` a preceding `connector->connect(...)` call just returned -- e.g.:
+//   req = connector->connect(loop, connector, host, port, cb, ctx);
+//   tlsuv_bind(connector, req, "127.0.0.2");
+// a proxy connector applies the bind to the leg it makes to the proxy -- it can't affect the
+// connection the proxy itself then makes to `host`. returns UV_ENOTSUP if the connector doesn't
+// support binding.
+int tlsuv_bind(const tlsuv_connector_t *connector, tlsuv_connector_req req, const char *source_addr);
+
 struct tlsuv_connector_s {
     tlsuv_connect connect;
     int (*set_auth)(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *username, const char *password);
+    int (*bind)(tlsuv_connector_req req, const char *source_addr);
     void (*cancel)(tlsuv_connector_req);
     void (*free)(void *self);
 };
