@@ -181,6 +181,27 @@ struct tlsuv_engine_s {
      *         the handshake has not completed, or the operation is unsupported
      */
     int (*get_peer_cert)(tlsuv_engine_t self, tlsuv_certificate_t *cert);
+
+    /**
+     * Registers a wakeup for engines that do TLS work on threads of their own, so
+     * data can become ready outside of handshake/read/write calls.
+     *
+     * The engine calls `async_cb(ctx, in, out)` with its current sizes:
+     *  - `in`:  decrypted data ready for read(), or handshake progress to report;
+     *  - `out`: ciphertext queued for the peer, to be sent by write(self, NULL, 0).
+     * It calls it whenever there is new input or queued output, and whenever the
+     * queued output drains to 0 (including when write(self, NULL, 0) empties it). The
+     * owner may rely on the last `out` it received being current: it keeps polling
+     * for writability while `out` is nonzero and stops once it is 0.
+     *
+     * `async_cb` may run on any thread, including inside an engine call, and possibly
+     * with engine locks held: it must only record the values and schedule work (e.g.
+     * uv_async_send()), never call back into the engine. Passing NULL unregisters it;
+     * once setup_async() returns, the previous callback is not called again.
+     *
+     * Optional: NULL for engines that do all their work inside the engine calls.
+     */
+    void (*setup_async)(tlsuv_engine_t self, void(*async_cb)(void *ctx, size_t in, size_t out), void *ctx);
 };
 
 typedef struct tls_context_s tls_context;

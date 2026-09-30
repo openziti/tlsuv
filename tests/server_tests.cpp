@@ -236,6 +236,8 @@ static bool do_handshake(tlsuv_engine_t clt, tlsuv_engine_t srv) {
         tls_handshake_state ss = srv->handshake(srv);
         if (cs == TLS_HS_ERROR || ss == TLS_HS_ERROR) return false;
         if (cs == TLS_HS_COMPLETE && ss == TLS_HS_COMPLETE) return true;
+        // async engines (applesec) make progress on their own threads between calls
+        uv_sleep(1);
     }
     return false;
 }
@@ -245,6 +247,7 @@ static int read_some(tlsuv_engine_t e, char *buf, size_t cap, size_t *out) {
     for (int i = 0; i < MAX_ITERATIONS; i++) {
         int rc = e->read(e, buf, out, cap);
         if (rc != TLS_AGAIN) return rc;
+        uv_sleep(1);
     }
     return TLS_AGAIN;
 }
@@ -266,6 +269,10 @@ static void check_transfer(tlsuv_engine_t from, tlsuv_engine_t to, const std::st
             } else {
                 REQUIRE(rc == TLS_AGAIN);
             }
+        } else if (from->setup_async) {
+            // async engines produce ciphertext after write() returns and push it out
+            // when called again (tlsuv_stream_t/tls_link do this on each wakeup)
+            from->write(from, nullptr, 0);
         }
 
         size_t n = 0;
@@ -375,6 +382,14 @@ TEST_CASE("server engine handshake and data", "[engine][server]") {
     }
 
     WHEN("close notify: " << t->name()) {
+#if defined(TEST_applesec)
+        // applesec close() does not block: close_notify is produced asynchronously and
+        // flushed from the engine's queue, which it can do for socket IO only (set_io
+        // callbacks belong to the owner and are not thread safe)
+        if (std::string(t->name()) == "mem_transport") {
+            SKIP("applesec does not send close_notify over set_io");
+        }
+#endif
         CHECK(clt_eng->close(clt_eng) == 0);
 
         char buf[128];
@@ -419,10 +434,10 @@ TEST_CASE("server engine ALPN", "[engine][server]") {
         clt_eng->set_protocols(clt_eng, clt_protos, 1);
 
         t->attach(clt_eng, srv_eng);
-#if defined(TEST_win32crypto)
-        // Schannel treats a fully disjoint ALPN offer as a fatal handshake error
-        // (SEC_E_APPLICATION_PROTOCOL_MISMATCH) rather than completing without a
-        // negotiated protocol like the other backends do.
+#if defined(TEST_win32crypto) || defined(TEST_applesec)
+        // Schannel and Network.framework treat a fully disjoint ALPN offer as a fatal
+        // handshake error (SEC_E_APPLICATION_PROTOCOL_MISMATCH / no_application_protocol)
+        // rather than completing without a negotiated protocol like the other backends do.
         REQUIRE_FALSE(do_handshake(clt_eng, srv_eng));
 #else
         REQUIRE(do_handshake(clt_eng, srv_eng));
@@ -459,6 +474,11 @@ TEST_CASE("server engine optional client cert", "[engine][server]") {
     }
 
     SECTION("client presents a certificate") {
+#if defined(TEST_applesec)
+        // Network.framework has no public optional-client-auth mode, so the applesec
+        // server engine never requests client certificates
+        SKIP("applesec server engine does not request client certificates");
+#endif
         clt.set_identity();
 
         engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
@@ -555,6 +575,9 @@ TEST_CASE("server engine client cert verify callback", "[engine][server]") {
     if (srv_eng->get_peer_cert == nullptr) {
         SKIP("get_peer_cert is not implemented");
     }
+#if defined(TEST_applesec)
+    SKIP("applesec server engine does not request client certificates");
+#endif
 
     SECTION("callback accepts the client cert") {
         verify_result = 0;
@@ -589,6 +612,54 @@ TEST_CASE("server engine client cert verify callback", "[engine][server]") {
 
         CHECK(do_handshake(clt_eng, srv_eng));
         CHECK(verify_calls == 0);
+    }
+}
+
+// every TLS_ERR / TLS_HS_ERROR comes with a reason in strerror()
+TEST_CASE("engine reports an error on failure", "[engine][server]") {
+    auto make = GENERATE(as<transport_factory>{}, make_mem, make_socketpair, make_socket);
+
+    tls_ctx_holder srv(test_ca);
+    SKIP_UNLESS_SERVER_SUPPORTED(srv);
+    srv.set_identity();
+
+    // the client does not trust the test CA (system trust store only)
+    tls_ctx_holder clt(nullptr);
+
+    engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
+    engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
+
+#if defined(TEST_applesec)
+    SECTION("write before handshake") {
+        CHECK(clt_eng->write(clt_eng, "x", 1) == TLS_ERR);
+        const char *err = clt_eng->strerror(clt_eng);
+        REQUIRE(err != nullptr);
+        CHECK(strlen(err) > 0);
+    }
+#endif
+
+    SECTION("untrusted server certificate") {
+        auto t = make();
+        INFO("transport: " << t->name());
+        t->attach(clt_eng, srv_eng);
+
+        // pump like do_handshake(), but keep what handshake() returned: which side
+        // fails first depends on the backend, and whichever returns TLS_HS_ERROR
+        // must say why
+        tls_handshake_state cs = TLS_HS_BEFORE, ss = TLS_HS_BEFORE;
+        for (int i = 0; i < MAX_ITERATIONS && cs != TLS_HS_ERROR && ss != TLS_HS_ERROR; i++) {
+            cs = clt_eng->handshake(clt_eng);
+            ss = srv_eng->handshake(srv_eng);
+            uv_sleep(1);
+        }
+        REQUIRE((cs == TLS_HS_ERROR || ss == TLS_HS_ERROR));
+
+        for (auto [eng, st] : {std::pair{(tlsuv_engine_t) clt_eng, cs}, std::pair{(tlsuv_engine_t) srv_eng, ss}}) {
+            if (st != TLS_HS_ERROR) continue;
+            const char *err = eng->strerror(eng);
+            REQUIRE(err != nullptr);
+            CHECK(strlen(err) > 0);
+        }
     }
 }
 

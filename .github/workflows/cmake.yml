@@ -49,6 +49,14 @@ jobs:
             tls: mbedtls
             target: arm64-osx
             http: ON
+          - image: macOS
+            tls: applesec
+            target: arm64-osx
+            http: ON
+          - image: macOS
+            tls: applesec
+            target: arm64-ios-simulator
+            http: ON
           - image: windows
             tls: openssl
             target: x64-windows-static-md
@@ -155,13 +163,25 @@ jobs:
       run: |
         Start-Process -FilePath ${{ github.workspace }}/build/test-server -ArgumentList "-ca-key","./tests/certs/ca.key","-ca","./tests/certs/ca.pem"
 
+    - name: boot iOS simulator
+      if: matrix.target == 'arm64-ios-simulator'
+      run: |
+        read -r dev runtime name < <(xcrun simctl list devices available -j |
+              jq -r '[.devices | to_entries[] | .key as $rt | .value[]
+                      | select(.name | startswith("iPhone"))
+                      | "\(.udid) \($rt | sub("com.apple.CoreSimulator.SimRuntime."; "")) \(.name)"][0]')
+        echo "$(xcodebuild -version | head -1), booting simulator: $name, $runtime ($dev)"
+        xcrun simctl bootstatus "$dev" -b
+
     - name: Test
       env:
         TLSUV_TEST_LOG: 7
+        # simctl spawn passes only SIMCTL_CHILD_-prefixed variables to the test
+        SIMCTL_CHILD_TLSUV_TEST_LOG: 7
       if: steps.build.outcome == 'success'
       run: |
         cd build
-        ctest --output-on-failure --no-compress-output -T test
+        ctest ${{ matrix.target == 'arm64-ios-simulator' && '-C Debug' || '' }} --output-on-failure --no-compress-output -T test
 
     - name: Memory Check
       if: steps.build.outcome == 'success' && matrix.image == 'ubuntu'

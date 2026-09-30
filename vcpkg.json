@@ -27,7 +27,6 @@
       "description": "use OpenSSL",
       "dependencies": [ "openssl" ]
     },
-
     "mbedtls": {
       "description": "use mbedTLS",
       "dependencies": [ "mbedtls" ]
@@ -44,6 +43,9 @@
         "zlib",
         "llhttp"
       ]
+    },
+    "applesec": {
+      "description": "Apple Security.framework (SecureTransport) TLS backend (osx and ios only)"
     },
     "test": {
       "description": "Dependencies for testing",

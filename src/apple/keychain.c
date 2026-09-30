@@ -48,7 +48,10 @@ static int gen_key(keychain_key_t *pk, enum keychain_key_type type, const char *
     }
 
     UM_LOG(DEBG, "generating key[%s]", name);
-    static int32_t ec_size = 521;
+    // P-256, not P-521: Network.framework (applesec) sends an invalid TLS 1.3
+    // CertificateVerify for P-521 client keys, and P-256 is supported everywhere
+    // (and is the only curve the Secure Enclave has)
+    static int32_t ec_size = 256;
     static int rsa_size = 4096;
 
     CFNumberRef bits = NULL;
@@ -67,7 +70,6 @@ static int gen_key(keychain_key_t *pk, enum keychain_key_type type, const char *
     CFStringRef label = CFStringCreateWithCString(kCFAllocatorDefault, name, kCFStringEncodingUTF8);
     
     CFMutableDictionaryRef params = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, NULL, NULL);
-    CFDictionaryAddValue(params, kSecAttrKeyClass, kSecAttrKeyClassPrivate);
     CFDictionaryAddValue(params, kSecReturnRef, kCFBooleanTrue);
     CFDictionaryAddValue(params, kSecAttrApplicationTag, tag);
     CFDictionaryAddValue(params, kSecAttrLabel, label);
@@ -222,7 +224,11 @@ static int rem_key(const char *name) {
     CFMutableDictionaryRef dq = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, NULL, NULL);
     CFDictionaryAddValue(dq, kSecClass, kSecClassKey);
     CFDictionaryAddValue(dq, kSecAttrApplicationTag, tag);
+#if TARGET_OS_OSX
+    // the file-based keychain may otherwise remove only the first match; iOS always
+    // removes all of them and rejects kSecMatchLimit here (errSecParam)
     CFDictionaryAddValue(dq, kSecMatchLimit, kSecMatchLimitAll);
+#endif
 
     OSStatus r = SecItemDelete(dq);
 

@@ -15,9 +15,11 @@ limitations under the License.
 */
 
 #include <catch2/catch_all.hpp>
+#include "fixtures.h"
 #include "tlsuv/tlsuv.h"
 
 #include <cstring>
+#include <fstream>
 #include <tlsuv/tls_engine.h>
 #include <uv.h>
 
@@ -114,6 +116,7 @@ fcwJ0v2IisYTCMavk0DJSj9Hd+coMSyTa7ghp8ja/0PSoQAxAA==
 
 TEST_CASE("implementation test", "[engine]") {
     tls_context *tls = default_tls_context(nullptr, 0);
+    auto ver = tls->version();
 #if defined(TEST_mbedtls)
     CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("mbed TLS", Catch::CaseSensitive::No));
 #elif defined(TEST_openssl)
@@ -122,6 +125,8 @@ TEST_CASE("implementation test", "[engine]") {
     CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("win32"));
 #elif defined(TEST_boringssl)
     CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("BoringSSL"));
+#elif defined(TEST_applesec)
+    CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("com.apple.Network"));
 #else
     FAIL("invalid engine");
 #endif
@@ -163,6 +168,76 @@ TEST_CASE (
     // version() reports FIPS as free text; the two must not disagree
     CHECK ((strstr(tls->version(), "FIPS") != nullptr) == (rc== TLS_FIPS_ENABLED));
 #endif
+
+    tls->free_ctx(tls);
+}
+
+#define pem_path_str_(x) #x
+#define pem_path_str(x) pem_path_str_(x)
+
+static std::string read_pem(const char *path) {
+    std::ifstream f(path, std::ios::binary);
+    REQUIRE(f.good());
+    return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+}
+
+// callers may count the terminating NUL in the length (mbedTLS requires it for PEM);
+// every backend has to accept multi-cert PEM either way
+TEST_CASE("load multi-cert PEM with and without NUL", "[engine]") {
+    auto chain = read_pem(pem_path_str(TEST_SERVER_CERT)) + read_pem(pem_path_str(TEST_SERVER_CA));
+    auto key = read_pem(pem_path_str(TEST_SERVER_KEY));
+    auto with_nul = GENERATE(false, true);
+    INFO("length includes NUL: " << with_nul);
+    size_t chain_len = chain.size() + (with_nul ? 1 : 0);
+    size_t key_len = key.size() + (with_nul ? 1 : 0);
+
+    tls_context *tls = default_tls_context(chain.c_str(), chain_len);
+    REQUIRE(tls != nullptr);
+    // optional: not every backend implements it (e.g. mbedtls)
+    if (tls->set_ca_bundle) {
+        CHECK(tls->set_ca_bundle(tls, chain.c_str(), chain_len) == 0);
+    }
+
+    tlsuv_certificate_t cert = nullptr;
+    REQUIRE(tls->load_cert(&cert, chain.c_str(), chain_len) == 0);
+
+    char *pem = nullptr;
+    size_t pem_len = 0;
+    REQUIRE(cert->to_pem(cert, 1, &pem, &pem_len) == 0);
+    int count = 0;
+    for (const char *p = pem; (p = strstr(p, "BEGIN CERTIFICATE")) != nullptr; p++) count++;
+    CHECK(count == 2);
+    free(pem);
+
+    tlsuv_private_key_t pk = nullptr;
+    REQUIRE(tls->load_key(&pk, key.c_str(), key_len) == 0);
+    CHECK(tls->set_own_cert(tls, pk, cert) == 0);
+
+    tls->set_own_cert(tls, nullptr, nullptr);
+    pk->free(pk);
+    cert->free(cert);
+    tls->free_ctx(tls);
+}
+
+// e.g. a renewed certificate installed with the same key, on a long-lived context
+TEST_CASE("set_own_cert repeatedly on one context", "[engine]") {
+    auto cert_pem = read_pem(pem_path_str(TEST_SERVER_CERT));
+    auto key_pem = read_pem(pem_path_str(TEST_SERVER_KEY));
+
+    tls_context *tls = default_tls_context(nullptr, 0);
+    REQUIRE(tls != nullptr);
+
+    for (int i = 0; i < 3; i++) {
+        INFO("attempt " << i);
+        tlsuv_certificate_t cert = nullptr;
+        tlsuv_private_key_t pk = nullptr;
+        REQUIRE(tls->load_cert(&cert, cert_pem.c_str(), cert_pem.size()) == 0);
+        REQUIRE(tls->load_key(&pk, key_pem.c_str(), key_pem.size()) == 0);
+        CHECK(tls->set_own_cert(tls, pk, cert) == 0);
+        tls->set_own_cert(tls, nullptr, nullptr);
+        pk->free(pk);
+        cert->free(cert);
+    }
 
     tls->free_ctx(tls);
 }
@@ -254,6 +329,18 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     engine->set_protocols(engine, protos, num_protos);
 
     SOCKET sock = socket(addr->ai_family, SOCK_STREAM, 0);
+    // an async engine's own threads keep its connection going until it is freed
+    DEFER {
+        engine->close(engine);
+#if _WIN32
+        closesocket(sock);
+#else
+        close(sock);
+#endif
+        freeaddrinfo(addr);
+        engine->free(engine);
+        tls->free_ctx(tls);
+    };
 
     auto address = reinterpret_cast<sockaddr_in *>(addr->ai_addr);
     int addrlen = addr->ai_addrlen;
@@ -282,16 +369,4 @@ TEST_CASE("ALPN negotiation", "[engine]") {
     const char *alpn = engine->get_alpn(engine);
     REQUIRE(alpn != nullptr);
     CHECK_THAT(alpn, Catch::Matchers::Matches("h2"));
-
-    engine->close(engine);
-
-#if _WIN32
-    closesocket(sock);
-#else
-    close(sock);
-#endif
-
-    freeaddrinfo(addr);
-    engine->free(engine);
-    tls->free_ctx(tls);
 }

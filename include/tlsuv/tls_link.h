@@ -16,6 +16,8 @@
 #ifndef TLSUV_TLS_LINK_H
 #define TLSUV_TLS_LINK_H
 
+#include <stdbool.h>
+
 typedef struct tls_link_s tls_link_t;
 typedef void (*tls_handshake_cb)(tls_link_t *l, int status);
 typedef struct ssl_buf_s ssl_buf_t;
@@ -27,10 +29,24 @@ struct tls_link_s {
 
     ssl_buf_t *ssl_in;  // buffer holding inbound ssl bytes
     ssl_buf_t *ssl_out; // buffer holding outbound ssl_bytes
+
+    // wakes the link when an async engine (see tlsuv_engine_s.setup_async) has
+    // handshake output, ciphertext to send, or decrypted data ready
+    uv_async_t *async;
+    // hs_cb has been told the handshake completed (an async engine can complete
+    // it on its own, outside of a handshake() call)
+    bool hs_reported;
 };
 
 
-int tlsuv_tls_link_init(tls_link_t *tls, tlsuv_engine_t engine, tls_handshake_cb cb);
+/**
+ * @param loop used to receive wakeups from async engines; may be NULL for engines
+ *        that do all their work inside handshake/read/write calls
+ *
+ * If the engine is freed before the link, clear tls->engine first:
+ * tlsuv_tls_link_free() detaches itself from the engine it still references.
+ */
+int tlsuv_tls_link_init(tls_link_t *tls, uv_loop_t *loop, tlsuv_engine_t engine, tls_handshake_cb cb);
 void tlsuv_tls_link_free(tls_link_t *tls);
 
 #endif//TLSUV_TLS_LINK_H

@@ -179,6 +179,12 @@ struct tlsuv_stream_s {
 
     uv_os_sock_t sock;
     uv_poll_t watcher;
+    uv_async_t data_async;
+    int read_events;
+    // pending engine in/out bytes reported by an async engine from its own thread;
+    // accessed atomically by src/tlsuv.c only
+    size_t async_in;
+    size_t async_out;
 
     TAILQ_HEAD(reqs, tlsuv_write_s) queue;
     size_t queue_len;
