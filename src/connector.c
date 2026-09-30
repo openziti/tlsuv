@@ -60,7 +60,8 @@ struct conn_req_s {
     uv_getaddrinfo_t resolve;
     void *ctx;
     tlsuv_connect_cb cb;
-    char *source_addr;
+    // ss_family == AF_UNSPEC (the calloc()-zeroed default) means no source address was requested
+    struct sockaddr_storage source_addr;
 
     uv_poll_t polls[max_connect_socks];
     int count;
@@ -69,11 +70,13 @@ struct conn_req_s {
 };
 
 static tlsuv_connector_req direct_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
-                                          const char *host, const char *port, const char *source_addr,
+                                          const char *host, const char *port,
+                                          const struct sockaddr *source_addr,
                                           tlsuv_connect_cb cb, void *ctx);
 static void direct_cancel(tlsuv_connector_req req);
 static tlsuv_connector_req proxy_connect(uv_loop_t *l, const tlsuv_connector_t *self,
-                                         const char *host, const char *port, const char *source_addr,
+                                         const char *host, const char *port,
+                                         const struct sockaddr *source_addr,
                                          tlsuv_connect_cb cb, void *ctx);
 static void proxy_cancel(tlsuv_connector_req req);
 
@@ -154,62 +157,16 @@ const tlsuv_connector_t* tlsuv_global_connector() {
 }
 
 static void free_conn_req(struct conn_req_s *cr) {
-    tlsuv__free(cr->source_addr);
     tlsuv__free(cr);
 }
 
-/**
- * splits a `host[:port]` string in place. recognizes `[addr]:port` / `[addr]` (required for an
- * IPv6 literal with a port, since the address itself contains colons) and plain `addr:port` /
- * `addr` for everything else. a bare, unbracketed address with more than one colon is assumed to
- * be an IPv6 literal with no port -- splitting on any of its colons would silently corrupt it.
- */
-static char *split_host_port(char *buf, char **port_out) {
-    *port_out = NULL;
-
-    if (buf[0] == '[') {
-        char *end = strchr(buf, ']');
-        if (end != NULL) {
-            *end = 0;
-            if (end[1] == ':') {
-                *port_out = end + 2;
-            }
-            return buf + 1;
-        }
-        // malformed: unterminated '[' -- fall through and treat the whole thing as the host
+/** size of the address portion of a sockaddr_storage, based on its family */
+static socklen_t sockaddr_len(const struct sockaddr *addr) {
+    switch (addr->sa_family) {
+        case AF_INET: return sizeof(struct sockaddr_in);
+        case AF_INET6: return sizeof(struct sockaddr_in6);
+        default: return 0;
     }
-
-    char *first_colon = strchr(buf, ':');
-    if (first_colon != NULL && strchr(first_colon + 1, ':') == NULL) {
-        *first_colon = 0;
-        *port_out = first_colon + 1;
-    }
-    return buf;
-}
-
-/** resolve a numeric `[ip6]:port` / `ip4:port` / numeric-ip local address into a sockaddr of the given family */
-static int parse_source_addr(const char *source_addr, int family, struct sockaddr_storage *out, socklen_t *out_len) {
-    char buf[128];
-    strncpy(buf, source_addr, sizeof(buf) - 1);
-    buf[sizeof(buf) - 1] = 0;
-
-    char *port;
-    char *ip = split_host_port(buf, &port);
-
-    struct addrinfo hints = {0};
-    hints.ai_family = family;
-    hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
-
-    struct addrinfo *res = NULL;
-    // numeric host/port only -- resolves locally, safe to call synchronously on the loop thread
-    if (getaddrinfo(ip, port, &hints, &res) != 0 || res == NULL) {
-        return UV_EINVAL;
-    }
-
-    memcpy(out, res->ai_addr, res->ai_addrlen);
-    *out_len = (socklen_t) res->ai_addrlen;
-    freeaddrinfo(res);
-    return 0;
 }
 
 static const char *get_name(const struct sockaddr *addr) {
@@ -355,20 +312,19 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
             continue;
         }
 
-        if (cr->source_addr != NULL) {
-            struct sockaddr_storage src_addr;
-            socklen_t src_addr_len;
-            if (parse_source_addr(cr->source_addr, addr->ai_family, &src_addr, &src_addr_len) != 0) {
-                CR_LOG(TRACE, "fd[%ld] failed to parse source address[%s]", (long)s, cr->source_addr);
-                err = EINVAL;
+        if (cr->source_addr.ss_family != AF_UNSPEC) {
+            if (cr->source_addr.ss_family != addr->ai_family) {
+                CR_LOG(TRACE, "fd[%ld] source address family does not match destination[%s]; skipping",
+                       (long)s, get_name(addr->ai_addr));
+                err = EAFNOSUPPORT;
                 closesocket(s);
                 addr = addr->ai_next;
                 continue;
             }
-            if (bind(s, (struct sockaddr *) &src_addr, src_addr_len) != 0) {
+            socklen_t src_len = sockaddr_len((struct sockaddr *) &cr->source_addr);
+            if (bind(s, (struct sockaddr *) &cr->source_addr, src_len) != 0) {
                 err = get_error();
-                CR_LOG(TRACE, "fd[%ld] failed to bind source address[%s]: %s",
-                       (long)s, cr->source_addr, strerror(err));
+                CR_LOG(TRACE, "fd[%ld] failed to bind source address: %s", (long)s, strerror(err));
                 closesocket(s);
                 addr = addr->ai_next;
                 continue;
@@ -399,14 +355,15 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
 }
 
 tlsuv_connector_req direct_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
-                                   const char *host, const char *port, const char *source_addr,
+                                   const char *host, const char *port,
+                                   const struct sockaddr *source_addr,
                                    tlsuv_connect_cb cb, void *ctx) {
     assert(cb != NULL);
     struct conn_req_s *cr = tlsuv__calloc(1, sizeof(*cr));
     cr->ctx = ctx;
     cr->cb = cb;
-    if (source_addr != NULL && source_addr[0] != '\0') {
-        cr->source_addr = tlsuv__strdup(source_addr);
+    if (source_addr != NULL) {
+        memcpy(&cr->source_addr, source_addr, sockaddr_len(source_addr));
     }
 
     struct addrinfo hints = {
@@ -542,7 +499,8 @@ static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
 }
 
 tlsuv_connector_req proxy_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
-                                  const char *host, const char *port, const char *source_addr,
+                                  const char *host, const char *port,
+                                  const struct sockaddr *source_addr,
                                   tlsuv_connect_cb cb, void *ctx) {
 
     assert(loop);

@@ -142,7 +142,7 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connector", "[connector]") {
     fprintf(stderr, "dest = %s\n", dest);
 }
 
-TEST_CASE_METHOD(UvLoopTest, "connect with source address", "[connector]") {
+TEST_CASE_METHOD(UvLoopTest, "connect with ipv4 source address", "[connector]") {
     // a local listener stands in for the destination -- this test doesn't depend on the
     // external test server/proxy infra, only on being able to bind an arbitrary local port.
     uv_tcp_t server{};
@@ -176,7 +176,9 @@ TEST_CASE_METHOD(UvLoopTest, "connect with source address", "[connector]") {
         if (result.called && result.err == 0) close_sock(result.sock);
     };
 
-    auto req = connector->connect(loop, connector, TEST_SERVER, target_port, TEST_SERVER ":58731",
+    sockaddr_in src_addr{};
+    uv_ip4_addr(TEST_SERVER, 58731, &src_addr);
+    auto req = connector->connect(loop, connector, TEST_SERVER, target_port, (const sockaddr *) &src_addr,
                                   [](uv_os_sock_t s, int err, void *ctx) {
                                       auto r = (result_s *) ctx;
                                       r->called = true;
@@ -194,9 +196,7 @@ TEST_CASE_METHOD(UvLoopTest, "connect with source address", "[connector]") {
     CHECK(ntohs(local.sin_port) == 58731);
 }
 
-TEST_CASE_METHOD(UvLoopTest, "connect with bracketed ipv6 source address", "[connector]") {
-    // `[addr]:port` is required for an IPv6 source address with a port, since the address
-    // itself contains colons -- this exercises split_host_port()'s bracket handling.
+TEST_CASE_METHOD(UvLoopTest, "connect with ipv6 source address", "[connector]") {
     uv_tcp_t server{};
     uv_tcp_init(loop, &server);
     sockaddr_in6 listen_addr{};
@@ -228,7 +228,9 @@ TEST_CASE_METHOD(UvLoopTest, "connect with bracketed ipv6 source address", "[con
         if (result.called && result.err == 0) close_sock(result.sock);
     };
 
-    auto req = connector->connect(loop, connector, "::1", target_port, "[::1]:58732",
+    sockaddr_in6 src_addr{};
+    uv_ip6_addr("::1", 58732, &src_addr);
+    auto req = connector->connect(loop, connector, "::1", target_port, (const sockaddr *) &src_addr,
                                   [](uv_os_sock_t s, int err, void *ctx) {
                                       auto r = (result_s *) ctx;
                                       r->called = true;
@@ -247,62 +249,6 @@ TEST_CASE_METHOD(UvLoopTest, "connect with bracketed ipv6 source address", "[con
     uv_ip6_name(&local, ip, sizeof(ip));
     CHECK(std::string(ip) == "::1");
     CHECK(ntohs(local.sin6_port) == 58732);
-}
-
-TEST_CASE_METHOD(UvLoopTest, "connect with bare ipv6 source address", "[connector]") {
-    // a bare (unbracketed) IPv6 literal has no port -- split_host_port() must not mistake one
-    // of its colons for a host:port separator.
-    uv_tcp_t server{};
-    uv_tcp_init(loop, &server);
-    sockaddr_in6 listen_addr{};
-    uv_ip6_addr("::1", 0, &listen_addr);
-    REQUIRE(uv_tcp_bind(&server, (const sockaddr *) &listen_addr, 0) == 0);
-    REQUIRE(uv_listen((uv_stream_t *) &server, 1, [](uv_stream_t *s, int status) {
-        auto *client = t_alloc<uv_tcp_t>();
-        uv_tcp_init(s->loop, client);
-        if (uv_accept(s, (uv_stream_t *) client) == 0) {
-            uv_close((uv_handle_t *) client, [](uv_handle_t *h) { free(h); });
-        }
-    }) == 0);
-    DEFER { uv_close((uv_handle_t *) &server, nullptr); drain(); };
-
-    sockaddr_storage bound{};
-    int bound_len = sizeof(bound);
-    uv_tcp_getsockname(&server, (sockaddr *) &bound, &bound_len);
-    char target_port[12];
-    snprintf(target_port, sizeof(target_port), "%d", ntohs(((sockaddr_in6 *) &bound)->sin6_port));
-
-    auto connector = tlsuv_global_connector();
-
-    struct result_s {
-        bool called;
-        int err;
-        uv_os_sock_t sock;
-    } result = {false, 0, (uv_os_sock_t) -1};
-    DEFER {
-        if (result.called && result.err == 0) close_sock(result.sock);
-    };
-
-    auto req = connector->connect(loop, connector, "::1", target_port, "::1",
-                                  [](uv_os_sock_t s, int err, void *ctx) {
-                                      auto r = (result_s *) ctx;
-                                      r->called = true;
-                                      r->sock = s;
-                                      r->err = err;
-                                  }, &result);
-    REQUIRE(req != nullptr);
-
-    run(UNTIL(result.called));
-
-    REQUIRE(result.err == 0);
-    sockaddr_in6 local{};
-    socklen_t local_len = sizeof(local);
-    REQUIRE(getsockname(result.sock, (sockaddr *) &local, &local_len) == 0);
-    char ip[64];
-    uv_ip6_name(&local, ip, sizeof(ip));
-    // the bare literal must survive intact -- a naive colon-split would corrupt it (and the
-    // resulting bogus address would either fail to bind or bind to the wrong thing)
-    CHECK(std::string(ip) == "::1");
 }
 
 TEST_CASE("base64 encode", "[connector]") {
