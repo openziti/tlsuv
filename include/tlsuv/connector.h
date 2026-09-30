@@ -35,8 +35,12 @@ typedef enum tlsuv_proxy_auth {
 typedef const void* tlsuv_connector_req;
 typedef struct tlsuv_connector_s tlsuv_connector_t;
 typedef void (*tlsuv_connect_cb)(uv_os_sock_t sock, int status, void *ctx);
+// `source_addr`, when not NULL/empty, is a numeric local IP[:port] the connector should bind()
+// the connecting socket to before connect()ing. it is applied to whichever socket the connector
+// actually opens - e.g. a proxy connector binds the leg it makes to the proxy, not any
+// downstream connection the proxy itself makes to `host`.
 typedef tlsuv_connector_req (*tlsuv_connect)(uv_loop_t *loop, const tlsuv_connector_t *connector,
-                                             const char *host, const char *port,
+                                             const char *host, const char *port, const char *source_addr,
                                              tlsuv_connect_cb cb, void *ctx);
 
 extern void tlsuv_set_global_connector(const tlsuv_connector_t* connector);
@@ -45,20 +49,9 @@ const tlsuv_connector_t *tlsuv_global_connector();
 // proxy connector connects to proxy and does proxy negotiation
 tlsuv_connector_t *tlsuv_new_proxy_connector(tlsuv_proxy_t type, const char* host, const char *port);
 
-// binds the local address the given in-flight request will connect from. `source_addr` is a
-// numeric local IP[:port]. must be called synchronously, before returning control to the event
-// loop, on the `req` a preceding `connector->connect(...)` call just returned -- e.g.:
-//   req = connector->connect(loop, connector, host, port, cb, ctx);
-//   tlsuv_bind(connector, req, "127.0.0.2");
-// a proxy connector applies the bind to the leg it makes to the proxy -- it can't affect the
-// connection the proxy itself then makes to `host`. returns UV_ENOTSUP if the connector doesn't
-// support binding.
-int tlsuv_bind(const tlsuv_connector_t *connector, tlsuv_connector_req req, const char *source_addr);
-
 struct tlsuv_connector_s {
     tlsuv_connect connect;
     int (*set_auth)(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *username, const char *password);
-    int (*bind)(tlsuv_connector_req req, const char *source_addr);
     void (*cancel)(tlsuv_connector_req);
     void (*free)(void *self);
 };

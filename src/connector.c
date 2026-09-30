@@ -69,13 +69,13 @@ struct conn_req_s {
 };
 
 static tlsuv_connector_req direct_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
-                                          const char *host, const char *port, tlsuv_connect_cb cb, void *ctx);
+                                          const char *host, const char *port, const char *source_addr,
+                                          tlsuv_connect_cb cb, void *ctx);
 static void direct_cancel(tlsuv_connector_req req);
-static int direct_bind(tlsuv_connector_req req, const char *source_addr);
 static tlsuv_connector_req proxy_connect(uv_loop_t *l, const tlsuv_connector_t *self,
-                                         const char *host, const char *port, tlsuv_connect_cb cb, void *ctx);
+                                         const char *host, const char *port, const char *source_addr,
+                                         tlsuv_connect_cb cb, void *ctx);
 static void proxy_cancel(tlsuv_connector_req req);
-static int proxy_bind(tlsuv_connector_req req, const char *source_addr);
 
 // prevent freeing default connector
 static void direct_connector_free(void *self){
@@ -89,7 +89,6 @@ static int direct_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const cha
 static tlsuv_connector_t direct_connector = {
         .connect = direct_connect,
         .set_auth = direct_set_auth,
-        .bind = direct_bind,
         .cancel = direct_cancel,
         .free = direct_connector_free,
 };
@@ -99,10 +98,9 @@ static const tlsuv_connector_t *global_connector;
 struct tlsuv_proxy_connector_s {
     tlsuv_connect connect;
     int (*set_auth)(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *username, const char *password);
-    int (*bind)(tlsuv_connector_req req, const char *source_addr);
     void (*cancel)(tlsuv_connector_req);
     void (*free)(tlsuv_connector_t *self);
-    
+
     tlsuv_proxy_t type;
     char *host;
     char *port;
@@ -158,20 +156,6 @@ const tlsuv_connector_t* tlsuv_global_connector() {
 static void free_conn_req(struct conn_req_s *cr) {
     tlsuv__free(cr->source_addr);
     tlsuv__free(cr);
-}
-
-int tlsuv_bind(const tlsuv_connector_t *connector, tlsuv_connector_req req, const char *source_addr) {
-    if (connector == NULL || connector->bind == NULL) {
-        return UV_ENOTSUP;
-    }
-    return connector->bind(req, source_addr);
-}
-
-static int direct_bind(tlsuv_connector_req req, const char *source_addr) {
-    struct conn_req_s *cr = (struct conn_req_s *) req;
-    tlsuv__free(cr->source_addr);
-    cr->source_addr = (source_addr != NULL && source_addr[0] != '\0') ? tlsuv__strdup(source_addr) : NULL;
-    return 0;
 }
 
 /** resolve a numeric `ip[:port]` local address into a sockaddr of the given family */
@@ -389,12 +373,15 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
 }
 
 tlsuv_connector_req direct_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
-                                   const char *host, const char *port,
+                                   const char *host, const char *port, const char *source_addr,
                                    tlsuv_connect_cb cb, void *ctx) {
     assert(cb != NULL);
     struct conn_req_s *cr = tlsuv__calloc(1, sizeof(*cr));
     cr->ctx = ctx;
     cr->cb = cb;
+    if (source_addr != NULL && source_addr[0] != '\0') {
+        cr->source_addr = tlsuv__strdup(source_addr);
+    }
 
     struct addrinfo hints = {
             .ai_socktype = SOCK_STREAM,
@@ -529,7 +516,7 @@ static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
 }
 
 tlsuv_connector_req proxy_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
-                                  const char *host, const char *port,
+                                  const char *host, const char *port, const char *source_addr,
                                   tlsuv_connect_cb cb, void *ctx) {
 
     assert(loop);
@@ -545,19 +532,10 @@ tlsuv_connector_req proxy_connect(uv_loop_t *loop, const tlsuv_connector_t *self
     r->host = tlsuv__strdup(host);
     r->port = tlsuv__strdup(port);
     r->work.loop = loop;
-    r->conn_req = direct_connect(loop, &direct_connector, proxy->host, proxy->port, on_proxy_connect, r);
+    // `source_addr` binds the connection to the proxy itself; the proxy's own connection to
+    // `host` is made on the proxy server and is not something this process can bind.
+    r->conn_req = direct_connect(loop, &direct_connector, proxy->host, proxy->port, source_addr, on_proxy_connect, r);
     return r;
-}
-
-// binds the leg this process makes to the proxy itself -- the proxy's own connection to `host`
-// happens on the proxy server and can't be influenced from here.
-static int proxy_bind(tlsuv_connector_req req, const char *source_addr) {
-    struct proxy_connect_req *r = (struct proxy_connect_req *) req;
-    if (r->conn_req == NULL) {
-        // already past the connect-to-proxy stage
-        return UV_ENOTSUP;
-    }
-    return direct_bind(r->conn_req, source_addr);
 }
 
 int proxy_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *username, const char *password) {
@@ -624,7 +602,6 @@ static void init_proxy_connector(struct tlsuv_proxy_connector_s *c, tlsuv_proxy_
     c->connect = proxy_connect;
     c->cancel = proxy_cancel;
     c->set_auth = proxy_set_auth;
-    c->bind = proxy_bind;
     c->free = proxy_free;
 }
 

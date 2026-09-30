@@ -45,7 +45,7 @@ TEST_CASE_METHOD(UvLoopTest, "default connect fail", "[connector]") {
         if (result.called && result.err == 0) close_sock(result.sock);
     };
 
-    auto cr = connector->connect(loop, connector, "127.0.0.1", "7553",
+    auto cr = connector->connect(loop, connector, "127.0.0.1", "7553", nullptr,
                                  [](uv_os_sock_t s, int err, void *ctx) {
                                      auto r = (result_s *) (ctx);
                                      r->called = true;
@@ -72,7 +72,7 @@ TEST_CASE_METHOD(UvLoopTest, "default connector", "[connector]") {
         if (result.called && result.err == 0) close_sock(result.sock);
     };
 
-    connector->connect(loop, connector, "localhost", "7443",
+    connector->connect(loop, connector, "localhost", "7443", nullptr,
                        [](uv_os_sock_t s, int err, void *ctx){
                            auto r = (result_s *)(ctx);
                            r->called = true;
@@ -120,7 +120,7 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connector", "[connector]") {
         if (result.called) connector->free(connector);
     };
 
-    connector->connect(loop, connector, "127.0.0.1", target_port,
+    connector->connect(loop, connector, "127.0.0.1", target_port, nullptr,
                        [](uv_os_sock_t s, int err, void* ctx){
                            auto r = (result_s *) ctx;
                            r->called = true;
@@ -142,7 +142,7 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connector", "[connector]") {
     fprintf(stderr, "dest = %s\n", dest);
 }
 
-TEST_CASE_METHOD(UvLoopTest, "connector bind", "[connector]") {
+TEST_CASE_METHOD(UvLoopTest, "connect with source address", "[connector]") {
     // a local listener stands in for the destination -- this test doesn't depend on the
     // external test server/proxy infra, only on being able to bind an arbitrary local port.
     uv_tcp_t server{};
@@ -176,7 +176,7 @@ TEST_CASE_METHOD(UvLoopTest, "connector bind", "[connector]") {
         if (result.called && result.err == 0) close_sock(result.sock);
     };
 
-    auto req = connector->connect(loop, connector, TEST_SERVER, target_port,
+    auto req = connector->connect(loop, connector, TEST_SERVER, target_port, TEST_SERVER ":58731",
                                   [](uv_os_sock_t s, int err, void *ctx) {
                                       auto r = (result_s *) ctx;
                                       r->called = true;
@@ -184,7 +184,6 @@ TEST_CASE_METHOD(UvLoopTest, "connector bind", "[connector]") {
                                       r->err = err;
                                   }, &result);
     REQUIRE(req != nullptr);
-    REQUIRE(tlsuv_bind(connector, req, TEST_SERVER ":58731") == 0);
 
     run(UNTIL(result.called));
 
@@ -236,7 +235,7 @@ TEST_CASE_METHOD(UvLoopTest, "connect cancel", "[connector]") {
     WHEN("connector = " << setup.first) {
         auto connector = setup.second;
 
-        auto cr = connector->connect(loop, connector, "yahoo.com", "7443",
+        auto cr = connector->connect(loop, connector, "yahoo.com", "7443", nullptr,
                                      [](uv_os_sock_t s, int err, void *ctx) {
                                          auto r = (result_s *) (ctx);
                                          r->called = true;

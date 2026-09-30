@@ -742,7 +742,7 @@ int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *hos
     clt->conn_req = req;
 
     TLS_LOG(VERB, "starting connect to %s:%d", host, port);
-    clt->connect_req = clt->connector->connect(clt->loop, clt->connector, host, portstr, on_connect, clt->conn_req);
+    clt->connect_req = clt->connector->connect(clt->loop, clt->connector, host, portstr, NULL, on_connect, clt->conn_req);
     return 0;
 }
 
