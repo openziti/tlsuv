@@ -181,6 +181,9 @@ struct applesec_engine_s {
     char err_buf[256];
     // negotiated ALPN protocol, owned by the engine (ALPN names are at most 255 bytes)
     char alpn[256];
+    // the peer's certificate chain (SecCertificateRef), NULL if it presented none.
+    // Both set by capture_session() when the connection is ready, before hs_state
+    CFArrayRef peer_chain;
 
     CFMutableArrayRef policies;
     CFTypeRef ca;
@@ -527,6 +530,7 @@ static void engine_dealloc(struct applesec_engine_s *e) {
     if (e->protocol_parameters) nw_release(e->protocol_parameters);
     if (e->error) CFRelease(e->error);
     if (e->policies) CFRelease(e->policies);
+    if (e->peer_chain) CFRelease(e->peer_chain);
     dispatch_release((dispatch_object_t)e->outbound_buf);
     dispatch_release((dispatch_object_t)e->decoded);
     pthread_mutex_destroy(&e->outbound_mutex);
@@ -613,6 +617,49 @@ static void tls_to_socket(struct applesec_engine_s *e, int socket) {
     wake(e);
 }
 
+// e->queue only: what the owner may ask about the session once it is ready: the ALPN
+// protocol NW negotiated (e->alpn, "" if none) and the peer's certificate chain.
+// Read here, in the ready state handler, and not by engine_get_alpn()/get_peer_cert()
+// on the owner's thread: queried from there, the metadata sometimes lacked a protocol
+// or chain the handshake did produce (seen on the iOS simulator), and reported it
+// again moments later.
+static void capture_session(struct applesec_engine_s *e, nw_connection_t conn) {
+    e->alpn[0] = 0;
+    if (e->peer_chain) {
+        CFRelease(e->peer_chain);
+        e->peer_chain = NULL;
+    }
+    nw_protocol_definition_t definition = nw_protocol_copy_tls_definition();
+    nw_protocol_metadata_t metadata = nw_connection_copy_protocol_metadata(conn, definition);
+    if (metadata) {
+        sec_protocol_metadata_t sec_metadata = nw_tls_copy_sec_protocol_metadata(metadata);
+        if (sec_metadata) {
+            // the string belongs to sec_metadata: copy it before releasing
+            const char *negotiated = sec_protocol_metadata_get_negotiated_protocol(sec_metadata);
+            if (negotiated) {
+                strlcpy(e->alpn, negotiated, sizeof(e->alpn));
+            }
+
+            CFMutableArrayRef chain = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+            sec_protocol_metadata_access_peer_certificate_chain(sec_metadata, ^(sec_certificate_t c) {
+                SecCertificateRef ref = sec_certificate_copy_ref(c);
+                if (ref) {
+                    CFArrayAppendValue(chain, ref);
+                    CFRelease(ref);
+                }
+            });
+            if (CFArrayGetCount(chain) > 0) {
+                e->peer_chain = chain;
+            } else {
+                CFRelease(chain);
+            }
+            sec_release(sec_metadata);
+        }
+        nw_release(metadata);
+    }
+    nw_release(definition);
+}
+
 // state handler shared by client connections and connections accepted by the server listener
 static void set_connection_handler(struct applesec_engine_s *e, nw_connection_t conn) {
     // held until the cancelled state, which is the connection's last callback
@@ -641,6 +688,8 @@ static void set_connection_handler(struct applesec_engine_s *e, nw_connection_t 
             break;
         }
         case nw_connection_state_ready:
+            // before hs_state: the owner reads these once it sees the handshake complete
+            capture_session(e, conn);
             e->hs_state = TLS_HS_COMPLETE;
             UM_LOG(DEBG, "Handshake completed successfully!");
             wake(e);
@@ -888,35 +937,12 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
 
 static const char* engine_get_alpn(tlsuv_engine_t self) {
     struct applesec_engine_s *e = (struct applesec_engine_s *) self;
-    if (e->connection == NULL) {
+    // NULL: not known yet; "" once the handshake completed with nothing negotiated,
+    // like the other backends. e->alpn is set by capture_session() before hs_state.
+    if (e->hs_state != TLS_HS_COMPLETE) {
         return NULL;
     }
-
-    if (e->alpn[0] != 0) {
-        return e->alpn;
-    }
-
-    // the negotiated string belongs to sec_metadata: copy it before releasing
-    const char *res = NULL;
-    nw_protocol_definition_t definition = nw_protocol_copy_tls_definition();
-    nw_protocol_metadata_t metadata = nw_connection_copy_protocol_metadata(e->connection, definition);
-    if (metadata) {
-        sec_protocol_metadata_t sec_metadata = nw_tls_copy_sec_protocol_metadata(metadata);
-        if (sec_metadata) {
-            const char *negotiated = sec_protocol_metadata_get_negotiated_protocol(sec_metadata);
-            if (negotiated) {
-                strlcpy(e->alpn, negotiated, sizeof(e->alpn));
-                res = e->alpn;
-            } else if (e->hs_state == TLS_HS_COMPLETE) {
-                // nothing negotiated: "" like the other backends (NULL = not known yet)
-                res = "";
-            }
-            sec_release(sec_metadata);
-        }
-        nw_release(metadata);
-    }
-    nw_release(definition);
-    return res;
+    return e->alpn;
 }
 
 // the chain the peer sent, leaf first, as recorded by Network.framework
@@ -925,40 +951,17 @@ static int engine_get_peer_cert(tlsuv_engine_t self, tlsuv_certificate_t *cert) 
     if (cert == NULL) return TLS_ERR;
     *cert = NULL;
 
-    if (e->connection == NULL || e->hs_state != TLS_HS_COMPLETE) {
+    // e->peer_chain is set by capture_session() before hs_state
+    if (e->hs_state != TLS_HS_COMPLETE) {
         return TLS_ERR;
     }
-
-    nw_protocol_definition_t definition = nw_protocol_copy_tls_definition();
-    nw_protocol_metadata_t metadata = nw_connection_copy_protocol_metadata(e->connection, definition);
-    nw_release(definition);
-    if (metadata == NULL) {
-        return TLS_ERR;
-    }
-
-    sec_protocol_metadata_t sec_metadata = nw_tls_copy_sec_protocol_metadata(metadata);
-    nw_release(metadata);
-    if (sec_metadata == NULL) {
-        return TLS_ERR;
-    }
-
-    CFMutableArrayRef chain = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-    sec_protocol_metadata_access_peer_certificate_chain(sec_metadata, ^(sec_certificate_t c) {
-        SecCertificateRef ref = sec_certificate_copy_ref(c);
-        if (ref) {
-            CFArrayAppendValue(chain, ref);
-            CFRelease(ref);
-        }
-    });
-    sec_release(sec_metadata);
-
-    if (CFArrayGetCount(chain) == 0) {
+    if (e->peer_chain == NULL) {
         UM_LOG(VERB, "peer presented no certificate");
-        CFRelease(chain);
         return TLS_ERR;
     }
 
-    *cert = applesec_cert_new(chain); // takes ownership
+    // a copy: the certificate outlives neither the engine nor a reset
+    *cert = applesec_cert_new(CFArrayCreateCopy(kCFAllocatorDefault, e->peer_chain)); // takes ownership
     return 0;
 }
 
@@ -1280,6 +1283,10 @@ static int engine_reset(tlsuv_engine_t self) {
         e->conn_gen++;
         release_listener(e);
         cancel_accept(e);
+        if (e->peer_chain) {
+            CFRelease(e->peer_chain);
+            e->peer_chain = NULL;
+        }
         e->session = SESSION_IDLE;
         if (e->tls_channel) {
             dispatch_io_close(e->tls_channel, DISPATCH_IO_STOP);
