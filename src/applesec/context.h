@@ -60,6 +60,9 @@ struct applesec_ctx {
 
     int (*cert_verify_f)(const struct tlsuv_certificate_s *cert, void *v_ctx);
     void *verify_ctx;
+
+    // require_fips() was called: engines restrict their cipher suites
+    bool fips_required;
 };
 
 struct applesec_priv_key {
