@@ -462,6 +462,25 @@ struct tls_context_s {
      * by the backend, in which case the current minimum is left in place
      */
     int (*set_min_version)(tls_context *ctx, enum tls_version min);
+
+    /**
+     * Restricts the context to FIPS-approved algorithms.
+     *
+     * Engines created from this context afterwards only negotiate TLS 1.2/1.3 with
+     * AES-GCM suites (ECDHE key exchange for TLS 1.2), P-256/P-384 key agreement and
+     * ECDSA/RSA-PSS/RSA-PKCS1(SHA-2) signatures. Backends that cannot express part of
+     * that set (see the README backend matrix) restrict what they can.
+     *
+     * The restriction is applied whether or not the library is actually running in
+     * FIPS mode; compare the result with TLS_FIPS_ENABLED to find out.
+     *
+     * Never NULL. Call it before creating any engine from the context: engines created
+     * earlier are not affected. Idempotent. There is no way to undo it.
+     *
+     * @param ctx TLS context
+     * @return the same value fips_status() reports for this context
+     */
+    enum tls_fips_status (*require_fips)(tls_context *ctx);
 };
 
 typedef tls_context *(*tls_context_factory)(void);

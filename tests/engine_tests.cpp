@@ -172,6 +172,27 @@ TEST_CASE (
     tls->free_ctx(tls);
 }
 
+TEST_CASE("require fips", "[engine]") {
+    tls_context *tls = default_tls_context(nullptr, 0);
+
+    // mandatory on every backend, like fips_status
+    REQUIRE(tls->require_fips != nullptr);
+
+    auto expected = tls->fips_status(tls, nullptr, 0);
+    CHECK(tls->require_fips(tls) == expected);
+    // idempotent
+    CHECK(tls->require_fips(tls) == expected);
+    // reporting is unaffected
+    CHECK(tls->fips_status(tls, nullptr, 0) == expected);
+
+    // the restricted context still creates engines
+    auto eng = tls->new_engine(tls, "localhost");
+    REQUIRE(eng != nullptr);
+    eng->free(eng);
+
+    tls->free_ctx(tls);
+}
+
 #define pem_path_str_(x) #x
 #define pem_path_str(x) pem_path_str_(x)
 
