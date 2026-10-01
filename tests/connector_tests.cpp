@@ -196,6 +196,92 @@ TEST_CASE_METHOD(UvLoopTest, "connect with ipv4 source address", "[connector]") 
     CHECK(ntohs(local.sin_port) == 58731);
 }
 
+TEST_CASE_METHOD(UvLoopTest, "concurrent connects to different peers can share a fixed source address", "[connector]") {
+    // mirrors ziti_hosting's real scenario more directly than racing multiple destination
+    // candidates within one connect() call: several SEPARATE, concurrent connect() calls (e.g.
+    // simultaneous client dials to two different hosted services, or the same service
+    // load-balanced across backends) all configured with the identical fixed sourceIp:port, but
+    // reaching different peers. each has only a single destination candidate here (a plain IP,
+    // like a real configured backend), so without SO_REUSEPORT the second dial's bind() would
+    // fail outright with nowhere to fall back to -- the whole connect fails, not just one of
+    // several candidates. (two dials to the *same* peer cannot both succeed regardless of socket
+    // options -- that would be a duplicate 4-tuple, which TCP itself never allows concurrently.)
+    auto accept_cb = [](uv_stream_t *s, int status) {
+        auto *client = t_alloc<uv_tcp_t>();
+        uv_tcp_init(s->loop, client);
+        if (uv_accept(s, (uv_stream_t *) client) == 0) {
+            uv_close((uv_handle_t *) client, [](uv_handle_t *h) { free(h); });
+        }
+    };
+
+    uv_tcp_t serverA{}, serverB{};
+    uv_tcp_init(loop, &serverA);
+    uv_tcp_init(loop, &serverB);
+    sockaddr_in listen_addr{};
+    uv_ip4_addr(TEST_SERVER, 0, &listen_addr);
+    REQUIRE(uv_tcp_bind(&serverA, (const sockaddr *) &listen_addr, 0) == 0);
+    REQUIRE(uv_tcp_bind(&serverB, (const sockaddr *) &listen_addr, 0) == 0);
+    REQUIRE(uv_listen((uv_stream_t *) &serverA, 1, accept_cb) == 0);
+    REQUIRE(uv_listen((uv_stream_t *) &serverB, 1, accept_cb) == 0);
+    DEFER {
+        uv_close((uv_handle_t *) &serverA, nullptr);
+        uv_close((uv_handle_t *) &serverB, nullptr);
+        drain();
+    };
+
+    sockaddr_storage boundA{}, boundB{};
+    int boundA_len = sizeof(boundA), boundB_len = sizeof(boundB);
+    uv_tcp_getsockname(&serverA, (sockaddr *) &boundA, &boundA_len);
+    uv_tcp_getsockname(&serverB, (sockaddr *) &boundB, &boundB_len);
+    char portA[12], portB[12];
+    snprintf(portA, sizeof(portA), "%d", ntohs(((sockaddr_in *) &boundA)->sin_port));
+    snprintf(portB, sizeof(portB), "%d", ntohs(((sockaddr_in *) &boundB)->sin_port));
+
+    auto connector = tlsuv_global_connector();
+
+    struct result_s {
+        bool called;
+        int err;
+        uv_os_sock_t sock;
+    };
+    result_s result1 = {false, 0, (uv_os_sock_t) -1};
+    result_s result2 = {false, 0, (uv_os_sock_t) -1};
+    DEFER {
+        if (result1.called && result1.err == 0) close_sock(result1.sock);
+        if (result2.called && result2.err == 0) close_sock(result2.sock);
+    };
+
+    sockaddr_in src_addr{};
+    uv_ip4_addr(TEST_SERVER, 58734, &src_addr); // the SAME fixed source port for both dials
+
+    auto cb = [](uv_os_sock_t s, int err, void *ctx) {
+        auto r = (result_s *) ctx;
+        r->called = true;
+        r->sock = s;
+        r->err = err;
+    };
+
+    // fire both connects before running the loop at all, so their resolves/binds genuinely
+    // overlap rather than one completing (and freeing its source port) before the next starts
+    auto req1 = connector->connect(loop, connector, TEST_SERVER, portA, (const sockaddr *) &src_addr, cb, &result1);
+    auto req2 = connector->connect(loop, connector, TEST_SERVER, portB, (const sockaddr *) &src_addr, cb, &result2);
+    REQUIRE(req1 != nullptr);
+    REQUIRE(req2 != nullptr);
+
+    run(UNTIL(result1.called && result2.called));
+
+    // both must succeed -- without SO_REUSEPORT, the second dial's bind() fails outright
+    REQUIRE(result1.err == 0);
+    REQUIRE(result2.err == 0);
+
+    sockaddr_in local1{}, local2{};
+    socklen_t l1 = sizeof(local1), l2 = sizeof(local2);
+    REQUIRE(getsockname(result1.sock, (sockaddr *) &local1, &l1) == 0);
+    REQUIRE(getsockname(result2.sock, (sockaddr *) &local2, &l2) == 0);
+    CHECK(ntohs(local1.sin_port) == 58734);
+    CHECK(ntohs(local2.sin_port) == 58734);
+}
+
 TEST_CASE_METHOD(UvLoopTest, "connect with ipv6 source address", "[connector]") {
     uv_tcp_t server{};
     uv_tcp_init(loop, &server);

@@ -321,6 +321,17 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
                 addr = addr->ai_next;
                 continue;
             }
+            // SO_REUSEADDR lets this bind succeed past a lingering TIME_WAIT left by an earlier
+            // connection that used this same source address/port (to a different peer)
+            int on = 1;
+            setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *) &on, sizeof(on));
+#ifdef SO_REUSEPORT
+            // SO_REUSEPORT lets multiple candidate sockets in this same loop share the source
+            // address/port concurrently, each connecting to a different destination candidate.
+            // not available on Windows.
+            setsockopt(s, SOL_SOCKET, SO_REUSEPORT, (const char *) &on, sizeof(on));
+#endif
+
             socklen_t src_len = sockaddr_len((struct sockaddr *) &cr->source_addr);
             if (bind(s, (struct sockaddr *) &cr->source_addr, src_len) != 0) {
                 err = get_error();
