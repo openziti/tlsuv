@@ -80,6 +80,7 @@ struct mbedtls_context {
     int (*cert_verify_f)(const struct tlsuv_certificate_s* , void *v_ctx);
     void *verify_ctx;
     enum tls_version min_version;
+    int fips_required;
 };
 
 struct mbedtls_engine {
@@ -136,6 +137,8 @@ static const char *mbedtls_version(void);
 
 static enum tls_fips_status mbedtls_fips_status(tls_context* ctx, char* module, size_t modulelen);
 
+static enum tls_fips_status mbedtls_require_fips(tls_context* ctx);
+
 static const char *mbedtls_eng_error(tlsuv_engine_t engine);
 
 static void mbedtls_free(tlsuv_engine_t engine);
@@ -177,6 +180,7 @@ static tls_context mbedtls_context_api = {
         .version = mbedtls_version,
         .fips_status = mbedtls_fips_status,
         .set_min_version = mbedtls_set_min_version,
+        .require_fips = mbedtls_require_fips,
         .strerror = mbedtls_error,
         .new_engine = new_mbedtls_engine,
         .free_ctx = mbedtls_free_ctx,
@@ -216,6 +220,41 @@ static enum tls_fips_status mbedtls_fips_status(tls_context* ctx, char* module, 
     // mbedTLS has no FIPS validated mode
     if (module && modulelen > 0) *module = 0;
     return TLS_FIPS_UNSUPPORTED;
+}
+
+// lists are kept by pointer in mbedtls_ssl_config: they must outlive every engine
+static const int fips_ciphersuites[] = {
+    MBEDTLS_TLS1_3_AES_256_GCM_SHA384,
+    MBEDTLS_TLS1_3_AES_128_GCM_SHA256,
+    MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+    MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+    MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+    MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+    0,
+};
+
+static const uint16_t fips_groups[] = {
+    MBEDTLS_SSL_IANA_TLS_GROUP_SECP384R1,
+    MBEDTLS_SSL_IANA_TLS_GROUP_SECP256R1,
+    MBEDTLS_SSL_IANA_TLS_GROUP_NONE,
+};
+
+static const uint16_t fips_sig_algs[] = {
+    MBEDTLS_TLS1_3_SIG_ECDSA_SECP384R1_SHA384,
+    MBEDTLS_TLS1_3_SIG_ECDSA_SECP256R1_SHA256,
+    MBEDTLS_TLS1_3_SIG_RSA_PSS_RSAE_SHA512,
+    MBEDTLS_TLS1_3_SIG_RSA_PSS_RSAE_SHA384,
+    MBEDTLS_TLS1_3_SIG_RSA_PSS_RSAE_SHA256,
+    MBEDTLS_TLS1_3_SIG_RSA_PKCS1_SHA384,
+    MBEDTLS_TLS1_3_SIG_RSA_PKCS1_SHA256,
+    MBEDTLS_TLS1_3_SIG_NONE,
+};
+
+static enum tls_fips_status mbedtls_require_fips(tls_context* ctx) {
+    // applied to each engine's config in new_mbedtls_engine()
+    ((struct mbedtls_context*)ctx)->fips_required = 1;
+    // mbedTLS has no FIPS validated mode: the limits are policy only
+    return mbedtls_fips_status(ctx, NULL, 0);
 }
 
 const char *mbedtls_error(long code) {
@@ -314,6 +353,13 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
                                 MBEDTLS_SSL_IS_CLIENT,
                                 MBEDTLS_SSL_TRANSPORT_STREAM,
                                 MBEDTLS_SSL_PRESET_DEFAULT);
+    // TLS 1.2 and 1.3 only, whatever the library defaults are
+    mbedtls_ssl_conf_min_tls_version(ssl_config, MBEDTLS_SSL_VERSION_TLS1_2);
+#if defined(MBEDTLS_SSL_PROTO_TLS1_3)
+    mbedtls_ssl_conf_max_tls_version(ssl_config, MBEDTLS_SSL_VERSION_TLS1_3);
+#else
+    mbedtls_ssl_conf_max_tls_version(ssl_config, MBEDTLS_SSL_VERSION_TLS1_2);
+#endif
 #if defined(MBEDTLS_SSL_RENEGOTIATION)
     // a TLS 1.2 renegotiation would run a second handshake that tlsuv never sees, so its peer
     // goes unchecked; refuse it
@@ -467,11 +513,17 @@ tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host) {
     struct mbedtls_engine *mbed_eng = tlsuv__calloc(1, sizeof(struct mbedtls_engine));
     init_ssl_context(&mbed_eng->config, context->ca, context->ca_len);
 #if MBEDTLS_VERSION_MAJOR == 3 && defined(MBEDTLS_SSL_PROTO_TLS1_3)
-    // the library default is TLS 1.2
+    // init_ssl_context() set TLS 1.2 as the minimum
     if (context->min_version == TLSUV_TLS13) {
         mbedtls_ssl_conf_min_tls_version(&mbed_eng->config, MBEDTLS_SSL_VERSION_TLS1_3);
     }
 #endif
+
+    if (context->fips_required) {
+        mbedtls_ssl_conf_ciphersuites(&mbed_eng->config, fips_ciphersuites);
+        mbedtls_ssl_conf_groups(&mbed_eng->config, fips_groups);
+        mbedtls_ssl_conf_sig_algs(&mbed_eng->config, fips_sig_algs);
+    }
 
     if (context->own_key && context->own_cert) {
         mbedtls_ssl_conf_own_cert(&mbed_eng->config, context->own_cert, &context->own_key->pkey);
