@@ -1172,7 +1172,10 @@ static void cert_subject(PCCERT_CONTEXT cert, char* subj, size_t len) {
 // With [fips_required] (require_fips()) the TLS_PARAMETERS also disable what the approved set
 // excludes and Schannel can express: AES-CBC, ChaCha20-Poly1305, SHA-1 digests and finite-field
 // DH. Curves and signature algorithms are not controllable per credential and follow the OS
-// policy. There is no SCHANNEL_CRED fallback then: that structure carries no restrictions.
+// policy. SCH_USE_STRONG_CRYPTO is added as defence in depth: it makes Schannel drop known-weak
+// algorithms (RC4, DES, 3DES, MD5, weak DH sizes); it is not FIPS enforcement and complements, not
+// replaces, the disable list. There is no SCHANNEL_CRED fallback then: that structure carries no
+// restrictions.
 
 // logs the fallback warning once per process
 static volatile LONG sch_credentials_warned;
@@ -1201,7 +1204,7 @@ static SECURITY_STATUS acquire_credentials(PCredHandle handle, ULONG direction, 
         .dwVersion = SCH_CREDENTIALS_VERSION,
         .cCreds = ncerts,
         .paCred = certs,
-        .dwFlags = flags,
+        .dwFlags = fips_required ? flags | SCH_USE_STRONG_CRYPTO : flags,
         .cTlsParameters = 1,
         .pTlsParameters = &tls_params,
     };
@@ -1255,7 +1258,7 @@ struct win32crypto_engine_s* new_win32engine(
     SECURITY_STATUS rc = acquire_credentials(&engine->cred_handle, SECPKG_CRED_OUTBOUND, false,
                                              flags, certs, own_cert ? 1 : 0, min_version, fips_required);
     if (rc != ERROR_SUCCESS) {
-        if (restricted) {
+        if (fips_required) {
             LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result (require_fips restricted credentials)");
         } else {
             LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result");

@@ -70,9 +70,10 @@ struct win32crypto_engine_s {
 
 /**
  * Creates a client side engine.
+ * [min_version] is the lowest TLS version the engine negotiates.
  * [fips_required] restricts the credentials to the approved algorithm set (see
- * acquire_fips_credentials() in engine.c). Builds whose headers lack SCH_CREDENTIALS
- * cannot restrict: they create an unrestricted engine and log a WARN.
+ * acquire_credentials() in engine.c); when that restriction cannot be applied the
+ * credentials are not acquired and the handshake fails.
  */
 extern struct win32crypto_engine_s *new_win32engine(
     const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,

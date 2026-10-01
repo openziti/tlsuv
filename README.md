@@ -93,10 +93,12 @@ off by default since Windows Server 2012), not controlled by the bundle.
 keychain keys.
 [^9]: Partial. The engine's `SCH_CREDENTIALS` are acquired with a disabled-algorithms list, and Schannel can only
 disable algorithms: besides the protocols below TLS 1.2 (always disabled), AES-CBC, ChaCha20-Poly1305, SHA-1 digests
-and finite-field DH are disabled. Curves, signature algorithms and static-RSA key exchange are not enforced and follow
-the operating system policy. If Windows rejects `SCH_CREDENTIALS` (before Windows 10 1809 / Server 2019) there is no
-fallback to unrestricted credentials: server engines are not created and client engines fail the handshake.
-Not yet verified on a Windows run.
+and finite-field DH are disabled, and the restricted credentials also set `SCH_USE_STRONG_CRYPTO` (Schannel drops
+known-weak algorithms; this is not FIPS enforcement). Curves, signature algorithms and static-RSA key exchange are not
+enforced and follow the operating system policy. If Windows rejects `SCH_CREDENTIALS` (before Windows 10 1809 /
+Server 2019) there is no fallback to unrestricted credentials: server engines are not created and client engines fail
+the handshake. Verified on the Windows CI: the restricted credentials and TLS 1.3 post-handshake message handling;
+the refusal of ChaCha20 and CBC peers is not exercised there.
 [^10]: Partial. Network.framework only allows choosing cipher suites: TLS 1.3 and TLS 1.2 AES-GCM suites are
 selected, while key-agreement groups and signature algorithms stay at the system defaults.
 [^11]: Policy only, full approved set: mbedTLS has no FIPS-validated mode, so the status stays
