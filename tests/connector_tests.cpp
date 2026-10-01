@@ -251,6 +251,98 @@ TEST_CASE_METHOD(UvLoopTest, "connect with ipv6 source address", "[connector]") 
     CHECK(ntohs(local.sin6_port) == 58732);
 }
 
+TEST_CASE_METHOD(UvLoopTest, "connect races multiple candidates with source address family filter", "[connector]") {
+    // "yahoo.com" is the dual-stack (A+AAAA) hostname already relied on elsewhere in this suite
+    // (see "connect cancel") -- unlike "localhost", whose resolution depends on the local
+    // resolver/hosts file and isn't reliably dual-stack across environments (the "default
+    // connector" test above has to branch on AF_INET vs AF_INET6 for exactly that reason).
+    // this exercises on_resolve()'s real multi-connect (candidate-racing) loop: forcing the
+    // source address to a specific family (via a wildcard bind of just that family) must cause
+    // the other family's candidate(s) to be skipped rather than raced, so the connection can
+    // only land on a peer of the forced family.
+    auto connector = tlsuv_global_connector();
+
+    struct result_s {
+        bool called;
+        int err;
+        uv_os_sock_t sock;
+    } result = {false, 0, (uv_os_sock_t) -1};
+    DEFER {
+        if (result.called && result.err == 0) close_sock(result.sock);
+    };
+
+    sockaddr_in src_addr{};
+    uv_ip4_addr("0.0.0.0", 0, &src_addr); // force IPv4: binds to any local IPv4 address
+    auto req = connector->connect(loop, connector, "yahoo.com", "443", (const sockaddr *) &src_addr,
+                                  [](uv_os_sock_t s, int err, void *ctx) {
+                                      auto r = (result_s *) ctx;
+                                      r->called = true;
+                                      r->sock = s;
+                                      r->err = err;
+                                  }, &result);
+    REQUIRE(req != nullptr);
+
+    run(UNTIL(result.called));
+
+    REQUIRE(result.err == 0);
+    sockaddr_storage local{};
+    socklen_t local_len = sizeof(local);
+    REQUIRE(getsockname(result.sock, (sockaddr *) &local, &local_len) == 0);
+    // only holds if yahoo.com's AAAA candidate(s) were actually skipped rather than raced
+    CHECK(local.ss_family == AF_INET);
+}
+
+TEST_CASE_METHOD(UvLoopTest, "connect fails when no candidate matches source address family", "[connector]") {
+    // "127.0.0.1" only ever resolves to a single IPv4 candidate -- an IPv6 source address can
+    // never match it, so every candidate gets skipped and the connect must fail cleanly with
+    // EAFNOSUPPORT, not hang or silently connect unbound.
+    uv_tcp_t server{};
+    uv_tcp_init(loop, &server);
+    sockaddr_in listen_addr{};
+    uv_ip4_addr("127.0.0.1", 0, &listen_addr);
+    REQUIRE(uv_tcp_bind(&server, (const sockaddr *) &listen_addr, 0) == 0);
+    REQUIRE(uv_listen((uv_stream_t *) &server, 1, [](uv_stream_t *s, int status) {
+        auto *client = t_alloc<uv_tcp_t>();
+        uv_tcp_init(s->loop, client);
+        if (uv_accept(s, (uv_stream_t *) client) == 0) {
+            uv_close((uv_handle_t *) client, [](uv_handle_t *h) { free(h); });
+        }
+    }) == 0);
+    DEFER { uv_close((uv_handle_t *) &server, nullptr); drain(); };
+
+    sockaddr_storage bound{};
+    int bound_len = sizeof(bound);
+    uv_tcp_getsockname(&server, (sockaddr *) &bound, &bound_len);
+    char target_port[12];
+    snprintf(target_port, sizeof(target_port), "%d", ntohs(((sockaddr_in *) &bound)->sin_port));
+
+    auto connector = tlsuv_global_connector();
+
+    struct result_s {
+        bool called;
+        int err;
+        uv_os_sock_t sock;
+    } result = {false, 0, (uv_os_sock_t) -1};
+    DEFER {
+        if (result.called && result.err == 0) close_sock(result.sock);
+    };
+
+    sockaddr_in6 src_addr{};
+    uv_ip6_addr("::1", 0, &src_addr);
+    auto req = connector->connect(loop, connector, "127.0.0.1", target_port, (const sockaddr *) &src_addr,
+                                  [](uv_os_sock_t s, int err, void *ctx) {
+                                      auto r = (result_s *) ctx;
+                                      r->called = true;
+                                      r->sock = s;
+                                      r->err = err;
+                                  }, &result);
+    REQUIRE(req != nullptr);
+
+    run(UNTIL(result.called));
+
+    REQUIRE(result.err == UV_EAFNOSUPPORT);
+}
+
 TEST_CASE("base64 encode", "[connector]") {
     auto msg = "this is a long message!";
 
