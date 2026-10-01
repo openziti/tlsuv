@@ -47,6 +47,10 @@ struct win32crypto_engine_s {
 
     SECURITY_STATUS status;
     tls_handshake_state handshake_st;
+    // TLS 1.3 only: inbound starts with a post-handshake message (NewSessionTicket,
+    // KeyUpdate) that DecryptMessage handed back with SEC_I_RENEGOTIATE and that
+    // Initialize/AcceptSecurityContext has not finished processing yet
+    bool post_handshake;
     io_ctx io;
     io_read read_fn;
     io_write write_fn;
