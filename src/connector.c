@@ -299,6 +299,15 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
     int count = 0;
     int err = 0;
     while (addr && count < max_connect_socks) {
+        // avoid spending a file descriptor on a candidate that's unusable due to family mismatch
+        if (cr->source_addr.ss_family != AF_UNSPEC && cr->source_addr.ss_family != addr->ai_family) {
+            CR_LOG(TRACE, "source address family does not match destination[%s]; skipping",
+                   get_name(addr->ai_addr));
+            err = EAFNOSUPPORT;
+            addr = addr->ai_next;
+            continue;
+        }
+
         uv_os_sock_t s = tlsuv_socket(addr, 0);
         if (s == INVALID_SOCKET) {
             err = get_error();
@@ -313,14 +322,6 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
         }
 
         if (cr->source_addr.ss_family != AF_UNSPEC) {
-            if (cr->source_addr.ss_family != addr->ai_family) {
-                CR_LOG(TRACE, "fd[%ld] source address family does not match destination[%s]; skipping",
-                       (long)s, get_name(addr->ai_addr));
-                err = EAFNOSUPPORT;
-                closesocket(s);
-                addr = addr->ai_next;
-                continue;
-            }
             // SO_REUSEADDR lets this bind succeed past a lingering TIME_WAIT left by an earlier
             // connection that used this same source address/port (to a different peer)
             int on = 1;
