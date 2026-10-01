@@ -14,6 +14,7 @@
 
 #include <catch2/catch_all.hpp>
 #include "fixtures.h"
+#include "mock_keychain.h"
 #include "p11.h"
 #include "util.h"
 
@@ -349,6 +350,9 @@ TEST_CASE("gen-pkcs11-key", "[key]") {
 #endif
 
 TEST_CASE("keychain", "[key]") {
+#ifdef TEST_HAVE_OPENSSL_API
+    mock_keychain_register(); // platforms without a keychain use the software one
+#endif
     auto tls = default_tls_context(nullptr, 0);
     if (tls->load_keychain_key == nullptr) {
         tls->free_ctx(tls);
@@ -778,3 +782,136 @@ gVR4vMEhZP3bGvqSofXMxTlVj56IQFruBV3B+cKmOavMgEFw/4gzPCCHmMbFkorf
     c->free(c);
     tls->free_ctx(tls);
 }
+
+#ifdef TEST_HAVE_OPENSSL_API
+TEST_CASE("keychain_csr", "[key]") {
+    mock_keychain_register(); // platforms without a keychain use the software one
+    auto tls = default_tls_context(nullptr, 0);
+    if (tls->generate_keychain_key == nullptr || tls->generate_csr_to_pem == nullptr) {
+        tls->free_ctx(tls);
+        SKIP("keychain or CSR generation not supported");
+    }
+    DEFER {
+        tls->free_ctx(tls);
+    };
+
+    uv_timeval64_t now;
+    uv_gettimeofday(&now);
+    auto name = "testcsr-" + std::to_string(now.tv_usec);
+
+    tlsuv_private_key_t pk{};
+    REQUIRE(tls->generate_keychain_key(&pk, name.c_str()) == 0);
+    DEFER {
+        if (pk) pk->free(pk);
+        tls->remove_keychain_key(name.c_str());
+    };
+
+    char *pem = nullptr;
+    size_t pemlen = 0;
+    REQUIRE(tls->generate_csr_to_pem(pk, &pem, &pemlen, "CN", "keychain-test", NULL) == 0);
+    std::string csr(pem, pemlen);
+    free(pem);
+
+    // the CSR must be signed by the keychain key: verify against the public key it carries
+    CHECK(verify_csr(csr) == "/CN=keychain-test");
+}
+
+// Keys in a software keychain, in the shapes real keychains report them
+// (see mock_keychain.h). Replaces the platform keychain, if any, for the test.
+TEST_CASE("keychain_mock_keys", "[key]") {
+    MockKeychainScope mock_scope;
+
+    auto format = GENERATE(MockFormat::SPKI, MockFormat::Raw, MockFormat::RawNoBits);
+    auto type = GENERATE(keychain_key_ec, keychain_key_rsa);
+    auto &mock = mock_keychain();
+    mock.set_format(format);
+    DEFER {
+        mock.set_format(MockFormat::SPKI);
+    };
+
+    // EC point needs key_bits() to pick the curve: without it the key cannot be loaded
+    bool loadable = !(format == MockFormat::RawNoBits && type == keychain_key_ec);
+
+    auto tls = default_tls_context(nullptr, 0);
+    REQUIRE(tls->load_keychain_key != nullptr);
+    DEFER {
+        tls->free_ctx(tls);
+    };
+
+    std::string name = "mock-key";
+    REQUIRE(mock.add(name, type));
+    DEFER {
+        mock.remove(name);
+    };
+
+    tlsuv_private_key_t pk{};
+    if (!loadable) {
+        CHECK(tls->load_keychain_key(&pk, name.c_str()) != 0);
+        return;
+    }
+    REQUIRE(tls->load_keychain_key(&pk, name.c_str()) == 0);
+    DEFER {
+        pk->free(pk);
+    };
+
+    char data[1024];
+    uv_random(nullptr, nullptr, data, sizeof(data), 0, nullptr);
+
+    auto pub = pk->pubkey(pk);
+    REQUIRE(pub != nullptr);
+    DEFER {
+        pub->free(pub);
+    };
+
+    for (auto md: {hash_SHA256, hash_SHA384, hash_SHA512}) {
+        char sig[512] = {};
+        size_t siglen = sizeof(sig);
+        REQUIRE(pk->sign(pk, md, data, sizeof(data), sig, &siglen) == 0);
+        CHECK(pub->verify(pub, md, data, sizeof(data), sig, siglen) == 0);
+
+        // signature is not valid for other data
+        data[0]++;
+        CHECK(pub->verify(pub, md, data, sizeof(data), sig, siglen) != 0);
+        data[0]--;
+    }
+
+    // buffer smaller than the largest signature is refused instead of overflowed
+    // (`small` is a macro in the Windows headers, hence the name)
+    char tiny[8];
+    size_t tinylen = sizeof(tiny);
+    CHECK(pk->sign(pk, hash_SHA256, data, sizeof(data), tiny, &tinylen) != 0);
+
+    // the private key cannot be exported
+    char *pem = nullptr;
+    size_t pemlen = 0;
+    CHECK(pk->to_pem(pk, &pem, &pemlen) != 0);
+    CHECK(pem == nullptr);
+
+    if (tls->generate_csr_to_pem) {
+        REQUIRE(tls->generate_csr_to_pem(pk, &pem, &pemlen, "CN", "mock-keychain", NULL) == 0);
+        std::string csr(pem, pemlen);
+        free(pem);
+        CHECK(verify_csr(csr) == "/CN=mock-keychain");
+    }
+}
+
+TEST_CASE("keychain_reset", "[key]") {
+    // the platform keychain, or none (or the mock, if another test installed it for good)
+    auto initial = const_cast<keychain_t *>(tlsuv_keychain());
+    DEFER {
+        tlsuv_set_keychain(initial);
+    };
+
+    tlsuv_set_keychain(&mock_keychain().api);
+    CHECK(tlsuv_keychain() == &mock_keychain().api);
+
+    // NULL resets to the platform keychain, if there is one
+    tlsuv_set_keychain(nullptr);
+#if defined(__APPLE__) || defined(_WIN32)
+    CHECK(tlsuv_keychain() == initial);
+    CHECK(tlsuv_keychain() != nullptr);
+#else
+    CHECK(tlsuv_keychain() == nullptr);
+#endif
+}
+#endif

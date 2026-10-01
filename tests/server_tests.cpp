@@ -332,7 +332,16 @@ struct engine_holder {
     operator tlsuv_engine_t() const { return e; }
 };
 
-#define SKIP_UNLESS_SERVER_SUPPORTED(holder)                                    \
+// frees the certificate even when a REQUIRE throws
+struct cert_holder {
+    tlsuv_certificate_t c = nullptr;
+    cert_holder() = default;
+    cert_holder(const cert_holder &) = delete;
+    cert_holder &operator=(const cert_holder &) = delete;
+    ~cert_holder() { if (c) c->free(c); }
+};
+
+#define SKIP_UNLESS_SERVER_SUPPORTED(holder)                                  \
     do {                                                                        \
         if (!(holder).supports_server()) {                                      \
             WARN("TLS server engines are not supported by this backend");       \
@@ -488,21 +497,19 @@ TEST_CASE("server engine optional client cert", "[engine][server]") {
         REQUIRE(do_handshake(clt_eng, srv_eng));
 
         REQUIRE(srv_eng->get_peer_cert != nullptr);
-        tlsuv_certificate_t peer = nullptr;
-        REQUIRE(srv_eng->get_peer_cert(srv_eng, &peer) == 0);
-        REQUIRE(peer != nullptr);
+        cert_holder peer;
+        REQUIRE(srv_eng->get_peer_cert(srv_eng, &peer.c) == 0);
+        REQUIRE(peer.c != nullptr);
 
-        const char *text = peer->get_text(peer);
+        const char *text = peer.c->get_text(peer.c);
         REQUIRE(text != nullptr);
         CHECK_THAT(text, Catch::Matchers::ContainsSubstring("CN=localhost"));
 
         char *pem = nullptr;
         size_t pemlen = 0;
-        CHECK(peer->to_pem(peer, 0, &pem, &pemlen) == 0);
+        REQUIRE(peer.c->to_pem(peer.c, 0, &pem, &pemlen) == 0);
+        std::unique_ptr<char, decltype(&free)> pem_guard(pem, free);
         CHECK(pemlen > 0);
-        free(pem);
-
-        peer->free(peer);
     }
 
     SECTION("client presents no certificate") {
@@ -513,10 +520,52 @@ TEST_CASE("server engine optional client cert", "[engine][server]") {
         // client certs are optional: the handshake completes anyway
         REQUIRE(do_handshake(clt_eng, srv_eng));
 
-        tlsuv_certificate_t peer = nullptr;
-        CHECK(srv_eng->get_peer_cert(srv_eng, &peer) == TLS_ERR);
-        CHECK(peer == nullptr);
+        cert_holder peer;
+        CHECK(srv_eng->get_peer_cert(srv_eng, &peer.c) == TLS_ERR);
+        CHECK(peer.c == nullptr);
     }
+}
+
+TEST_CASE("client engine peer certificate", "[engine][server]") {
+    auto make = GENERATE(as<transport_factory>{}, make_mem, make_socketpair, make_socket);
+
+    tls_ctx_holder srv(test_ca);
+    SKIP_UNLESS_SERVER_SUPPORTED(srv);
+    srv.set_identity();
+
+    tls_ctx_holder clt(test_ca);
+
+    engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
+    engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
+    if (clt_eng->get_peer_cert == nullptr) {
+        SKIP("get_peer_cert is not implemented");
+    }
+
+    // no handshake yet, no peer certificate
+    cert_holder peer;
+    CHECK(clt_eng->get_peer_cert(clt_eng, &peer.c) == TLS_ERR);
+    CHECK(peer.c == nullptr);
+
+    auto t = make();
+    t->attach(clt_eng, srv_eng);
+    REQUIRE(do_handshake(clt_eng, srv_eng));
+
+    // the client gets the server's certificate
+    REQUIRE(clt_eng->get_peer_cert(clt_eng, &peer.c) == 0);
+    REQUIRE(peer.c != nullptr);
+
+    // get_text is optional
+    if (peer.c->get_text != nullptr) {
+        const char *text = peer.c->get_text(peer.c);
+        REQUIRE(text != nullptr);
+        CHECK_THAT(text, Catch::Matchers::ContainsSubstring("CN=localhost"));
+    }
+
+    char *pem = nullptr;
+    size_t pemlen = 0;
+    REQUIRE(peer.c->to_pem(peer.c, 0, &pem, &pemlen) == 0);
+    std::unique_ptr<char, decltype(&free)> pem_guard(pem, free);
+    CHECK(pemlen > 0);
 }
 
 TEST_CASE("server engine without CA requests no client cert", "[engine][server]") {
@@ -542,9 +591,9 @@ TEST_CASE("server engine without CA requests no client cert", "[engine][server]"
     // the client has an identity, so an absent peer cert proves the server never
     // sent a CertificateRequest
     if (srv_eng->get_peer_cert != nullptr) {
-        tlsuv_certificate_t peer = nullptr;
-        CHECK(srv_eng->get_peer_cert(srv_eng, &peer) == TLS_ERR);
-        CHECK(peer == nullptr);
+        cert_holder peer;
+        CHECK(srv_eng->get_peer_cert(srv_eng, &peer.c) == TLS_ERR);
+        CHECK(peer.c == nullptr);
     }
 
     INFO("transport: " << t->name());

@@ -1,5 +1,6 @@
 add_library(boringssl-impl OBJECT
         engine.c
+        keychain.c
         keys.c
         keys.h
 )

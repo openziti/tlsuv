@@ -16,6 +16,7 @@
 #ifndef TLSUV_BORINGSSL_KEYS_H
 #define TLSUV_BORINGSSL_KEYS_H
 
+#include <tlsuv/keychain.h>
 #include <tlsuv/tls_engine.h>
 
 struct cert_s {
@@ -42,6 +43,29 @@ void cert_init(struct cert_s* c);
 
 int gen_key(tlsuv_private_key_t * key);
 int load_key(tlsuv_private_key_t* key, const char* keydata, size_t keydatalen);
+
+// wraps `pkey` (takes ownership) in a private key object
+tlsuv_private_key_t new_private_key(EVP_PKEY* pkey);
+
+// Keychain keys (keychain.c): the EVP_PKEY of these keys holds the public key
+// only. The keychain handle hangs off the EC_KEY/RSA ex_data, so it lives as
+// long as any reference to the EVP_PKEY (private key object, TLS context, TLS engine).
+int load_keychain_key(tlsuv_private_key_t* key, const char* name);
+int gen_keychain_key(tlsuv_private_key_t* key, const char* name);
+int remove_keychain_key(const char* name);
+
+// returns the keychain handle behind `pkey`, or NULL if it is not a keychain key
+keychain_key_t pkey_keychain_key(EVP_PKEY* pkey);
+
+// Signs an already computed `digest` with a keychain key.
+// EC keys produce a DER ECDSA signature, RSA keys PKCS#1 v1.5.
+// `*siglen` is the capacity of `sig` on input (at least EVP_PKEY_size()) and the
+// signature length on output.
+int keychain_sign_digest(EVP_PKEY* pkey, const EVP_MD* md, const uint8_t* digest, size_t digestlen,
+                         uint8_t* sig, size_t* siglen);
+
+// Signs (SHA-256) and completes a certificate request made for a keychain key.
+int keychain_sign_csr(X509_REQ* req, EVP_PKEY* pkey);
 
 int verify_signature(EVP_PKEY* pk, enum hash_algo md, const char* data, size_t datalen, const char* sig, size_t siglen);
 

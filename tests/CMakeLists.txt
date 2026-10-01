@@ -76,11 +76,14 @@ if (WIN32)
     target_compile_definitions(all_tests PRIVATE NOMINMAX)
 endif ()
 
+# where the tests look for the test certificates at run time; override when the
+# tests run on another machine than the one building them (e.g. Android device)
+set(TLSUV_TEST_CERTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/certs CACHE PATH "directory of test certificates at run time")
 target_compile_definitions(all_tests PRIVATE
         TEST_${TLSUV_TLSLIB}
-        TEST_SERVER_CA=${CMAKE_CURRENT_SOURCE_DIR}/certs/ca.pem
-        TEST_SERVER_CERT=${CMAKE_CURRENT_SOURCE_DIR}/certs/server.crt
-        TEST_SERVER_KEY=${CMAKE_CURRENT_SOURCE_DIR}/certs/server.key
+        TEST_SERVER_CA=${TLSUV_TEST_CERTS_DIR}/ca.pem
+        TEST_SERVER_CERT=${TLSUV_TEST_CERTS_DIR}/server.crt
+        TEST_SERVER_KEY=${TLSUV_TEST_CERTS_DIR}/server.key
         )
 if (softhsm_lib)
     target_compile_definitions(all_tests PRIVATE
@@ -96,6 +99,10 @@ target_link_libraries(all_tests
         )
 
 if (TLSUV_TLSLIB STREQUAL "win32crypto")
+    target_link_libraries(all_tests OpenSSL::Crypto)
+elseif (TLSUV_TLSLIB STREQUAL "boringssl" OR TLSUV_TLSLIB STREQUAL "openssl")
+    # openssl_fixtures.h: inspect CSRs, mint client certs for keychain keys
+    find_package(OpenSSL REQUIRED)
     target_link_libraries(all_tests OpenSSL::Crypto)
 endif ()
 

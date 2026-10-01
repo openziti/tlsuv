@@ -15,6 +15,7 @@
 #include <catch2/catch_all.hpp>
 #include "fixtures.h"
 #include "http_capture.h"
+#include "mock_keychain.h"
 
 #include <compression.h>
 #include <cstring>
@@ -1669,3 +1670,90 @@ TEST_CASE("http_proxy_connector", "[http]") {
     proxy_conn->free((tlsuv_connector_t*)proxy_conn);
     test.run();
 }
+
+#ifdef TEST_HAVE_OPENSSL_API
+// Client authentication where the private key never leaves the keychain: the
+// TLS stack has to sign CertificateVerify through the keychain. The test server
+// requests a client certificate and checks that proof of possession, but not
+// the certificate chain, so a throwaway issuer is enough.
+static void keychain_client_auth(tls_context *tls, tlsuv_private_key_t pk) {
+    UvLoopTest test;
+    tlsuv_http_t clt{};
+    resp_capture resp(resp_body_cb);
+    tlsuv_certificate_t cert{};
+    DEFER {
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+        if (cert) cert->free(cert);
+    };
+
+    char *pem = nullptr;
+    size_t pemlen = 0;
+    REQUIRE(tls->generate_csr_to_pem(pk, &pem, &pemlen, "CN", "keychain-test", NULL) == 0);
+    std::string csr(pem, pemlen);
+    free(pem);
+
+    auto cert_pem = cert_from_csr(csr);
+    REQUIRE(!cert_pem.empty());
+    REQUIRE(tls->load_cert(&cert, cert_pem.c_str(), cert_pem.size()) == 0);
+    REQUIRE(tls->set_own_cert(tls, pk, cert) == 0);
+
+    tlsuv_http_init(test.loop, &clt, testServerURL("auth").c_str());
+    tlsuv_http_set_ssl(&clt, tls);
+    tlsuv_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
+
+    test.run();
+
+    CHECK(resp.code == HTTP_STATUS_OK);
+    CHECK_THAT(resp.body, Catch::Matchers::StartsWith("you are 'CN=keychain-test'"));
+}
+
+TEST_CASE("keychain_client_cert_test", "[http]") {
+    mock_keychain_register(); // platforms without a keychain use the software one
+    tls_context *tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+    if (tls->generate_keychain_key == nullptr || tls->generate_csr_to_pem == nullptr) {
+        tls->free_ctx(tls);
+        SKIP("keychain or CSR generation not supported");
+    }
+
+    uv_timeval64_t now;
+    uv_gettimeofday(&now);
+    auto name = "testauth-" + std::to_string(now.tv_usec);
+
+    tlsuv_private_key_t pk{};
+    REQUIRE(tls->generate_keychain_key(&pk, name.c_str()) == 0);
+    DEFER {
+        if (pk) pk->free(pk);
+        tls->remove_keychain_key(name.c_str());
+        tls->free_ctx(tls);
+    };
+
+    keychain_client_auth(tls, pk);
+}
+
+// software keychain: EC (TLS 1.3 capable) and RSA (PKCS#1 v1.5 only, so TLS 1.2)
+TEST_CASE("mock_keychain_client_cert_test", "[http]") {
+    MockKeychainScope mock_scope;
+
+    auto type = GENERATE(keychain_key_ec, keychain_key_rsa);
+    auto &mock = mock_keychain();
+    mock.set_format(MockFormat::SPKI);
+
+    tls_context *tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+    REQUIRE(tls->load_keychain_key != nullptr);
+
+    std::string name = "mock-auth-key";
+    REQUIRE(mock.add(name, type));
+
+    tlsuv_private_key_t pk{};
+    REQUIRE(tls->load_keychain_key(&pk, name.c_str()) == 0);
+    DEFER {
+        pk->free(pk);
+        mock.remove(name);
+        tls->free_ctx(tls);
+    };
+
+    keychain_client_auth(tls, pk);
+}
+#endif
+

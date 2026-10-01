@@ -555,9 +555,13 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
             EVP_PKEY_set1_EC_KEY(pk1, key);
             EC_KEY_free(key); // decrease refcount
         } else if (key_type == EVP_PKEY_RSA) {
-            RSA *rsa = (RSA*)EVP_PKEY_get0_RSA(pk1);
+            // pk1 is provider-native in OpenSSL 3: the RSA from get0 is a detached copy,
+            // so set the method on a reference and write it back (as for EC above)
+            RSA *rsa = EVP_PKEY_get1_RSA(pk1);
             RSA_set_ex_data(rsa, kc_rsa_idx, k);
             RSA_set_method(rsa, ext_rsa_method);
+            EVP_PKEY_set1_RSA(pk1, rsa);
+            RSA_free(rsa); // decrease refcount
         } else {
             EVP_PKEY_free(pk1);
             return -1;
@@ -567,7 +571,8 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
     }
 
     if (type == keychain_key_ec) {
-        int bits = keychain->key_bits(k);
+        // key_bits is optional in keychain_t
+        int bits = keychain->key_bits ? keychain->key_bits(k) : -1;
         if (bits < 0) {
             UM_LOG(ERR, "invalid key size");
             return -1;

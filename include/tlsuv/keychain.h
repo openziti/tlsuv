@@ -37,7 +37,19 @@ struct keychain_s {
 #if __cplusplus
 extern "C" {
 #endif
+/**
+ * The keychain used for keychain keys: the one registered with tlsuv_set_keychain(),
+ * or the platform keychain (Apple, Windows) if none was. NULL if there is none.
+ */
 const keychain_t *tlsuv_keychain();
+
+/**
+ * Registers the keychain, replacing the current one (including the platform keychain).
+ * NULL resets to the platform keychain, or to no keychain on platforms without one.
+ * TLS contexts offer keychain keys only if a keychain is registered when they are created.
+ * Keys are bound to the keychain that created them: do not switch keychains while
+ * keys or contexts holding them are alive.
+ */
 void tlsuv_set_keychain(keychain_t *);
 #if __cplusplus
 }

@@ -15,7 +15,6 @@
 //
 
 #include <uv.h>
-#include <assert.h>
 #include "keychain.h"
 
 #if defined(__APPLE__) || _WIN32
@@ -27,7 +26,10 @@ static uv_once_t init_guard;
 
 static void init(void) {
 #if defined(__APPLE__) || _WIN32
-    tlsuv_set_keychain(platform_keychain());
+    // do not override a keychain the application registered before first use
+    if (KEYCHAIN == NULL) {
+        tlsuv_set_keychain(platform_keychain());
+    }
 #endif
 }
 
@@ -36,7 +38,12 @@ const keychain_t* tlsuv_keychain() {
     return KEYCHAIN;
 }
 void tlsuv_set_keychain(keychain_t *kc) {
-    assert(KEYCHAIN == NULL);
+#if defined(__APPLE__) || _WIN32
+    // NULL resets to the platform keychain
+    if (kc == NULL) {
+        kc = platform_keychain();
+    }
+#endif
     KEYCHAIN = kc;
 }
 
