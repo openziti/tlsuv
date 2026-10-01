@@ -256,10 +256,12 @@ struct tls_context_s {
     void (*free_ctx)(tls_context *ctx);
 
     /**
-     * set new CA bundle on TLS context
+     * set new CA bundle on TLS context, replacing the current one
      * @param ctx TLS context
-     * @param ca CA bundle (PEM or file)
+     * @param ca CA bundle (PEM or file), NULL to go back to the system CA store
      * @param ca_len length of CA bundle
+     * @return 0 on success; on failure (e.g. unreadable file, no certificates found)
+     * a negative value is returned and the current bundle is left in place
      */
     int (*set_ca_bundle)(tls_context *ctx, const char *ca, size_t ca_len);
 
@@ -427,11 +429,19 @@ struct tls_context_s {
     enum tls_fips_status (*fips_status)(tls_context* ctx, char* module, size_t modulelen);
 };
 
-typedef tls_context *(*tls_context_factory)(const char* ca, size_t ca_len);
+typedef tls_context *(*tls_context_factory)(void);
 
 void set_default_tls_impl(tls_context_factory impl);
 
-tls_context *default_tls_context(const char *ca, size_t ca_len);
+/**
+ * Create a new TLS context using the default TLS implementation.
+ *
+ * The context trusts the system CA store. Use [tls_context.set_ca_bundle]
+ * to replace it with a custom CA bundle.
+ *
+ * @return new TLS context, or NULL if no default TLS implementation is set
+ */
+tls_context *default_tls_context(void);
 
 #ifdef __cplusplus
 }

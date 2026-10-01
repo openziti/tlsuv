@@ -158,4 +158,16 @@ struct deferrer {
 // locals are destroyed in reverse order, so those are then still alive.
 #define DEFER deferrer TLSUV_TEST_CAT(deferred_, __COUNTER__) = [&]()
 
+// default TLS context trusting only the given CA bundle (PEM, file, or directory)
+inline tls_context *tlsWithCA(const char *ca, size_t ca_len) {
+    tls_context *tls = default_tls_context();
+    REQUIRE(tls != nullptr);
+    bool ready = false;
+    DEFER { if (!ready) tls->free_ctx(tls); };
+    REQUIRE(tls->set_ca_bundle != nullptr);
+    REQUIRE(tls->set_ca_bundle(tls, ca, ca_len) == 0);
+    ready = true;
+    return tls;
+}
+
 #endif //UV_MBED_FIXTURES_H

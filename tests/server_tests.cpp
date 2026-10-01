@@ -23,6 +23,7 @@ limitations under the License.
 #include <catch2/catch_all.hpp>
 
 #include <tlsuv/tls_engine.h>
+#include "fixtures.h"
 #include <uv.h>
 
 #include <algorithm>
@@ -301,7 +302,14 @@ struct tls_ctx_holder {
     tlsuv_certificate_t cert = nullptr;
 
     explicit tls_ctx_holder(const char *ca) {
-        tls = default_tls_context(ca, ca ? strlen(ca) : 0);
+        tls = default_tls_context();
+        // the destructor does not run when the constructor throws
+        bool ready = false;
+        DEFER { if (!ready) tls->free_ctx(tls); };
+        if (ca) {
+            REQUIRE(tls->set_ca_bundle(tls, ca, strlen(ca)) == 0);
+        }
+        ready = true;
     }
 
     ~tls_ctx_holder() {

@@ -43,7 +43,7 @@ public:
         return tls;
     }
     testServer() {
-        tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+        tls = tlsWithCA(test_server_CA, strlen(test_server_CA));
     }
 
     ~testServer() {
@@ -62,7 +62,7 @@ TEST_CASE("stream connect fail", "[stream]") {
     UvLoopTest test;
 
     tlsuv_stream_t s;
-    tls_context *tls = default_tls_context(nullptr, 0);
+    tls_context *tls = default_tls_context();
     tlsuv_stream_init(test.loop, &s, tls);
 
     uv_connect_t cr;
@@ -98,7 +98,7 @@ TEST_CASE("proxy connect fail", "[stream]") {
     auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, TEST_SERVER, "23128");
 
     auto s = new tlsuv_stream_t;
-    tls_context *tls = default_tls_context(nullptr, 0);
+    tls_context *tls = default_tls_context();
     tlsuv_stream_init(test.loop, s, tls);
     tlsuv_stream_set_connector(s, proxy);
 
@@ -144,7 +144,7 @@ TEST_CASE("proxy request fail", "[stream]") {
     auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, TEST_SERVER, "13128");
 
     auto s = new tlsuv_stream_t;
-    tls_context *tls = default_tls_context(nullptr, 0);
+    tls_context *tls = default_tls_context();
     tlsuv_stream_init(test.loop, s, tls);
     tlsuv_stream_set_connector(s, proxy);
 
@@ -191,7 +191,7 @@ TEST_CASE("cancel connect", "[stream]") {
 
     WHEN("timeout = " << timeout) {
         auto s = new tlsuv_stream_t;
-        tls_context *tls = default_tls_context(nullptr, 0);
+        tls_context *tls = default_tls_context();
         tlsuv_stream_init(test.loop, s, tls);
 
         struct test_ctx {
@@ -253,7 +253,7 @@ TEST_CASE("read/write","[stream]") {
         "http/1.1"
     };
     tlsuv_stream_t s;
-    tls_context *tls = default_tls_context(nullptr, 0);
+    tls_context *tls = default_tls_context();
     tlsuv_stream_init(test.loop, &s, tls);
     tlsuv_stream_set_protocols(&s, 3, proto);
 
@@ -886,7 +886,7 @@ TEST_CASE("stream peer certificate", "[stream]") {
     // against the leaf the TLS stack handed to the verify callback in this handshake
     static std::string verified_leaf;
     verified_leaf.clear();
-    tls_context *tls = default_tls_context(nullptr, 0);
+    tls_context *tls = default_tls_context();
     tls->set_cert_verify(tls, [](const struct tlsuv_certificate_s *cert, void *) -> int {
         char *pem = nullptr;
         size_t len = 0;
