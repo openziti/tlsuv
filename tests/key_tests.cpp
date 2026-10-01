@@ -894,4 +894,24 @@ TEST_CASE("keychain_mock_keys", "[key]") {
         CHECK(verify_csr(csr) == "/CN=mock-keychain");
     }
 }
+
+TEST_CASE("keychain_reset", "[key]") {
+    // the platform keychain, or none (or the mock, if another test installed it for good)
+    auto initial = const_cast<keychain_t *>(tlsuv_keychain());
+    DEFER {
+        tlsuv_set_keychain(initial);
+    };
+
+    tlsuv_set_keychain(&mock_keychain().api);
+    CHECK(tlsuv_keychain() == &mock_keychain().api);
+
+    // NULL resets to the platform keychain, if there is one
+    tlsuv_set_keychain(nullptr);
+#if defined(__APPLE__) || defined(_WIN32)
+    CHECK(tlsuv_keychain() == initial);
+    CHECK(tlsuv_keychain() != nullptr);
+#else
+    CHECK(tlsuv_keychain() == nullptr);
+#endif
+}
 #endif

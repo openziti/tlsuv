@@ -38,6 +38,12 @@ const keychain_t* tlsuv_keychain() {
     return KEYCHAIN;
 }
 void tlsuv_set_keychain(keychain_t *kc) {
+#if defined(__APPLE__) || _WIN32
+    // NULL resets to the platform keychain
+    if (kc == NULL) {
+        kc = platform_keychain();
+    }
+#endif
     KEYCHAIN = kc;
 }
 
