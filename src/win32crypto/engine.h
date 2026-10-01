@@ -61,17 +61,20 @@ struct win32crypto_engine_s {
 extern struct win32crypto_engine_s *new_win32engine(
     const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
-    void *verify_ctx);
+    void *verify_ctx, bool fips_required);
 
 /**
  * Creates a server(accept) side engine. [own_cert] is required and must have an
  * associated private key. A client certificate is requested only when [ca] or
  * [cert_verify_f] is provided, and is optional even then.
  * Returns NULL when server credentials cannot be acquired.
+ * [fips_required] restricts the credentials to the approved algorithm set (see
+ * acquire_fips_credentials() in engine.c); the engine is not created when that
+ * restriction cannot be applied.
  */
 extern struct win32crypto_engine_s* new_win32_server_engine(
     HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
-    void* verify_ctx);
+    void* verify_ctx, bool fips_required);
 
 #endif //ENGINE_H

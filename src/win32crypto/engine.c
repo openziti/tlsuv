@@ -14,10 +14,15 @@
 //
 //
 
+// must precede the first inclusion of <schannel.h> (engine.h includes it): it guards
+// SCH_CREDENTIALS, TLS_PARAMETERS and CRYPTO_SETTINGS, used by acquire_fips_credentials()
+#define SCHANNEL_USE_BLACKLISTS
 #include <windows.h>
+// UNICODE_STRING, used by those structures (the Windows SDK's schannel.h includes it
+// itself, MinGW-w64's does not)
+#include <subauth.h>
 #include "engine.h"
 
-#define SCHANNEL_USE_BLACKLISTS
 #include <sspi.h>
 #include <schannel.h>
 #include <stdint.h>
@@ -970,10 +975,47 @@ static void cert_subject(PCCERT_CONTEXT cert, char* subj, size_t len) {
     }
 }
 
+#ifdef SCH_CREDENTIALS_VERSION
+#define WSTR(s) { (USHORT)(sizeof(s) - sizeof(WCHAR)), (USHORT)sizeof(s), (PWSTR)(s) }
+
+// Disables what the approved set excludes and Schannel can express: every protocol but
+// TLS 1.2/1.3 (the caller passes the role's SP_PROT_* mask), AES-CBC,
+// ChaCha20-Poly1305, SHA-1 digests and finite-field DH. Curves and signature algorithms
+// are not controllable per credential and follow the OS policy.
+static SECURITY_STATUS acquire_fips_credentials(
+    ULONG direction, DWORD flags, DWORD enabled_protocols,
+    PCCERT_CONTEXT *certs, DWORD ncerts, PCredHandle out) {
+    static UNICODE_STRING cbc = WSTR(L"ChainingModeCBC");
+    static CRYPTO_SETTINGS disabled[] = {
+        {TlsParametersCngAlgUsageCipher, WSTR(L"AES"), 1, &cbc, 0, 0},
+        {TlsParametersCngAlgUsageCipher, WSTR(L"CHACHA20_POLY1305"), 0, NULL, 0, 0},
+        {TlsParametersCngAlgUsageDigest, WSTR(L"SHA1"), 0, NULL, 0, 0},
+        {TlsParametersCngAlgUsageKeyExchange, WSTR(L"DH"), 0, NULL, 0, 0},
+    };
+    TLS_PARAMETERS params = {
+        // SCH_CREDENTIALS takes a *disabled* mask: 0 would leave TLS 1.0/1.1 on wherever
+        // the OS still allows them, so disable everything but the enabled protocols
+        .grbitDisabledProtocols = (DWORD)~enabled_protocols,
+        .cDisabledCrypto = sizeof(disabled) / sizeof(disabled[0]),
+        .pDisabledCrypto = disabled,
+    };
+    SCH_CREDENTIALS creds = {
+        .dwVersion = SCH_CREDENTIALS_VERSION,
+        .cCreds = ncerts,
+        .paCred = certs,
+        .dwFlags = flags,
+        .cTlsParameters = 1,
+        .pTlsParameters = &params,
+    };
+    return AcquireCredentialsHandleA(NULL, (TCHAR *)(UNISP_NAME), direction, NULL,
+                                     &creds, NULL, NULL, out, NULL);
+}
+#endif
+
 struct win32crypto_engine_s* new_win32engine(
     const char* hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
-    void* verify_ctx) {
+    void* verify_ctx, bool fips_required) {
     struct win32crypto_engine_s* engine = engine_alloc(false, ca, cert_verify_f, verify_ctx);
     engine->hostname = hostname ? tlsuv__strdup(hostname) : NULL;
 
@@ -986,20 +1028,37 @@ struct win32crypto_engine_s* new_win32engine(
     flags |= engine->cert_verify_f ? SCH_CRED_MANUAL_CRED_VALIDATION : SCH_CRED_AUTO_CRED_VALIDATION;
 
     PCCERT_CONTEXT certs[1] = {own_cert,};
-    SCHANNEL_CRED credentials = {
-        .dwVersion = SCHANNEL_CRED_VERSION,
-        .dwFlags = flags,
-        .grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT,
-        .cCreds = own_cert ? 1 : 0,
-        .paCred = certs,
-    };
+    SECURITY_STATUS rc;
+    bool restricted = false;
+#ifdef SCH_CREDENTIALS_VERSION
+    if (fips_required) {
+        restricted = true;
+        rc = acquire_fips_credentials(SECPKG_CRED_OUTBOUND, flags,
+                                      SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT,
+                                      certs, own_cert ? 1 : 0, &engine->cred_handle);
+    }
+#else
+    if (fips_required) {
+        UM_LOG(WARN, "require_fips: Schannel SCH_CREDENTIALS is not available in this build; "
+                     "algorithms are not restricted");
+    }
+#endif
+    if (!restricted) {
+        SCHANNEL_CRED credentials = {
+            .dwVersion = SCHANNEL_CRED_VERSION,
+            .dwFlags = flags,
+            .grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT,
+            .cCreds = own_cert ? 1 : 0,
+            .paCred = certs,
+        };
 
-    SECURITY_STATUS rc = AcquireCredentialsHandleA(NULL,
-                              (TCHAR *)(UNISP_NAME),
-                              SECPKG_CRED_OUTBOUND, NULL,
-                              &credentials, NULL, NULL,
-                              &engine->cred_handle,
-                              NULL);
+        rc = AcquireCredentialsHandleA(NULL,
+                                       (TCHAR *)(UNISP_NAME),
+                                       SECPKG_CRED_OUTBOUND, NULL,
+                                       &credentials, NULL, NULL,
+                                       &engine->cred_handle,
+                                       NULL);
+    }
     if (rc != ERROR_SUCCESS) {
         LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result");
     }
@@ -1009,7 +1068,7 @@ struct win32crypto_engine_s* new_win32engine(
 struct win32crypto_engine_s *new_win32_server_engine(
     HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
-    void *verify_ctx)
+    void *verify_ctx, bool fips_required)
 {
     if (own_cert == NULL || own_cert == INVALID_HANDLE_VALUE) {
         UM_LOG(ERR, "server engine requires server credentials");
@@ -1027,35 +1086,54 @@ struct win32crypto_engine_s *new_win32_server_engine(
            subj, engine->request_client_cert ? "requested" : "off");
 
     PCCERT_CONTEXT certs[1] = { own_cert, };
-    SCHANNEL_CRED credentials = {
-        .dwVersion = SCHANNEL_CRED_VERSION,
-        // client certificates are validated by verify_peer_cert(), not by
-        // Schannel, and are never mapped to a Windows account
-        .dwFlags = SCH_CRED_MEMORY_STORE_CERT |
-                   SCH_CRED_MANUAL_CRED_VALIDATION |
-                   SCH_CRED_NO_SYSTEM_MAPPER,
-        .grbitEnabledProtocols = SP_PROT_TLS1_2_SERVER | SP_PROT_TLS1_3_SERVER,
-        .cCreds = 1,
-        .paCred = certs,
-    };
+    // client certificates are validated by verify_peer_cert(), not by
+    // Schannel, and are never mapped to a Windows account
+    const DWORD flags = SCH_CRED_MEMORY_STORE_CERT |
+                        SCH_CRED_MANUAL_CRED_VALIDATION |
+                        SCH_CRED_NO_SYSTEM_MAPPER;
+    SECURITY_STATUS rc;
+    bool restricted = false;
+#ifdef SCH_CREDENTIALS_VERSION
+    if (fips_required) {
+        restricted = true;
+        rc = acquire_fips_credentials(SECPKG_CRED_INBOUND, flags,
+                                      SP_PROT_TLS1_2_SERVER | SP_PROT_TLS1_3_SERVER,
+                                      certs, 1, &engine->cred_handle);
+    }
+#else
+    if (fips_required) {
+        UM_LOG(WARN, "require_fips: Schannel SCH_CREDENTIALS is not available in this build; "
+                     "algorithms are not restricted");
+    }
+#endif
+    if (!restricted) {
+        SCHANNEL_CRED credentials = {
+            .dwVersion = SCHANNEL_CRED_VERSION,
+            .dwFlags = flags,
+            .grbitEnabledProtocols = SP_PROT_TLS1_2_SERVER | SP_PROT_TLS1_3_SERVER,
+            .cCreds = 1,
+            .paCred = certs,
+        };
 
-    SECURITY_STATUS rc = AcquireCredentialsHandleA(NULL,
-                              (TCHAR *)(UNISP_NAME),
-                              SECPKG_CRED_INBOUND, NULL,
-                              &credentials, NULL, NULL,
-                              &engine->cred_handle,
-                              NULL);
-    if (rc != ERROR_SUCCESS) {
-        // TLS 1.3 server support needs the newer SCH_CREDENTIALS structure on
-        // some Windows versions; fall back to TLS 1.2 rather than fail outright
-        LOG_ERROR(WARN, rc, "AcquireCredentialsHandleA(TLS1.2+TLS1.3) result");
-        credentials.grbitEnabledProtocols = SP_PROT_TLS1_2_SERVER;
         rc = AcquireCredentialsHandleA(NULL,
                                        (TCHAR *)(UNISP_NAME),
                                        SECPKG_CRED_INBOUND, NULL,
                                        &credentials, NULL, NULL,
                                        &engine->cred_handle,
                                        NULL);
+        if (rc != ERROR_SUCCESS) {
+            // TLS 1.3 server support needs the newer SCH_CREDENTIALS structure on
+            // some Windows versions; fall back to TLS 1.2 rather than fail outright.
+            // Not done for the restricted path: this structure carries no restrictions.
+            LOG_ERROR(WARN, rc, "AcquireCredentialsHandleA(TLS1.2+TLS1.3) result");
+            credentials.grbitEnabledProtocols = SP_PROT_TLS1_2_SERVER;
+            rc = AcquireCredentialsHandleA(NULL,
+                                           (TCHAR *)(UNISP_NAME),
+                                           SECPKG_CRED_INBOUND, NULL,
+                                           &credentials, NULL, NULL,
+                                           &engine->cred_handle,
+                                           NULL);
+        }
     }
 
     if (rc != ERROR_SUCCESS) {
