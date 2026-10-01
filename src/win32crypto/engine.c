@@ -1159,6 +1159,8 @@ static void cert_subject(PCCERT_CONTEXT cert, char* subj, size_t len) {
     }
 }
 
+#define WSTR(s) { (USHORT)(sizeof(s) - sizeof(WCHAR)), (USHORT)sizeof(s), (PWSTR)(s) }
+
 // Acquires Schannel credentials for a client (SECPKG_CRED_OUTBOUND) or server (SECPKG_CRED_INBOUND).
 //
 // SCH_CREDENTIALS (Windows 10 1809 / Server 2019 and later) is used first: Schannel only supports
@@ -1166,19 +1168,35 @@ static void cert_subject(PCCERT_CONTEXT cert, char* subj, size_t len) {
 // Older systems reject the structure with SEC_E_UNKNOWN_CREDENTIALS; they have no TLS 1.3
 // either, so unless TLS 1.3 is required the legacy SCHANNEL_CRED is tried with TLS 1.2 only.
 // Any other failure is not about the structure and must not downgrade to TLS 1.2.
+//
+// With [fips_required] (require_fips()) the TLS_PARAMETERS also disable what the approved set
+// excludes and Schannel can express: AES-CBC, ChaCha20-Poly1305, SHA-1 digests and finite-field
+// DH. Curves and signature algorithms are not controllable per credential and follow the OS
+// policy. There is no SCHANNEL_CRED fallback then: that structure carries no restrictions.
 
 // logs the fallback warning once per process
 static volatile LONG sch_credentials_warned;
 
 static SECURITY_STATUS acquire_credentials(PCredHandle handle, ULONG direction, bool server,
                                            DWORD flags, PCCERT_CONTEXT *certs, DWORD ncerts,
-                                           enum tls_version min_version) {
+                                           enum tls_version min_version, bool fips_required) {
+    static UNICODE_STRING cbc = WSTR(L"ChainingModeCBC");
+    static CRYPTO_SETTINGS fips_disabled[] = {
+        {TlsParametersCngAlgUsageCipher, WSTR(L"AES"), 1, &cbc, 0, 0},
+        {TlsParametersCngAlgUsageCipher, WSTR(L"CHACHA20_POLY1305"), 0, NULL, 0, 0},
+        {TlsParametersCngAlgUsageDigest, WSTR(L"SHA1"), 0, NULL, 0, 0},
+        {TlsParametersCngAlgUsageKeyExchange, WSTR(L"DH"), 0, NULL, 0, 0},
+    };
     TLS_PARAMETERS tls_params = {
         // anything below the minimum (TLS 1.0/1.1 included, as before) stays disabled
         .grbitDisabledProtocols = (DWORD) (min_version == TLSUV_TLS13
                                                ? ~SP_PROT_TLS1_3
                                                : ~(SP_PROT_TLS1_2 | SP_PROT_TLS1_3)),
     };
+    if (fips_required) {
+        tls_params.cDisabledCrypto = sizeof(fips_disabled) / sizeof(fips_disabled[0]);
+        tls_params.pDisabledCrypto = fips_disabled;
+    }
     SCH_CREDENTIALS credentials = {
         .dwVersion = SCH_CREDENTIALS_VERSION,
         .cCreds = ncerts,
@@ -1194,7 +1212,7 @@ static SECURITY_STATUS acquire_credentials(PCredHandle handle, ULONG direction, 
                               &credentials, NULL, NULL,
                               handle,
                               NULL);
-    if (rc != SEC_E_UNKNOWN_CREDENTIALS || min_version == TLSUV_TLS13) {
+    if (rc != SEC_E_UNKNOWN_CREDENTIALS || min_version == TLSUV_TLS13 || fips_required) {
         return rc;
     }
 
@@ -1221,7 +1239,7 @@ static SECURITY_STATUS acquire_credentials(PCredHandle handle, ULONG direction, 
 struct win32crypto_engine_s* new_win32engine(
     const char* hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
-    void* verify_ctx, enum tls_version min_version) {
+    void* verify_ctx, enum tls_version min_version, bool fips_required) {
     struct win32crypto_engine_s* engine = engine_alloc(false, ca, cert_verify_f, verify_ctx);
     engine->hostname = hostname ? tlsuv__strdup(hostname) : NULL;
 
@@ -1235,7 +1253,7 @@ struct win32crypto_engine_s* new_win32engine(
 
     PCCERT_CONTEXT certs[1] = {own_cert,};
     SECURITY_STATUS rc = acquire_credentials(&engine->cred_handle, SECPKG_CRED_OUTBOUND, false,
-                                             flags, certs, own_cert ? 1 : 0, min_version);
+                                             flags, certs, own_cert ? 1 : 0, min_version, fips_required);
     if (rc != ERROR_SUCCESS) {
         LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result");
     }
@@ -1245,7 +1263,7 @@ struct win32crypto_engine_s* new_win32engine(
 struct win32crypto_engine_s *new_win32_server_engine(
     HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
-    void *verify_ctx, enum tls_version min_version)
+    void *verify_ctx, enum tls_version min_version, bool fips_required)
 {
     if (own_cert == NULL || own_cert == INVALID_HANDLE_VALUE) {
         UM_LOG(ERR, "server engine requires server credentials");
@@ -1269,7 +1287,7 @@ struct win32crypto_engine_s *new_win32_server_engine(
                   SCH_CRED_MANUAL_CRED_VALIDATION |
                   SCH_CRED_NO_SYSTEM_MAPPER;
     SECURITY_STATUS rc = acquire_credentials(&engine->cred_handle, SECPKG_CRED_INBOUND, true,
-                                             flags, certs, 1, min_version);
+                                             flags, certs, 1, min_version, fips_required);
 
     if (rc != ERROR_SUCCESS) {
         LOG_ERROR(ERR, rc, "failed to acquire server credentials");

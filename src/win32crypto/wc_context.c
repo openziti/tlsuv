@@ -38,6 +38,7 @@ struct win32tls {
     const CERT_CONTEXT *own_cert;
     HCERTSTORE own_store;
     enum tls_version min_version;
+    bool fips_required;
 };
 
 static tls_context win32tls_context_api;
@@ -115,6 +116,12 @@ static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size
     }
 
     return TLS_FIPS_ENABLED;
+}
+
+static enum tls_fips_status tls_require_fips(tls_context* ctx) {
+    // applied when each engine acquires its Schannel credentials
+    ((struct win32tls*)ctx)->fips_required = true;
+    return tls_fips_status(ctx, NULL, 0);
 }
 
 static int parse_pkcs7_certs(tlsuv_certificate_t *ctx, const char *data, size_t len) {
@@ -480,7 +487,8 @@ static tlsuv_engine_t new_win32_engine(tls_context *ctx, const char *hostname) {
     struct win32tls *c = (struct win32tls*)ctx;
 
     return (tlsuv_engine_t) new_win32engine(
-        hostname, c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx, c->min_version);
+        hostname, c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx, c->min_version,
+        c->fips_required);
 }
 
 static tlsuv_engine_t new_win32_server(tls_context* ctx) {
@@ -493,13 +501,15 @@ static tlsuv_engine_t new_win32_server(tls_context* ctx) {
     }
 
     return (tlsuv_engine_t)new_win32_server_engine(
-        c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx, c->min_version);
+        c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx, c->min_version,
+        c->fips_required);
 }
 
 static tls_context win32tls_context_api = {
         .version = tls_lib_version,
         .fips_status = tls_fips_status,
         .set_min_version = set_min_version,
+        .require_fips = tls_require_fips,
         .strerror = (const char *(*)(long)) win32_error,
         .new_engine = new_win32_engine,
         .new_server_engine = new_win32_server,
