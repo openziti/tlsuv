@@ -960,7 +960,8 @@ struct raw_peer {
 };
 
 // Runs a tlsuv engine (client or server) against the raw peer over two memory pipes.
-// True when both sides completed the handshake.
+// True when both sides completed the handshake, false when either side failed it;
+// a handshake that does neither fails the test.
 bool handshake_with_raw_peer(tlsuv_engine_t eng, raw_peer &peer) {
     REQUIRE(peer.configured);
     mem_pipe to_peer, to_engine;
@@ -975,8 +976,23 @@ bool handshake_with_raw_peer(tlsuv_engine_t eng, raw_peer &peer) {
         if (es == TLS_HS_COMPLETE && peer_done) return true;
         uv_sleep(1); // async engines (applesec) progress on their own threads
     }
+    // a refusal must be reported by the engine or the peer; running out of
+    // iterations means the handshake hung, which no test here expects
+    FAIL("handshake neither completed nor failed");
     return false;
 }
+
+// Control handshakes: an unrestricted engine must get through, or the rejection that
+// follows proves nothing. Schannel and Network.framework only accept the legacy suites
+// the OS version still allows, so there the peer may legitimately be refused.
+#if defined(TEST_win32crypto) || defined(TEST_applesec)
+#define CHECK_CONTROL_ACCEPTED(ok) \
+    do { \
+        if (!(ok)) SKIP("peer not accepted even unrestricted"); \
+    } while (0)
+#else
+#define CHECK_CONTROL_ACCEPTED(ok) REQUIRE(ok)
+#endif
 
 const std::vector<peer_policy> approved_peers = {
     {"TLS 1.2 ECDHE-RSA AES-GCM", TLS1_2_VERSION,
@@ -1021,19 +1037,13 @@ TEST_CASE("require_fips client rejects peers offering only non-approved algorith
         SKIP("this backend cannot restrict what this peer relies on (see README matrix)");
     }
 
-    // control: an unrestricted client must get through, or the rejection below proves nothing
+    // control: an unrestricted client must get through
     {
         tls_ctx_holder plain(test_ca);
         engine_holder eng(plain.tls->new_engine(plain.tls, test_host));
         REQUIRE(eng.e != nullptr);
         raw_peer peer(policy);
-        bool ok = handshake_with_raw_peer(eng, peer);
-#if defined(TEST_win32crypto)
-        // which legacy suites Schannel accepts depends on the Windows version
-        if (!ok) SKIP("Schannel does not accept this peer even unrestricted");
-#else
-        REQUIRE(ok);
-#endif
+        CHECK_CONTROL_ACCEPTED(handshake_with_raw_peer(eng, peer));
     }
 
     tls_ctx_holder fips(test_ca);
@@ -1042,6 +1052,58 @@ TEST_CASE("require_fips client rejects peers offering only non-approved algorith
     engine_holder eng(fips.tls->new_engine(fips.tls, test_host));
     REQUIRE(eng.e != nullptr);
     raw_peer peer(policy);
+    CHECK_FALSE(handshake_with_raw_peer(eng, peer));
+}
+
+TEST_CASE("require_fips server engine completes a handshake with approved clients",
+          "[engine][server]") {
+    auto policy = GENERATE_COPY(from_range(approved_peers));
+    INFO("peer: " << policy.name);
+
+    tls_ctx_holder srv(test_ca);
+    SKIP_UNLESS_SERVER_SUPPORTED(srv);
+    REQUIRE(srv.tls->require_fips != nullptr);
+    srv.tls->require_fips(srv.tls);
+    srv.set_identity();
+    engine_holder eng(srv.tls->new_server_engine(srv.tls));
+    REQUIRE(eng.e != nullptr);
+
+    raw_peer peer(policy, /*as_client=*/true);
+    REQUIRE(handshake_with_raw_peer(eng, peer));
+
+    const SSL_CIPHER *cipher = SSL_get_current_cipher(peer.ssl);
+    REQUIRE(cipher != nullptr);
+    INFO("negotiated: " << SSL_CIPHER_get_name(cipher));
+    CHECK_THAT(SSL_CIPHER_get_name(cipher), Catch::Matchers::ContainsSubstring("GCM"));
+}
+
+TEST_CASE("require_fips server engine rejects clients offering only non-approved algorithms",
+          "[engine][server]") {
+    auto policy = GENERATE_COPY(from_range(rejected_peers));
+    INFO("peer: " << policy.name);
+
+    if (!backend_enforces(policy)) {
+        SKIP("this backend cannot restrict what this peer relies on (see README matrix)");
+    }
+
+    // control: an unrestricted server must get through
+    {
+        tls_ctx_holder plain(test_ca);
+        SKIP_UNLESS_SERVER_SUPPORTED(plain);
+        plain.set_identity();
+        engine_holder eng(plain.tls->new_server_engine(plain.tls));
+        REQUIRE(eng.e != nullptr);
+        raw_peer peer(policy, /*as_client=*/true);
+        CHECK_CONTROL_ACCEPTED(handshake_with_raw_peer(eng, peer));
+    }
+
+    tls_ctx_holder fips(test_ca);
+    REQUIRE(fips.tls->require_fips != nullptr);
+    fips.tls->require_fips(fips.tls);
+    fips.set_identity();
+    engine_holder eng(fips.tls->new_server_engine(fips.tls));
+    REQUIRE(eng.e != nullptr);
+    raw_peer peer(policy, /*as_client=*/true);
     CHECK_FALSE(handshake_with_raw_peer(eng, peer));
 }
 
