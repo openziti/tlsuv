@@ -18,8 +18,8 @@
 // SCH_CREDENTIALS, TLS_PARAMETERS and CRYPTO_SETTINGS, used by acquire_fips_credentials()
 #define SCHANNEL_USE_BLACKLISTS
 #include <windows.h>
-// UNICODE_STRING, used by those structures (the Windows SDK's schannel.h includes it
-// itself, MinGW-w64's does not)
+// UNICODE_STRING, used by those structures: MinGW-w64's schannel.h does not include it,
+// so it is needed here; harmless with the Windows SDK, since the header is include-guarded
 #include <subauth.h>
 #include "engine.h"
 

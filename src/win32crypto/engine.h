@@ -70,7 +70,8 @@ extern struct win32crypto_engine_s *new_win32engine(
  * Returns NULL when server credentials cannot be acquired.
  * [fips_required] restricts the credentials to the approved algorithm set (see
  * acquire_fips_credentials() in engine.c); the engine is not created when that
- * restriction cannot be applied.
+ * restriction cannot be applied. Builds whose headers lack SCH_CREDENTIALS cannot
+ * restrict: they create an unrestricted engine and log a WARN.
  */
 extern struct win32crypto_engine_s* new_win32_server_engine(
     HCERTSTORE ca, PCCERT_CONTEXT own_cert,
