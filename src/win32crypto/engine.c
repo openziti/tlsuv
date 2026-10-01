@@ -1255,7 +1255,11 @@ struct win32crypto_engine_s* new_win32engine(
     SECURITY_STATUS rc = acquire_credentials(&engine->cred_handle, SECPKG_CRED_OUTBOUND, false,
                                              flags, certs, own_cert ? 1 : 0, min_version, fips_required);
     if (rc != ERROR_SUCCESS) {
-        LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result");
+        if (restricted) {
+            LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result (require_fips restricted credentials)");
+        } else {
+            LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result");
+        }
     }
     return engine;
 }
