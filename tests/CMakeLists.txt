@@ -41,6 +41,7 @@ endif()
 set(test_srcs
         engine_tests.cpp
         server_tests.cpp
+        fips_tests.cpp
         stream_tests.cpp
         key_tests.cpp
         connector_tests.cpp
@@ -105,11 +106,11 @@ elseif (TLSUV_TLSLIB STREQUAL "boringssl" OR TLSUV_TLSLIB STREQUAL "openssl")
     find_package(OpenSSL REQUIRED)
     target_link_libraries(all_tests OpenSSL::Crypto)
 else ()
-    # applesec, mbedtls: OpenSSL is only the in-process TLS peer of server_tests.cpp
+    # applesec, mbedtls: OpenSSL is only the in-process TLS peer of fips_tests.cpp
     find_package(OpenSSL QUIET)
 endif ()
 
-# server_tests.cpp: a raw OpenSSL/BoringSSL server as the peer of the client under test
+# fips_tests.cpp: a raw OpenSSL/BoringSSL server as the peer of the client under test
 if (TARGET OpenSSL::SSL)
     target_link_libraries(all_tests OpenSSL::SSL)
     target_compile_definitions(all_tests PRIVATE TEST_OPENSSL_PEER)
@@ -117,7 +118,7 @@ elseif (TLSUV_TLSLIB STREQUAL "boringssl")
     # tlsuv already links BoringSSL's libssl
     target_compile_definitions(all_tests PRIVATE TEST_OPENSSL_PEER)
 else ()
-    message(WARNING "tests: no OpenSSL found, the raw-peer TLS tests (server_tests.cpp) are disabled")
+    message(WARNING "tests: no OpenSSL found, the raw-peer TLS tests (fips_tests.cpp) are disabled")
 endif ()
 
 target_include_directories(all_tests PRIVATE ../src)
