@@ -82,9 +82,10 @@ PKCS#1 v1.5, which limits them to TLS 1.2 with `boringssl`.
 [^5]: Applied through BoringSSL's own FIPS compliance policy, which also covers the signature algorithms used by
 keychain keys.
 [^6]: Partial. Schannel can only disable algorithms: protocols other than TLS 1.2 and 1.3, AES-CBC,
-ChaCha20-Poly1305, SHA-1 digests and finite-field DH are disabled. Curves, signature algorithms and static-RSA key
-exchange are not enforced and follow the operating system policy. Builds whose headers lack `SCH_CREDENTIALS` log a
-warning and do not restrict. Not yet verified on a Windows run.
+ChaCha20-Poly1305, SHA-1 digests and finite-field DH are disabled, and the restricted credentials also set
+`SCH_USE_STRONG_CRYPTO` (Schannel drops known-weak algorithms; this is not FIPS enforcement). Curves, signature
+algorithms and static-RSA key exchange are not enforced and follow the operating system policy. Builds whose
+headers lack `SCH_CREDENTIALS` log a warning and do not restrict. Not yet verified on a Windows run.
 [^7]: Partial. Network.framework only allows choosing cipher suites: TLS 1.3 and TLS 1.2 AES-GCM suites are
 selected, while key-agreement groups and signature algorithms stay at the system defaults.
 [^8]: Policy only, full approved set: mbedTLS has no FIPS-validated mode, so the status stays

@@ -982,6 +982,9 @@ static void cert_subject(PCCERT_CONTEXT cert, char* subj, size_t len) {
 // TLS 1.2/1.3 (the caller passes the role's SP_PROT_* mask), AES-CBC,
 // ChaCha20-Poly1305, SHA-1 digests and finite-field DH. Curves and signature algorithms
 // are not controllable per credential and follow the OS policy.
+// SCH_USE_STRONG_CRYPTO is ORed into the caller's flags as defence in depth: it makes
+// Schannel drop known-weak algorithms (RC4, DES, 3DES, MD5, weak DH sizes). It is not FIPS
+// enforcement and complements, not replaces, the CRYPTO_SETTINGS disable list.
 static SECURITY_STATUS acquire_fips_credentials(
     ULONG direction, DWORD flags, DWORD enabled_protocols,
     PCCERT_CONTEXT *certs, DWORD ncerts, PCredHandle out) {
@@ -1003,7 +1006,7 @@ static SECURITY_STATUS acquire_fips_credentials(
         .dwVersion = SCH_CREDENTIALS_VERSION,
         .cCreds = ncerts,
         .paCred = certs,
-        .dwFlags = flags,
+        .dwFlags = flags | SCH_USE_STRONG_CRYPTO,
         .cTlsParameters = 1,
         .pTlsParameters = &params,
     };
