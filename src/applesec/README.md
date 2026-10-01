@@ -245,7 +245,8 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
 - **Expiry** (`get_expiration`) is read from the certificate's DER (`notAfter`).
 - **Text** (`get_text`) describes the leaf of the chain, rendered from its DER on first
   use and kept until the certificate is freed (`SecCertificateCopyValues` is macOS
-  only). It prints what the OpenSSL backend's `X509_print_ex` does without the
+  only). The renderer is `src/cert_text.c`, shared with win32crypto. It prints what the
+  OpenSSL backend's `X509_print_ex` does without the
   signature (version, serial, issuer, validity, subject, public key, extensions), and
   matches it byte for byte for RSA, EC (P-256/384/521, secp256k1) and Ed25519/Ed448/
   X25519/X448 keys and for the key identifiers, basic constraints, key usage, extended

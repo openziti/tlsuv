@@ -577,7 +577,7 @@ TEST_CASE("cert-chain", "[key]") {
     tlsuv_certificate_t cert = nullptr;
     CHECK(tls->load_cert(&cert, pem, strlen(pem)) == 0);
 
-#if defined(TEST_applesec)
+#if defined(TEST_applesec) || defined(TEST_win32crypto)
     REQUIRE(cert->get_text != nullptr);
 #endif
     if (cert->get_text) {
@@ -596,9 +596,10 @@ TEST_CASE("cert-chain", "[key]") {
     tls->free_ctx(tls);
 }
 
-#if defined(TEST_applesec)
-// applesec renders the text itself, so check the whole layout: it follows OpenSSL's
-// X509_print_ex (no signature) so that consumers see the same text on every backend
+#if defined(TEST_applesec) || defined(TEST_win32crypto)
+// applesec and win32crypto render the text themselves (src/cert_text.c), so check the
+// whole layout: it follows OpenSSL's X509_print_ex (no signature) so that consumers see
+// the same text on every backend
 TEST_CASE("cert text of an EC leaf", "[key]") {
     using Catch::Matchers::ContainsSubstring;
     auto tls = default_tls_context(nullptr, 0);
