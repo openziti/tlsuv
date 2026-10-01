@@ -49,6 +49,9 @@ struct openssl_ctx {
 
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx);
     void* verify_ctx;
+
+    // require_fips() was applied; BoringSSL refuses to set a compliance policy twice
+    bool fips_policy;
 };
 
 struct openssl_engine {
@@ -106,6 +109,7 @@ static int tls_reset(tlsuv_engine_t self);
 
 static const char* tls_lib_version();
 static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen);
+static enum tls_fips_status tls_require_fips(tls_context* ctx);
 static const char* tls_eng_error(tlsuv_engine_t self);
 
 static void tls_free(tlsuv_engine_t self);
@@ -140,6 +144,7 @@ static tls_context openssl_context_api = {
     .version = tls_lib_version,
     .fips_status = tls_fips_status,
     .set_min_version = tls_set_min_version,
+    .require_fips = tls_require_fips,
         .strerror = (const char *(*)(long))tls_error,
     .new_engine = new_boringssl_engine,
     .new_server_engine = new_boringssl_server_engine,
@@ -204,6 +209,30 @@ static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size
     }
 
     return TLS_FIPS_ENABLED;
+}
+
+static enum tls_fips_status tls_require_fips(tls_context* tls) {
+    struct openssl_ctx* c = (struct openssl_ctx*)tls;
+
+    if (!c->fips_policy) {
+        // the policy resets the minimum to TLS 1.2: keep a higher one from set_min_version()
+        uint16_t min_version = SSL_CTX_get_min_proto_version(c->ctx);
+        // BoringSSL's own definition of the approved set (TLS 1.2/1.3, AES-GCM,
+        // P-256/P-384, SHA-2 signatures); valid even if not built as BoringCrypto
+        if (SSL_CTX_set_compliance_policy(c->ctx, ssl_compliance_policy_fips_202205)) {
+            c->fips_policy = true;
+            if (min_version > TLS1_2_VERSION) {
+                SSL_CTX_set_min_proto_version(c->ctx, min_version);
+            }
+        } else {
+            UM_LOG(ERR, "failed to apply FIPS compliance policy");
+            // do not run unrestricted: no protocol version is left to negotiate
+            SSL_CTX_set_min_proto_version(c->ctx, TLS1_3_VERSION);
+            SSL_CTX_set_max_proto_version(c->ctx, TLS1_2_VERSION);
+        }
+    }
+
+    return tls_fips_status(tls, NULL, 0);
 }
 
 const char* tls_error(unsigned long code) {
@@ -977,6 +1006,22 @@ static int set_keychain_key(SSL* ssl, EVP_PKEY* pkey) {
     struct openssl_engine* e = SSL_get_app_data(ssl);
     assert(e);
 
+    // require_fips() applied the compliance policy to the context: this per-connection
+    // preference replaces it, so it must stay inside the approved subset
+    struct openssl_ctx* c = SSL_CTX_get_app_data(SSL_get_SSL_CTX(ssl));
+    bool fips = c && c->fips_policy;
+    static const uint16_t ec_fips[] = {
+        SSL_SIGN_ECDSA_SECP256R1_SHA256,
+        SSL_SIGN_ECDSA_SECP384R1_SHA384,
+    };
+    static const uint16_t rsa_fips[] = {
+        SSL_SIGN_RSA_PKCS1_SHA256,
+        SSL_SIGN_RSA_PKCS1_SHA384,
+        SSL_SIGN_RSA_PSS_RSAE_SHA256,
+        SSL_SIGN_RSA_PSS_RSAE_SHA384,
+        SSL_SIGN_RSA_PSS_RSAE_SHA512,
+    };
+
     // keychains sign ECDSA and raw RSA: RSA-PSS (the only RSA scheme in TLS 1.3) is padded here,
     // RSA PKCS#1 v1.5 is left for TLS 1.2
     static const uint16_t ec_algs[] = {
@@ -995,9 +1040,11 @@ static int set_keychain_key(SSL* ssl, EVP_PKEY* pkey) {
 
     int rc;
     if (EVP_PKEY_id(pkey) == EVP_PKEY_RSA) {
-        rc = SSL_set_signing_algorithm_prefs(ssl, rsa_algs, sizeof(rsa_algs) / sizeof(rsa_algs[0]));
+        rc = fips ? SSL_set_signing_algorithm_prefs(ssl, rsa_fips, sizeof(rsa_fips) / sizeof(rsa_fips[0]))
+                  : SSL_set_signing_algorithm_prefs(ssl, rsa_algs, sizeof(rsa_algs) / sizeof(rsa_algs[0]));
     } else {
-        rc = SSL_set_signing_algorithm_prefs(ssl, ec_algs, sizeof(ec_algs) / sizeof(ec_algs[0]));
+        rc = fips ? SSL_set_signing_algorithm_prefs(ssl, ec_fips, sizeof(ec_fips) / sizeof(ec_fips[0]))
+                  : SSL_set_signing_algorithm_prefs(ssl, ec_algs, sizeof(ec_algs) / sizeof(ec_algs[0]));
     }
     if (rc != 1) {
         UM_LOG(ERR, "failed to configure signing for keychain key: %s", tls_error(ERR_get_error()));
