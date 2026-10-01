@@ -243,6 +243,15 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
   PKCS#8 `PRIVATE KEY` (the same encoding the OpenSSL backend writes), public keys
   as SubjectPublicKeyInfo `PUBLIC KEY`, certificates as `CERTIFICATE`.
 - **Expiry** (`get_expiration`) is read from the certificate's DER (`notAfter`).
+- **Text** (`get_text`) describes the leaf of the chain, rendered from its DER on first
+  use and kept until the certificate is freed (`SecCertificateCopyValues` is macOS
+  only). It prints what the OpenSSL backend's `X509_print_ex` does without the
+  signature (version, serial, issuer, validity, subject, public key, extensions), and
+  matches it byte for byte for RSA, EC (P-256/384/521, secp256k1) and Ed25519/Ed448/
+  X25519/X448 keys and for the key identifiers, basic constraints, key usage, extended
+  key usage and subject alternative name extensions. Other extensions are shown as
+  OpenSSL shows an unknown one (the raw value, non-printable bytes as `.`); other key
+  types show only the algorithm OID.
 - **CSRs** (`generate_csr_to_pem`): Security has no CSR API, so `generate_csr()`
   encodes the PKCS#10 request itself and signs it with `SecKeyCreateSignature`
   (ECDSA or RSA PKCS#1 v1.5, SHA-256, as the OpenSSL backend does). Subject

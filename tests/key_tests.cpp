@@ -519,8 +519,8 @@ TEST_CASE("wraparound buffer test", "[util]") {
     CHECK(buf.getp == buf.buf);
 }
 
-TEST_CASE("cert-chain", "[key]") {
-    auto pem = R"("
+// an EC client certificate followed by the RSA CA that issued it
+static const char *const CERT_CHAIN_PEM = R"("
 -----BEGIN CERTIFICATE-----
 MIIDojCCAYqgAwIBAgIDBLfgMA0GCSqGSIb3DQEBCwUAMIGTMQswCQYDVQQGEwJVUzELMAkGA1UE
 CBMCTkMxEjAQBgNVBAcTCUNoYXJsb3R0ZTETMBEGA1UEChMKTmV0Rm91bmRyeTEoMCYGA1UEAxMf
@@ -570,10 +570,16 @@ ClE70UxGSsMjY8Evg0qSemyX/S63aziH1I9+m+3BUF+bg75zTmirgzIPt3B0mbD4Rx99DC6bE9n8
 Z8AgrJehwuXYVyJrG5Tc1vnlSUhUrK2812JyXA7tkWj/qzc=
 -----END CERTIFICATE-----
 )";
+
+TEST_CASE("cert-chain", "[key]") {
+    auto pem = CERT_CHAIN_PEM;
     auto tls = default_tls_context(nullptr, 0);
     tlsuv_certificate_t cert = nullptr;
     CHECK(tls->load_cert(&cert, pem, strlen(pem)) == 0);
 
+#if defined(TEST_applesec)
+    REQUIRE(cert->get_text != nullptr);
+#endif
     if (cert->get_text) {
         const char *text = cert->get_text(cert);
         CHECK(text != nullptr);
@@ -589,6 +595,106 @@ Z8AgrJehwuXYVyJrG5Tc1vnlSUhUrK2812JyXA7tkWj/qzc=
     cert->free(cert);
     tls->free_ctx(tls);
 }
+
+#if defined(TEST_applesec)
+// applesec renders the text itself, so check the whole layout: it follows OpenSSL's
+// X509_print_ex (no signature) so that consumers see the same text on every backend
+TEST_CASE("cert text of an EC leaf", "[key]") {
+    using Catch::Matchers::ContainsSubstring;
+    auto tls = default_tls_context(nullptr, 0);
+    tlsuv_certificate_t cert = nullptr;
+    REQUIRE(tls->load_cert(&cert, CERT_CHAIN_PEM, strlen(CERT_CHAIN_PEM)) == 0);
+    REQUIRE(cert->get_text != nullptr);
+
+    const char *text = cert->get_text(cert);
+    REQUIRE(text != nullptr);
+    CHECK(cert->get_text(cert) == text); // cached until the certificate is freed
+
+    CHECK_THAT(text, ContainsSubstring("Version: 3 (0x2)"));
+    CHECK_THAT(text, ContainsSubstring("Serial Number: 309216 (0x4b7e0)"));
+    // "/" before emailAddress: OpenSSL's X509_NAME_print only uses ", " ahead of CN, O, ...
+    CHECK_THAT(text, ContainsSubstring("Issuer: C=US, ST=NC, L=Charlotte, O=NetFoundry, "
+                                       "CN=Ziti Controller Intermediate CA/emailAddress=support@netfoundry.io"));
+    CHECK_THAT(text, ContainsSubstring("Not Before: Jul 31 17:25:35 2024 GMT"));
+    CHECK_THAT(text, ContainsSubstring("Not After : Jul 31 17:26:35 2025 GMT"));
+    CHECK_THAT(text, ContainsSubstring("Subject: CN=CafSvpHp0"));
+    CHECK_THAT(text, ContainsSubstring("Public Key Algorithm: id-ecPublicKey"));
+    CHECK_THAT(text, ContainsSubstring("Public-Key: (256 bit"));
+    CHECK_THAT(text, ContainsSubstring("ASN1 OID: prime256v1"));
+    CHECK_THAT(text, ContainsSubstring("NIST CURVE: P-256"));
+    CHECK_THAT(text, ContainsSubstring("X509v3 Key Usage: critical"));
+    CHECK_THAT(text, ContainsSubstring("Digital Signature, Key Encipherment, Data Encipherment"));
+    CHECK_THAT(text, ContainsSubstring("X509v3 Extended Key Usage:"));
+    CHECK_THAT(text, ContainsSubstring("TLS Web Client Authentication"));
+    CHECK_THAT(text, ContainsSubstring("X509v3 Authority Key Identifier:"));
+    CHECK_THAT(text, ContainsSubstring("6B:7D:E4:C8:04:D6:E1:10:34:9A:03:95:47:9B:C9:32:7F:EF:F5:09"));
+    // describes the leaf only, not the rest of the chain
+    CHECK_THAT(text, !ContainsSubstring("rsaEncryption"));
+
+    cert->free(cert);
+    tls->free_ctx(tls);
+}
+
+TEST_CASE("cert text of a server certificate", "[key]") {
+    using Catch::Matchers::ContainsSubstring;
+    // RSA, a 160 bit serial, SAN and an authority key identifier with issuer and serial
+    auto tls = default_tls_context(nullptr, 0);
+    tlsuv_certificate_t cert = nullptr;
+    const char *path = xstr(TEST_SERVER_CERT);
+    REQUIRE(tls->load_cert(&cert, path, strlen(path)) == 0);
+    REQUIRE(cert->get_text != nullptr);
+
+    const char *text = cert->get_text(cert);
+    REQUIRE(text != nullptr);
+
+    CHECK_THAT(text, ContainsSubstring("Serial Number:\n"
+                                       "            6f:50:32:b3:59:7f:bb:29:70:7a:e5:27:66:37:82:d0:1e:b1:65:5f\n"));
+    CHECK_THAT(text, ContainsSubstring("Issuer: C=US, ST=New York, O=openziti.org, CN=test CA"));
+    CHECK_THAT(text, ContainsSubstring("Subject: CN=localhost"));
+    CHECK_THAT(text, ContainsSubstring("Public-Key: (2048 bit)"));
+    CHECK_THAT(text, ContainsSubstring("keyid:77:B8:00:E8:87:59:A8:03:F5:18:5D:78:22:9D:9E:C5:F8:25:F2:10\n"));
+    CHECK_THAT(text, ContainsSubstring("DirName:/C=US/ST=New York/O=openziti.org/CN=test CA\n"));
+    CHECK_THAT(text, ContainsSubstring("serial:2F:CD:64:FB:57:97:F6:9E:57:88:7C:2E:C1:5B:2C:37:1B:9D:4E:56\n"));
+    CHECK_THAT(text, ContainsSubstring("CA:FALSE"));
+    CHECK_THAT(text, ContainsSubstring("TLS Web Server Authentication, TLS Web Client Authentication"));
+    CHECK_THAT(text, ContainsSubstring("X509v3 Subject Alternative Name: \n"
+                                       "                IP Address:127.0.0.1, DNS:localhost\n"));
+
+    cert->free(cert);
+    tls->free_ctx(tls);
+}
+
+TEST_CASE("cert text of an RSA CA", "[key]") {
+    using Catch::Matchers::ContainsSubstring;
+    // the second certificate of the chain
+    const char *ca = strstr(strstr(CERT_CHAIN_PEM, "-----BEGIN CERTIFICATE-----") + 1,
+                            "-----BEGIN CERTIFICATE-----");
+    REQUIRE(ca != nullptr);
+
+    auto tls = default_tls_context(nullptr, 0);
+    tlsuv_certificate_t cert = nullptr;
+    REQUIRE(tls->load_cert(&cert, ca, strlen(ca)) == 0);
+    REQUIRE(cert->get_text != nullptr);
+
+    const char *text = cert->get_text(cert);
+    REQUIRE(text != nullptr);
+
+    CHECK_THAT(text, ContainsSubstring("Serial Number: 1682090379949 (0x187a4664aad)"));
+    CHECK_THAT(text, ContainsSubstring("Issuer: CN=50a49a90-4804-4e46-b0c4-e93fc6bc578f, "
+                                       "O=NetFoundry, L=Charlotte, ST=NC, C=US"));
+    CHECK_THAT(text, ContainsSubstring("Not After : Apr 18 15:19:39 2033 GMT"));
+    CHECK_THAT(text, ContainsSubstring("Public Key Algorithm: rsaEncryption"));
+    CHECK_THAT(text, ContainsSubstring("Public-Key: (4096 bit)"));
+    CHECK_THAT(text, ContainsSubstring("Exponent: 65537 (0x10001)"));
+    CHECK_THAT(text, ContainsSubstring("X509v3 Subject Key Identifier:"));
+    CHECK_THAT(text, ContainsSubstring("X509v3 Basic Constraints: critical"));
+    CHECK_THAT(text, ContainsSubstring("CA:TRUE"));
+    CHECK_THAT(text, ContainsSubstring("Digital Signature, Certificate Sign, CRL Sign"));
+
+    cert->free(cert);
+    tls->free_ctx(tls);
+}
+#endif
 
 TEST_CASE("set-own-cert-leak", "[key]") {
 

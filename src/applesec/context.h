@@ -84,6 +84,8 @@ struct applesec_cert {
     struct tlsuv_certificate_s api;
 
     CFArrayRef chain;
+    // get_text() result, rendered on first use and kept until the certificate is freed
+    char *text;
 };
 
 extern const char *applesec_error(OSStatus code);
