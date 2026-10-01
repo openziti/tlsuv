@@ -127,6 +127,8 @@ static int alpn_select_cb(SSL* ssl, const uint8_t** out, uint8_t* outlen,
 
 static int tls_set_cert_internal(SSL* ssl, X509_STORE* store, EVP_PKEY* pkey);
 
+static int tls_get_peer_cert(tlsuv_engine_t self, tlsuv_certificate_t* cert);
+
 static BIO_METHOD* BIO_s_engine(void);
 
 static tls_context openssl_context_api = {
@@ -161,6 +163,7 @@ static struct tlsuv_engine_s openssl_engine_api = {
     .write = tls_write,
     .read = tls_read,
     .reset = tls_reset,
+    .get_peer_cert = tls_get_peer_cert,
     .free = tls_free,
     .strerror = tls_eng_error,
 };
@@ -606,6 +609,8 @@ tlsuv_engine_t new_boringssl_server_engine(tls_context* ctx) {
 
     struct openssl_engine* engine = tlsuv__calloc(1, sizeof(struct openssl_engine));
     engine->api = openssl_engine_api;
+    // not requesting client certs yet, so there is no peer certificate to get
+    engine->api.get_peer_cert = NULL;
     engine->is_server = true;
 
     engine->ssl = SSL_new(context->ctx);
@@ -1078,6 +1083,35 @@ static const char* tls_get_alpn(tlsuv_engine_t self) {
         memcpy(eng->alpn, proto, protolen);
     }
     return eng->alpn;
+}
+
+static int tls_get_peer_cert(tlsuv_engine_t self, tlsuv_certificate_t* cert) {
+    struct openssl_engine* e = (struct openssl_engine*)self;
+    if (cert == NULL) return TLS_ERR;
+    *cert = NULL;
+
+    X509* leaf = SSL_get_peer_certificate(e->ssl);
+    if (leaf == NULL) {
+        UM_LOG(VERB, "peer presented no certificate");
+        return TLS_ERR;
+    }
+
+    X509_STORE* store = X509_STORE_new();
+    X509_STORE_add_cert(store, leaf); // takes its own reference
+    X509_free(leaf);
+
+    // the full chain always starts with the leaf (SSL_get_peer_cert_chain() omits it
+    // on a server); duplicate adds are a no-op
+    STACK_OF(X509)* chain = SSL_get_peer_full_cert_chain(e->ssl);
+    for (size_t i = 0; chain != NULL && i < sk_X509_num(chain); i++) {
+        X509_STORE_add_cert(store, sk_X509_value(chain, i));
+    }
+
+    struct cert_s* c = tlsuv__calloc(1, sizeof(*c));
+    cert_init(c);
+    c->cert = store;
+    *cert = (tlsuv_certificate_t)c;
+    return 0;
 }
 
 static int tls_write(tlsuv_engine_t self, const char* data, size_t data_len) {

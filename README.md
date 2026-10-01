@@ -58,23 +58,25 @@ and is listed last as the least preferred choice.
 | Custom certificate verification callback | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Replace the CA bundle (`set_ca_bundle`) | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Accept partial certificate chains | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Peer certificate after handshake (`get_peer_cert`) | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Peer certificate after handshake (`get_peer_cert`) | ✅ [^1] | ✅ [^1] | ✅ | ✅ | ❌ |
 | Key generation, CSR generation | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [PKCS#11](https://en.wikipedia.org/wiki/PKCS_11) keys | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Keys in the platform keychain (`*_keychain_key`) | ✅ [^1] | ✅ [^1] | ✅ [^2] | ❌ | ❌ |
+| Keys in the platform keychain (`*_keychain_key`) | ✅ [^2] | ✅ [^2] | ✅ [^3] | ❌ | ❌ |
 | **Client** | | | | | |
 | Client connections (stream, HTTP, WebSocket) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Client certificate and key (`set_own_cert`) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Server** | | | | | |
 | Server connections (`new_server_engine`) | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Server asks for a client certificate | ❌ | ❌ | ✅ [^3] | ❌ | ❌ |
+| Server asks for a client certificate | ❌ | ❌ | ✅ [^4] | ❌ | ❌ |
 
-[^1]: Needs a keychain: the built-in one on Apple platforms, or one the application registers with
+[^1]: Client connections only: server engines of this backend do not request client certificates, so they
+have no peer certificate and leave `get_peer_cert` `NULL`.
+[^2]: Needs a keychain: the built-in one on Apple platforms, or one the application registers with
 `tlsuv_set_keychain()` (for example one backed by the Android Keystore). Register it before creating a TLS context,
 contexts created earlier have no keychain support. Generated keychain keys are EC. RSA keychain keys sign with
 PKCS#1 v1.5, which limits them to TLS 1.2 with `boringssl`.
-[^2]: Windows CNG key storage, no registration needed.
-[^3]: Only when a certificate verification callback is set, and the client may still connect without one.
+[^3]: Windows CNG key storage, no registration needed.
+[^4]: Only when a certificate verification callback is set, and the client may still connect without one.
 
 Every member of the [TLS engine interfaces](include/tlsuv/tls_engine.h) that a backend does not provide is `NULL`,
 so check before calling.
