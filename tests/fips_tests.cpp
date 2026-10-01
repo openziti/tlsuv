@@ -31,7 +31,7 @@ limitations under the License.
 TEST_CASE (
 "fips status"
 ,
-"[engine]"
+"[engine][fips]"
 )
  {
     tls_context *tls = default_tls_context();
@@ -67,7 +67,7 @@ TEST_CASE (
     tls->free_ctx(tls);
 }
 
-TEST_CASE("require fips", "[engine]") {
+TEST_CASE("require fips", "[engine][fips]") {
     tls_context *tls = default_tls_context();
 
     // mandatory on every backend, like fips_status
@@ -88,7 +88,7 @@ TEST_CASE("require fips", "[engine]") {
     tls->free_ctx(tls);
 }
 
-TEST_CASE("require_fips engines complete a handshake", "[engine][server]") {
+TEST_CASE("require_fips engines complete a handshake", "[engine][server][fips]") {
     bool restrict_server = GENERATE(true, false);
     bool restrict_client = GENERATE(true, false);
     INFO("restrict_server=" << restrict_server << " restrict_client=" << restrict_client);
@@ -265,7 +265,7 @@ const std::vector<peer_policy> rejected_peers = {
 };
 } // namespace
 
-TEST_CASE("require_fips client completes a handshake with approved peers", "[engine][server]") {
+TEST_CASE("require_fips client completes a handshake with approved peers", "[engine][server][fips]") {
     auto policy = GENERATE_COPY(from_range(approved_peers));
     INFO("peer: " << policy.name);
 
@@ -286,7 +286,7 @@ TEST_CASE("require_fips client completes a handshake with approved peers", "[eng
 }
 
 TEST_CASE("require_fips client rejects peers offering only non-approved algorithms",
-          "[engine][server]") {
+          "[engine][server][fips]") {
     auto policy = GENERATE_COPY(from_range(rejected_peers));
     INFO("peer: " << policy.name);
 
@@ -313,7 +313,7 @@ TEST_CASE("require_fips client rejects peers offering only non-approved algorith
 }
 
 TEST_CASE("require_fips server engine completes a handshake with approved clients",
-          "[engine][server]") {
+          "[engine][server][fips]") {
     auto policy = GENERATE_COPY(from_range(approved_peers));
     INFO("peer: " << policy.name);
 
@@ -335,7 +335,7 @@ TEST_CASE("require_fips server engine completes a handshake with approved client
 }
 
 TEST_CASE("require_fips server engine rejects clients offering only non-approved algorithms",
-          "[engine][server]") {
+          "[engine][server][fips]") {
     auto policy = GENERATE_COPY(from_range(rejected_peers));
     INFO("peer: " << policy.name);
 
@@ -394,7 +394,7 @@ bool legacy_peer_usable(const peer_policy &p) {
 }
 } // namespace
 
-TEST_CASE("client engines refuse TLS versions below 1.2", "[engine][server]") {
+TEST_CASE("client engines refuse TLS versions below 1.2", "[engine][server][fips]") {
     auto policy = GENERATE_COPY(from_range(legacy_peers));
     bool restricted = GENERATE(false, true);
     INFO("peer: " << policy.name << " restricted=" << restricted);
@@ -412,7 +412,7 @@ TEST_CASE("client engines refuse TLS versions below 1.2", "[engine][server]") {
     CHECK_FALSE(handshake_with_raw_peer(eng, peer));
 }
 
-TEST_CASE("server engines refuse TLS versions below 1.2", "[engine][server]") {
+TEST_CASE("server engines refuse TLS versions below 1.2", "[engine][server][fips]") {
     auto policy = GENERATE_COPY(from_range(legacy_peers));
     bool restricted = GENERATE(false, true);
     INFO("peer: " << policy.name << " restricted=" << restricted);
