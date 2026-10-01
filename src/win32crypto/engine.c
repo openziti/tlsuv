@@ -801,9 +801,151 @@ static int engine_write(tlsuv_engine_t self, const char *data, size_t data_len) 
     return (int)sent;
 }
 
+// bounds the post-handshake messages one engine_read() call processes, so a peer
+// that keeps sending them cannot hold the reader in the loop
+#define MAX_POST_HANDSHAKE_MSGS 16
+
+static bool negotiated_tls13(struct win32crypto_engine_s *engine) {
+    SecPkgContext_ConnectionInfo info = {0};
+    SECURITY_STATUS rc = QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_CONNECTION_INFO, &info);
+    if (rc != SEC_E_OK) {
+        LOG_ERROR(ERR, rc, "failed to query the negotiated protocol");
+        return false;
+    }
+    return (info.dwProtocol & (SP_PROT_TLS1_3_CLIENT | SP_PROT_TLS1_3_SERVER)) != 0;
+}
+
+// Processes the TLS 1.3 post-handshake message at the start of engine->inbound.
+// DecryptMessage reports a record carrying a handshake message as SEC_I_RENEGOTIATE and
+// returns the data from that record on in a SECBUFFER_EXTRA. The application then feeds it
+// to InitializeSecurityContext (client) or AcceptSecurityContext (server) on the existing
+// context, as a SECBUFFER_TOKEN, sends whatever output token that produces (e.g. the
+// answer to a KeyUpdate request) and keeps the SECBUFFER_EXTRA it returns as the next
+// unprocessed inbound data.
+// Returns TLS_OK when input was consumed, TLS_AGAIN when more inbound data (or room in
+// the outbound buffer) is needed, TLS_ERR on failure.
+static int process_post_handshake(struct win32crypto_engine_s *engine) {
+    assert(engine->post_handshake);
+    assert(engine->inbound_len > 0);
+
+    // the same flags as engine_handshake() uses for the role
+    u_long req_flags;
+    if (engine->is_server) {
+        req_flags =
+            ASC_REQ_CONFIDENTIALITY |
+            ASC_REQ_REPLAY_DETECT |
+            ASC_REQ_SEQUENCE_DETECT |
+            ASC_REQ_EXTENDED_ERROR |
+            ASC_REQ_STREAM;
+        if (engine->request_client_cert) {
+            req_flags |= ASC_REQ_MUTUAL_AUTH;
+        }
+    } else {
+        req_flags =
+            ISC_REQ_USE_SUPPLIED_CREDS |
+            ISC_REQ_CONFIDENTIALITY |
+            ISC_REQ_REPLAY_DETECT |
+            ISC_REQ_SEQUENCE_DETECT |
+            ISC_REQ_STREAM;
+    }
+    u_long ret_flags = 0;
+
+    // the output token is appended to engine->outbound, after any application data still
+    // waiting there, so that it goes out in order; make room first if possible. The
+    // result is not checked: engine_flush() keeps whatever it could not write, and a
+    // transport failure surfaces on the next read or write, as in engine_write()
+    engine_flush(engine);
+    size_t space = sizeof(engine->outbound) - engine->outbound_len;
+    if (space < 1024) {
+        UM_LOG(VERB, "no room for a post-handshake answer, retrying later");
+        return TLS_AGAIN;
+    }
+
+    SecBuffer inbuf[2] = {
+        {.BufferType = SECBUFFER_TOKEN, .pvBuffer = engine->inbound, .cbBuffer = (unsigned long)engine->inbound_len},
+        {.BufferType = SECBUFFER_EMPTY, .pvBuffer = NULL, .cbBuffer = 0},
+    };
+    SecBufferDesc inbuf_desc = { SECBUFFER_VERSION, 2, inbuf };
+
+    char *token = engine->outbound + engine->outbound_len;
+    char alert_buf[1024];
+    SecBuffer outbuf[2] = {
+        {.BufferType = SECBUFFER_TOKEN, .pvBuffer = token, .cbBuffer = (unsigned long)space},
+        {.BufferType = SECBUFFER_ALERT, .pvBuffer = alert_buf, .cbBuffer = sizeof(alert_buf)},
+    };
+    SecBufferDesc outbuf_desc = { SECBUFFER_VERSION, 2, outbuf };
+
+    UM_LOG(TRACE, "processing %lu bytes of post-handshake data", inbuf[0].cbBuffer);
+    if (engine->is_server) {
+        engine->status = AcceptSecurityContext(
+            &engine->cred_handle, &engine->ctxt_handle,
+            &inbuf_desc,
+            req_flags, 0,
+            &engine->ctxt_handle,
+            &outbuf_desc, &ret_flags, NULL);
+    } else {
+        engine->status = InitializeSecurityContextA(
+            &engine->cred_handle, &engine->ctxt_handle, engine->hostname,
+            req_flags, 0, 0,
+            &inbuf_desc,
+            0,
+            &engine->ctxt_handle,
+            &outbuf_desc, &ret_flags, NULL);
+    }
+    LOG_ERROR(VERB, engine->status, "post-handshake message");
+
+    if (engine->status == SEC_E_INCOMPLETE_MESSAGE) {
+        // keep the data, as the handshake does; a message that does not fit at all
+        // would never complete
+        if (engine->inbound_len == sizeof(engine->inbound)) {
+            UM_LOG(ERR, "post-handshake message larger than %lu bytes", (unsigned long)sizeof(engine->inbound));
+            return TLS_ERR;
+        }
+        return TLS_AGAIN;
+    }
+
+    if (engine->status != SEC_E_OK && engine->status != SEC_I_CONTINUE_NEEDED) {
+        LOG_ERROR(ERR, engine->status, "failed to process post-handshake message");
+        return TLS_ERR;
+    }
+
+    if (inbuf[1].BufferType == SECBUFFER_EXTRA) {
+        size_t consumed = engine->inbound_len - inbuf[1].cbBuffer;
+        memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
+        engine->inbound_len -= consumed;
+    } else {
+        engine->inbound_len = 0;
+    }
+
+    if (outbuf[0].BufferType == SECBUFFER_TOKEN && outbuf[0].cbBuffer > 0) {
+        if (outbuf[0].pvBuffer != token) {
+            // not expected, since the engine supplies the buffer (no ISC/ASC_REQ_ALLOCATE_MEMORY)
+            if (outbuf[0].cbBuffer > space) {
+                UM_LOG(ERR, "post-handshake answer too large: %lu bytes", outbuf[0].cbBuffer);
+                FreeContextBuffer(outbuf[0].pvBuffer);
+                return TLS_ERR;
+            }
+            memcpy(token, outbuf[0].pvBuffer, outbuf[0].cbBuffer);
+            FreeContextBuffer(outbuf[0].pvBuffer);
+        }
+        log_tls_message(engine, ">>>", token, outbuf[0].cbBuffer);
+        engine->outbound_len += outbuf[0].cbBuffer;
+        // a blocked write leaves the token in engine->outbound, and engine_write()
+        // flushes it before encrypting anything new
+        engine_flush(engine);
+    }
+
+    // SEC_I_CONTINUE_NEEDED: the message is not complete yet, keep feeding the context
+    if (engine->status == SEC_E_OK) {
+        engine->post_handshake = false;
+    }
+    return TLS_OK;
+}
+
 static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
     char *p = data;
+    int post_hs_msgs = 0;
 
     // copy any leftover data from previous read
     if (engine->decoded_len > 0) {
@@ -834,6 +976,22 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
         if (engine->inbound_len == 0) {
             *out = p - data;
             return *out > 0 ? TLS_OK : (int)read;
+        }
+
+        if (engine->post_handshake) {
+            if (++post_hs_msgs > MAX_POST_HANDSHAKE_MSGS) {
+                UM_LOG(ERR, "more than %d post-handshake messages in one read", MAX_POST_HANDSHAKE_MSGS);
+                return TLS_ERR;
+            }
+            int hs = process_post_handshake(engine);
+            if (hs == TLS_ERR) {
+                return TLS_ERR;
+            }
+            if (hs == TLS_AGAIN) {
+                break;
+            }
+            // decrypt the records that follow it
+            continue;
         }
 
         SecBuffer bufs[4] = {
@@ -876,6 +1034,30 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
             memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
             engine->inbound_len -= consumed;
             eof = true;
+        } else if (rc == SEC_I_RENEGOTIATE && negotiated_tls13(engine)) {
+            // TLS 1.3 has no renegotiation: this is a post-handshake message (NewSessionTicket,
+            // KeyUpdate). The SECBUFFER_EXTRA holds the data from its record on; it becomes the
+            // inbound data that process_post_handshake() feeds to the security context on the
+            // next pass. Under TLS 1.2 or older, SEC_I_RENEGOTIATE is a real renegotiation
+            // request, which this engine does not support: it falls through to the error below.
+            SecBuffer *extra = NULL;
+            for (int i = 0; i < 4; i++) {
+                if (bufs[i].BufferType == SECBUFFER_EXTRA) {
+                    extra = &bufs[i];
+                } else if (bufs[i].BufferType == SECBUFFER_DATA && bufs[i].cbBuffer > 0) {
+                    // a handshake record carries no application data
+                    UM_LOG(VERB, "ignoring %lu bytes of data with a post-handshake message", bufs[i].cbBuffer);
+                }
+            }
+            if (extra == NULL || extra->cbBuffer == 0) {
+                UM_LOG(ERR, "post-handshake message without the data to process it");
+                return TLS_ERR;
+            }
+            size_t consumed = engine->inbound_len - extra->cbBuffer;
+            assert(consumed <= engine->inbound_len);
+            memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
+            engine->inbound_len -= consumed;
+            engine->post_handshake = true;
         } else {
             LOG_ERROR(ERR, rc, "failed to decrypt message");
             return TLS_ERR;
@@ -902,6 +1084,7 @@ static int engine_reset (tlsuv_engine_t self) {
 
     engine->status = 0;
     engine->handshake_st = TLS_HS_BEFORE;
+    engine->post_handshake = false;
     memset(&engine->sizes, 0, sizeof(engine->sizes));
     memset(&engine->alpn, 0, sizeof(engine->alpn));
 
