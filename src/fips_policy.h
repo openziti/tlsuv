@@ -27,7 +27,7 @@
     "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
 
 // key agreement groups (SSL_CTX_set1_groups_list)
-#define TLSUV_FIPS_GROUPS "P-384:P-256"
+#define TLSUV_FIPS_GROUPS "P-256:P-384"
 
 // signature algorithms (SSL_CTX_set1_sigalgs_list)
 #define TLSUV_FIPS_SIGALGS                                                    \
