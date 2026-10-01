@@ -22,7 +22,7 @@
 // NO_SIGNAME): version, serial, issuer, validity, subject, public key and extensions.
 //
 // Header only: everything is static, so include it from the one source file of a backend
-// that uses it. The helpers are prefixed with ct_ to stay clear of that file's own names.
+// that uses it. The renderer's own helpers are prefixed with ct_.
 //
 //   static char *tlsuv__cert_der_to_text(const uint8_t *der, size_t len);
 //       der: one certificate (not a chain)
@@ -31,6 +31,10 @@
 //   tlsuv__dn_attrs[], tlsuv__dn_attrs_count
 //       subject attribute names as OpenSSL accepts them (short and long), with the ASN.1
 //       string type its defaults produce for each
+//
+//   struct tlsuv_buf, tlsuv__buf_put(), tlsuv__der_next()
+//       the byte buffer and DER reader the renderer is built on, for the including file to
+//       use for its own DER and PEM work
 
 #include "alloc.h"
 
@@ -48,13 +52,14 @@ struct tlsuv_dn_attr {
     uint8_t str_tag;
 };
 
-struct ct_buf {
+// growable byte buffer for building text, DER and PEM
+struct tlsuv_buf {
     uint8_t* data;
     size_t len;
     size_t cap;
 };
 
-static void ct_buf_put(struct ct_buf* b, const void* bytes, size_t len) {
+static void tlsuv__buf_put(struct tlsuv_buf* b, const void* bytes, size_t len) {
     if (b->len + len > b->cap) {
         size_t cap = b->cap ? b->cap : 256;
         while (cap < b->len + len) cap *= 2;
@@ -66,8 +71,8 @@ static void ct_buf_put(struct ct_buf* b, const void* bytes, size_t len) {
 }
 
 // reads one DER tag, returning its contents
-static bool ct_der_next(const uint8_t** p, const uint8_t* end, uint8_t tag,
-                        const uint8_t** body, size_t* bodylen) {
+static bool tlsuv__der_next(const uint8_t** p, const uint8_t* end, uint8_t tag,
+                            const uint8_t** body, size_t* bodylen) {
     if (end - *p < 2 || **p != tag) return false;
     (*p)++;
 
@@ -123,14 +128,14 @@ static const size_t tlsuv__dn_attrs_count = sizeof(tlsuv__dn_attrs) / sizeof(tls
 //
 // Plain C11 with no platform calls: the dates are formatted from their ASN.1 fields.
 
-static void ct_buf_str(struct ct_buf* b, const char* s) {
-    ct_buf_put(b, s, strlen(s));
+static void ct_buf_str(struct tlsuv_buf* b, const char* s) {
+    tlsuv__buf_put(b, s, strlen(s));
 }
 
 #if defined(__GNUC__)
 __attribute__((format(printf, 2, 3)))
 #endif
-static void ct_buf_printf(struct ct_buf* b, const char* fmt, ...) {
+static void ct_buf_printf(struct tlsuv_buf* b, const char* fmt, ...) {
     char tmp[256];
     va_list va;
     va_start(va, fmt);
@@ -138,7 +143,7 @@ static void ct_buf_printf(struct ct_buf* b, const char* fmt, ...) {
     va_end(va);
     if (n < 0) return;
     if ((size_t)n < sizeof(tmp)) {
-        ct_buf_put(b, tmp, n);
+        tlsuv__buf_put(b, tmp, n);
         return;
     }
 
@@ -146,7 +151,7 @@ static void ct_buf_printf(struct ct_buf* b, const char* fmt, ...) {
     va_start(va, fmt);
     vsnprintf(big, n + 1, fmt, va);
     va_end(va);
-    ct_buf_put(b, big, n);
+    tlsuv__buf_put(b, big, n);
     tlsuv__free(big);
 }
 
@@ -155,7 +160,7 @@ static bool ct_der_any(const uint8_t** p, const uint8_t* end, uint8_t* tag,
                        const uint8_t** body, size_t* bodylen) {
     if (*p >= end) return false;
     *tag = **p;
-    return ct_der_next(p, end, *tag, body, bodylen);
+    return tlsuv__der_next(p, end, *tag, body, bodylen);
 }
 
 // dotted decimal of the contents of a DER OBJECT IDENTIFIER
@@ -190,7 +195,7 @@ static bool ct_oid_dotted(const uint8_t* d, size_t n, char* out, size_t outlen) 
 
 // colon separated hex bytes, `per_line` of them on a line (0: all on one), each line
 // indented
-static void ct_put_hex(struct ct_buf* b, const uint8_t* d, size_t n, int indent, size_t per_line, bool upper) {
+static void ct_put_hex(struct tlsuv_buf* b, const uint8_t* d, size_t n, int indent, size_t per_line, bool upper) {
     for (size_t i = 0; i < n; i++) {
         if (i == 0 || (per_line && i % per_line == 0)) {
             if (i) ct_buf_str(b, ":\n");
@@ -204,15 +209,15 @@ static void ct_put_hex(struct ct_buf* b, const uint8_t* d, size_t n, int indent,
 }
 
 // a byte of a name as X509_NAME_oneline writes it: anything but ' '..'~' is \xNN
-static void ct_put_dn_byte(struct ct_buf* b, uint8_t c) {
+static void ct_put_dn_byte(struct tlsuv_buf* b, uint8_t c) {
     if (c < ' ' || c > '~') {
         ct_buf_printf(b, "\\x%02X", c);
     } else {
-        ct_buf_put(b, &c, 1);
+        tlsuv__buf_put(b, &c, 1);
     }
 }
 
-static void ct_put_dn_value(struct ct_buf* b, uint8_t tag, const uint8_t* v, size_t n) {
+static void ct_put_dn_value(struct tlsuv_buf* b, uint8_t tag, const uint8_t* v, size_t n) {
     switch (tag) {
         case 0x0C: // UTF8String
         case 0x12: // NumericString
@@ -241,13 +246,13 @@ static bool ct_is_short_attr(const char* a) {
 // Name ::= SEQUENCE OF RelativeDistinguishedName, printed as OpenSSL does by default:
 // short names, ", " (or "/") between RDNs and "+" between the attributes of one.
 // `oneline` is the "/C=US/CN=name" form, used for directory names in extensions.
-static bool ct_put_name(struct ct_buf* b, const uint8_t* name, size_t namelen, bool oneline) {
+static bool ct_put_name(struct tlsuv_buf* b, const uint8_t* name, size_t namelen, bool oneline) {
     const uint8_t *p = name, *end = name + namelen;
     bool first_rdn = true;
     while (p < end) {
         const uint8_t* set;
         size_t setlen;
-        if (!ct_der_next(&p, end, 0x31, &set, &setlen)) return false;
+        if (!tlsuv__der_next(&p, end, 0x31, &set, &setlen)) return false;
 
         const uint8_t *q = set, *qend = set + setlen;
         bool first_atv = true;
@@ -255,10 +260,10 @@ static bool ct_put_name(struct ct_buf* b, const uint8_t* name, size_t namelen, b
             const uint8_t *atv, *oid, *val;
             size_t atvlen, oidlen, vallen;
             uint8_t vtag;
-            if (!ct_der_next(&q, qend, 0x30, &atv, &atvlen)) return false;
+            if (!tlsuv__der_next(&q, qend, 0x30, &atv, &atvlen)) return false;
 
             const uint8_t *a = atv, *aend = atv + atvlen;
-            if (!ct_der_next(&a, aend, 0x06, &oid, &oidlen) || !ct_der_any(&a, aend, &vtag, &val, &vallen)) return false;
+            if (!tlsuv__der_next(&a, aend, 0x06, &oid, &oidlen) || !ct_der_any(&a, aend, &vtag, &val, &vallen)) return false;
 
             char dotted[64];
             if (!ct_oid_dotted(oid, oidlen, dotted, sizeof(dotted))) return false;
@@ -299,7 +304,7 @@ static int ct_digits(const uint8_t* s, size_t off, size_t n) {
 
 // UTCTime (YYMMDDHHMMSSZ) or GeneralizedTime (YYYYMMDDHHMMSSZ), UTC only, as OpenSSL
 // prints it: "Jul 31 17:25:35 2024 GMT"
-static bool ct_put_time(struct ct_buf* b, uint8_t tag, const uint8_t* v, size_t n) {
+static bool ct_put_time(struct tlsuv_buf* b, uint8_t tag, const uint8_t* v, size_t n) {
     static const char* const MONTHS[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     size_t ylen = tag == 0x17 ? 2 : 4;
@@ -321,7 +326,7 @@ static bool ct_put_time(struct ct_buf* b, uint8_t tag, const uint8_t* v, size_t 
     return true;
 }
 
-static void ct_put_serial(struct ct_buf* b, const uint8_t* s, size_t n) {
+static void ct_put_serial(struct tlsuv_buf* b, const uint8_t* s, size_t n) {
     bool negative = n > 0 && (s[0] & 0x80);
     while (n > 1 && s[0] == 0) { // sign padding
         s++;
@@ -363,17 +368,17 @@ static const struct {
 };
 
 // SubjectPublicKeyInfo ::= SEQUENCE { algorithm SEQUENCE { OID, parameters }, subjectPublicKey BIT STRING }
-static bool ct_put_public_key(struct ct_buf* b, const uint8_t* spki, size_t len) {
+static bool ct_put_public_key(struct tlsuv_buf* b, const uint8_t* spki, size_t len) {
     const uint8_t *p = spki, *end = spki + len;
     const uint8_t *alg, *oid, *key;
     size_t alglen, oidlen, keylen;
-    if (!ct_der_next(&p, end, 0x30, &alg, &alglen)) return false;
-    if (!ct_der_next(&p, end, 0x03, &key, &keylen) || keylen < 1) return false;
+    if (!tlsuv__der_next(&p, end, 0x30, &alg, &alglen)) return false;
+    if (!tlsuv__der_next(&p, end, 0x03, &key, &keylen) || keylen < 1) return false;
     key++; // unused bits
     keylen--;
 
     const uint8_t *a = alg, *aend = alg + alglen;
-    if (!ct_der_next(&a, aend, 0x06, &oid, &oidlen)) return false;
+    if (!tlsuv__der_next(&a, aend, 0x06, &oid, &oidlen)) return false;
     char dotted[64];
     if (!ct_oid_dotted(oid, oidlen, dotted, sizeof(dotted))) return false;
 
@@ -381,10 +386,10 @@ static bool ct_put_public_key(struct ct_buf* b, const uint8_t* spki, size_t len)
         const uint8_t *k = key, *kend = key + keylen;
         const uint8_t *seq, *mod, *exp;
         size_t seqlen, modlen, explen;
-        if (!ct_der_next(&k, kend, 0x30, &seq, &seqlen)) return false;
+        if (!tlsuv__der_next(&k, kend, 0x30, &seq, &seqlen)) return false;
         k = seq;
         kend = seq + seqlen;
-        if (!ct_der_next(&k, kend, 0x02, &mod, &modlen) || !ct_der_next(&k, kend, 0x02, &exp, &explen)) return false;
+        if (!tlsuv__der_next(&k, kend, 0x02, &mod, &modlen) || !tlsuv__der_next(&k, kend, 0x02, &exp, &explen)) return false;
         if (modlen == 0) return false;
         while (modlen > 1 && mod[0] == 0) {
             mod++;
@@ -398,10 +403,10 @@ static bool ct_put_public_key(struct ct_buf* b, const uint8_t* spki, size_t len)
         ct_buf_str(b, "                Modulus:\n");
         // OpenSSL keeps the sign padding byte in the dump
         if (mod[0] & 0x80) {
-            struct ct_buf m = {0};
+            struct tlsuv_buf m = {0};
             uint8_t zero = 0;
-            ct_buf_put(&m, &zero, 1);
-            ct_buf_put(&m, mod, modlen);
+            tlsuv__buf_put(&m, &zero, 1);
+            tlsuv__buf_put(&m, mod, modlen);
             ct_put_hex(b, m.data, m.len, 20, 15, false);
             tlsuv__free(m.data);
         } else {
@@ -418,7 +423,7 @@ static bool ct_put_public_key(struct ct_buf* b, const uint8_t* spki, size_t len)
         const uint8_t* curve;
         size_t curvelen;
         char curve_oid[64];
-        if (!ct_der_next(&a, aend, 0x06, &curve, &curvelen) ||
+        if (!tlsuv__der_next(&a, aend, 0x06, &curve, &curvelen) ||
             !ct_oid_dotted(curve, curvelen, curve_oid, sizeof(curve_oid))) {
             return false;
         }
@@ -485,19 +490,19 @@ static const char* const CT_KEY_USAGES[] = {
 #define CT_EXT_INDENT "                "
 
 // the body of one extension (the contents of its extnValue OCTET STRING)
-static bool ct_put_ext_value(struct ct_buf* b, const char* oid, const uint8_t* v, size_t n) {
+static bool ct_put_ext_value(struct tlsuv_buf* b, const char* oid, const uint8_t* v, size_t n) {
     const uint8_t *p = v, *end = v + n;
     const uint8_t* item;
     size_t itemlen;
 
     if (strcmp(oid, "2.5.29.14") == 0) { // subject key identifier
-        if (!ct_der_next(&p, end, 0x04, &item, &itemlen)) return false;
+        if (!tlsuv__der_next(&p, end, 0x04, &item, &itemlen)) return false;
         ct_put_hex(b, item, itemlen, 16, 0, true);
     } else if (strcmp(oid, "2.5.29.35") == 0) { // authority key identifier
         //   AuthorityKeyIdentifier ::= SEQUENCE { [0] keyIdentifier, [1] authorityCertIssuer,
         //                                         [2] authorityCertSerialNumber }
         // OpenSSL labels the parts only if there is more than the key identifier
-        if (!ct_der_next(&p, end, 0x30, &item, &itemlen)) return false;
+        if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) return false;
         const uint8_t *k = item, *kend = item + itemlen;
         const uint8_t* id = NULL;
         const uint8_t* issuer = NULL;
@@ -541,7 +546,7 @@ static bool ct_put_ext_value(struct ct_buf* b, const char* oid, const uint8_t* v
                 const uint8_t* dn = name;
                 const uint8_t* seq;
                 size_t seqlen;
-                if (!ct_der_next(&dn, name + namelen, 0x30, &seq, &seqlen)) return false;
+                if (!tlsuv__der_next(&dn, name + namelen, 0x30, &seq, &seqlen)) return false;
                 ct_buf_str(b, CT_EXT_INDENT "DirName:");
                 if (!ct_put_name(b, seq, seqlen, true)) return false;
                 ct_buf_str(b, "\n");
@@ -552,24 +557,24 @@ static bool ct_put_ext_value(struct ct_buf* b, const char* oid, const uint8_t* v
             ct_put_hex(b, serial, seriallen, 0, 0, true);
         }
     } else if (strcmp(oid, "2.5.29.19") == 0) { // basic constraints
-        if (!ct_der_next(&p, end, 0x30, &item, &itemlen)) return false;
+        if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) return false;
         const uint8_t *c = item, *cend = item + itemlen;
         const uint8_t* f;
         size_t flen;
         bool ca = false;
         if (c < cend && *c == 0x01) {
-            if (!ct_der_next(&c, cend, 0x01, &f, &flen) || flen != 1) return false;
+            if (!tlsuv__der_next(&c, cend, 0x01, &f, &flen) || flen != 1) return false;
             ca = f[0] != 0;
         }
         ct_buf_str(b, ca ? CT_EXT_INDENT "CA:TRUE" : CT_EXT_INDENT "CA:FALSE");
         unsigned long long pathlen;
         if (c < cend) {
-            if (!ct_der_next(&c, cend, 0x02, &f, &flen) || !ct_der_uint(f, flen, &pathlen)) return false;
+            if (!tlsuv__der_next(&c, cend, 0x02, &f, &flen) || !ct_der_uint(f, flen, &pathlen)) return false;
             ct_buf_printf(b, ", pathlen:%llu", pathlen);
         }
         ct_buf_str(b, "\n");
     } else if (strcmp(oid, "2.5.29.15") == 0) { // key usage
-        if (!ct_der_next(&p, end, 0x03, &item, &itemlen) || itemlen < 1) return false;
+        if (!tlsuv__der_next(&p, end, 0x03, &item, &itemlen) || itemlen < 1) return false;
         ct_buf_str(b, CT_EXT_INDENT);
         bool first = true;
         for (size_t bit = 0; bit < sizeof(CT_KEY_USAGES) / sizeof(CT_KEY_USAGES[0]); bit++) {
@@ -581,7 +586,7 @@ static bool ct_put_ext_value(struct ct_buf* b, const char* oid, const uint8_t* v
         }
         ct_buf_str(b, "\n");
     } else if (strcmp(oid, "2.5.29.37") == 0) { // extended key usage
-        if (!ct_der_next(&p, end, 0x30, &item, &itemlen)) return false;
+        if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) return false;
         const uint8_t *k = item, *kend = item + itemlen;
         ct_buf_str(b, CT_EXT_INDENT);
         bool first = true;
@@ -589,7 +594,7 @@ static bool ct_put_ext_value(struct ct_buf* b, const char* oid, const uint8_t* v
             const uint8_t* o;
             size_t olen;
             char dotted[64];
-            if (!ct_der_next(&k, kend, 0x06, &o, &olen) || !ct_oid_dotted(o, olen, dotted, sizeof(dotted))) return false;
+            if (!tlsuv__der_next(&k, kend, 0x06, &o, &olen) || !ct_oid_dotted(o, olen, dotted, sizeof(dotted))) return false;
             const char* name = dotted;
             for (size_t i = 0; i < sizeof(ct_ext_key_usages) / sizeof(ct_ext_key_usages[0]); i++) {
                 if (strcmp(dotted, ct_ext_key_usages[i].oid) == 0) {
@@ -603,7 +608,7 @@ static bool ct_put_ext_value(struct ct_buf* b, const char* oid, const uint8_t* v
         }
         ct_buf_str(b, "\n");
     } else if (strcmp(oid, "2.5.29.17") == 0) { // subject alternative name
-        if (!ct_der_next(&p, end, 0x30, &item, &itemlen)) return false;
+        if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) return false;
         const uint8_t *g = item, *gend = item + itemlen;
         ct_buf_str(b, CT_EXT_INDENT);
         bool first = true;
@@ -618,15 +623,15 @@ static bool ct_put_ext_value(struct ct_buf* b, const char* oid, const uint8_t* v
             switch (tag) {
                 case 0x81:
                     ct_buf_str(b, "email:");
-                    ct_buf_put(b, name, namelen);
+                    tlsuv__buf_put(b, name, namelen);
                     break;
                 case 0x82:
                     ct_buf_str(b, "DNS:");
-                    ct_buf_put(b, name, namelen);
+                    tlsuv__buf_put(b, name, namelen);
                     break;
                 case 0x86:
                     ct_buf_str(b, "URI:");
-                    ct_buf_put(b, name, namelen);
+                    tlsuv__buf_put(b, name, namelen);
                     break;
                 case 0x87:
                     ct_buf_str(b, "IP Address:");
@@ -645,7 +650,7 @@ static bool ct_put_ext_value(struct ct_buf* b, const char* oid, const uint8_t* v
                     const uint8_t* seq;
                     size_t seqlen;
                     ct_buf_str(b, "DirName:");
-                    if (!ct_der_next(&dn, name + namelen, 0x30, &seq, &seqlen) || !ct_put_name(b, seq, seqlen, true)) {
+                    if (!tlsuv__der_next(&dn, name + namelen, 0x30, &seq, &seqlen) || !ct_put_name(b, seq, seqlen, true)) {
                         return false;
                     }
                     break;
@@ -660,7 +665,7 @@ static bool ct_put_ext_value(struct ct_buf* b, const char* oid, const uint8_t* v
         ct_buf_str(b, CT_EXT_INDENT);
         for (size_t i = 0; i < n; i++) {
             char c = (v[i] >= ' ' && v[i] <= '~') || v[i] == '\n' || v[i] == '\r' ? (char)v[i] : '.';
-            ct_buf_put(b, &c, 1);
+            tlsuv__buf_put(b, &c, 1);
         }
         ct_buf_str(b, "\n");
     }
@@ -681,11 +686,11 @@ static const struct {
 
 // extensions [3] EXPLICIT SEQUENCE OF SEQUENCE { extnID OID, critical BOOLEAN DEFAULT FALSE,
 //                                                  extnValue OCTET STRING }
-static bool ct_put_extensions(struct ct_buf* b, const uint8_t* exts, size_t len) {
+static bool ct_put_extensions(struct tlsuv_buf* b, const uint8_t* exts, size_t len) {
     const uint8_t *p = exts, *end = exts + len;
     const uint8_t* list;
     size_t listlen;
-    if (!ct_der_next(&p, end, 0x30, &list, &listlen)) return false;
+    if (!tlsuv__der_next(&p, end, 0x30, &list, &listlen)) return false;
 
     ct_buf_str(b, "        X509v3 extensions:\n");
     p = list;
@@ -693,18 +698,18 @@ static bool ct_put_extensions(struct ct_buf* b, const uint8_t* exts, size_t len)
     while (p < end) {
         const uint8_t* ext;
         size_t extlen;
-        if (!ct_der_next(&p, end, 0x30, &ext, &extlen)) return false;
+        if (!tlsuv__der_next(&p, end, 0x30, &ext, &extlen)) return false;
 
         const uint8_t *e = ext, *eend = ext + extlen;
         const uint8_t *oid, *flag, *value;
         size_t oidlen, flaglen, valuelen;
         bool critical = false;
-        if (!ct_der_next(&e, eend, 0x06, &oid, &oidlen)) return false;
+        if (!tlsuv__der_next(&e, eend, 0x06, &oid, &oidlen)) return false;
         if (e < eend && *e == 0x01) {
-            if (!ct_der_next(&e, eend, 0x01, &flag, &flaglen) || flaglen != 1) return false;
+            if (!tlsuv__der_next(&e, eend, 0x01, &flag, &flaglen) || flaglen != 1) return false;
             critical = flag[0] != 0;
         }
-        if (!ct_der_next(&e, eend, 0x04, &value, &valuelen)) return false;
+        if (!tlsuv__der_next(&e, eend, 0x04, &value, &valuelen)) return false;
 
         char dotted[64];
         if (!ct_oid_dotted(oid, oidlen, dotted, sizeof(dotted))) return false;
@@ -729,16 +734,16 @@ static bool ct_put_extensions(struct ct_buf* b, const uint8_t* exts, size_t len)
 //                                 [3] extensions }
 // returns NUL terminated text, or NULL if the certificate cannot be read
 static char* tlsuv__cert_der_to_text(const uint8_t* der, size_t derlen) {
-    struct ct_buf out = {0};
+    struct tlsuv_buf out = {0};
     bool ok = false;
 
     const uint8_t *p = der, *end = der + derlen;
     const uint8_t *item, *serial, *issuer, *validity, *subject, *spki;
     size_t itemlen, seriallen, issuerlen, validitylen, subjectlen, spkilen;
-    if (!ct_der_next(&p, end, 0x30, &item, &itemlen)) goto done; // Certificate
+    if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) goto done; // Certificate
     p = item;
     end = item + itemlen;
-    if (!ct_der_next(&p, end, 0x30, &item, &itemlen)) goto done; // tbsCertificate
+    if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) goto done; // tbsCertificate
     p = item;
     end = item + itemlen;
 
@@ -746,16 +751,16 @@ static char* tlsuv__cert_der_to_text(const uint8_t* der, size_t derlen) {
     if (p < end && *p == 0xA0) {
         const uint8_t* v;
         size_t vlen;
-        if (!ct_der_next(&p, end, 0xA0, &item, &itemlen)) goto done;
+        if (!tlsuv__der_next(&p, end, 0xA0, &item, &itemlen)) goto done;
         const uint8_t* i = item;
-        if (!ct_der_next(&i, item + itemlen, 0x02, &v, &vlen) || !ct_der_uint(v, vlen, &version)) goto done;
+        if (!tlsuv__der_next(&i, item + itemlen, 0x02, &v, &vlen) || !ct_der_uint(v, vlen, &version)) goto done;
     }
-    if (!ct_der_next(&p, end, 0x02, &serial, &seriallen)) goto done;
-    if (!ct_der_next(&p, end, 0x30, &item, &itemlen)) goto done; // signature algorithm
-    if (!ct_der_next(&p, end, 0x30, &issuer, &issuerlen)) goto done;
-    if (!ct_der_next(&p, end, 0x30, &validity, &validitylen)) goto done;
-    if (!ct_der_next(&p, end, 0x30, &subject, &subjectlen)) goto done;
-    if (!ct_der_next(&p, end, 0x30, &spki, &spkilen)) goto done;
+    if (!tlsuv__der_next(&p, end, 0x02, &serial, &seriallen)) goto done;
+    if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) goto done; // signature algorithm
+    if (!tlsuv__der_next(&p, end, 0x30, &issuer, &issuerlen)) goto done;
+    if (!tlsuv__der_next(&p, end, 0x30, &validity, &validitylen)) goto done;
+    if (!tlsuv__der_next(&p, end, 0x30, &subject, &subjectlen)) goto done;
+    if (!tlsuv__der_next(&p, end, 0x30, &spki, &spkilen)) goto done;
 
     ct_buf_printf(&out, "        Version: %llu (0x%llx)\n", version + 1, version);
     ct_put_serial(&out, serial, seriallen);
@@ -788,7 +793,7 @@ done:
         tlsuv__free(out.data);
         return NULL;
     }
-    ct_buf_put(&out, "", 1); // NUL
+    tlsuv__buf_put(&out, "", 1); // NUL
     return (char*)out.data;
 }
 

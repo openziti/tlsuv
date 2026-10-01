@@ -597,7 +597,7 @@ TEST_CASE("cert-chain", "[key]") {
 }
 
 #if defined(TEST_applesec) || defined(TEST_win32crypto)
-// applesec and win32crypto render the text themselves (src/cert_text.c), so check the
+// applesec and win32crypto render the text themselves (src/cert_text.h), so check the
 // whole layout: it follows OpenSSL's X509_print_ex (no signature) so that consumers see
 // the same text on every backend
 TEST_CASE("cert text of an EC leaf", "[key]") {
