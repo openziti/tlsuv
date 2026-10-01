@@ -1060,7 +1060,11 @@ struct win32crypto_engine_s* new_win32engine(
                                        NULL);
     }
     if (rc != ERROR_SUCCESS) {
-        LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result");
+        if (restricted) {
+            LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result (require_fips restricted credentials)");
+        } else {
+            LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result");
+        }
     }
     return engine;
 }

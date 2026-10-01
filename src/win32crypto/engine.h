@@ -58,6 +58,12 @@ struct win32crypto_engine_s {
     size_t decoded_len;
 };
 
+/**
+ * Creates a client side engine.
+ * [fips_required] restricts the credentials to the approved algorithm set (see
+ * acquire_fips_credentials() in engine.c). Builds whose headers lack SCH_CREDENTIALS
+ * cannot restrict: they create an unrestricted engine and log a WARN.
+ */
 extern struct win32crypto_engine_s *new_win32engine(
     const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
