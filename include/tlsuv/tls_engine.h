@@ -474,8 +474,10 @@ struct tls_context_s {
      * The restriction is applied whether or not the library is actually running in
      * FIPS mode; compare the result with TLS_FIPS_ENABLED to find out.
      *
-     * Never NULL. Call it before creating any engine from the context: engines created
-     * earlier are not affected. Idempotent. There is no way to undo it.
+     * Never NULL in the in-tree backends; contexts created by a factory installed with
+     * set_default_tls_impl() may leave it NULL, so check before calling. Call it before
+     * creating any engine from the context: engines created earlier are not affected.
+     * Idempotent. There is no way to undo it.
      *
      * @param ctx TLS context
      * @return the same value fips_status() reports for this context

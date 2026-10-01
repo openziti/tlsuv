@@ -234,8 +234,8 @@ static const int fips_ciphersuites[] = {
 };
 
 static const uint16_t fips_groups[] = {
-    MBEDTLS_SSL_IANA_TLS_GROUP_SECP384R1,
     MBEDTLS_SSL_IANA_TLS_GROUP_SECP256R1,
+    MBEDTLS_SSL_IANA_TLS_GROUP_SECP384R1,
     MBEDTLS_SSL_IANA_TLS_GROUP_NONE,
 };
 
