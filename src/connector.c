@@ -42,6 +42,8 @@
 
 #include <string.h>
 #include <sys/poll.h>
+#include <sys/socket.h>
+#include <netdb.h>
 #include <unistd.h>
 
 #endif
@@ -58,6 +60,8 @@ struct conn_req_s {
     uv_getaddrinfo_t resolve;
     void *ctx;
     tlsuv_connect_cb cb;
+    // ss_family == AF_UNSPEC (the calloc()-zeroed default) means no source address was requested
+    struct sockaddr_storage source_addr;
 
     uv_poll_t polls[max_connect_socks];
     int count;
@@ -66,10 +70,14 @@ struct conn_req_s {
 };
 
 static tlsuv_connector_req direct_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
-                                          const char *host, const char *port, tlsuv_connect_cb cb, void *ctx);
+                                          const char *host, const char *port,
+                                          const struct sockaddr *source_addr,
+                                          tlsuv_connect_cb cb, void *ctx);
 static void direct_cancel(tlsuv_connector_req req);
 static tlsuv_connector_req proxy_connect(uv_loop_t *l, const tlsuv_connector_t *self,
-                                         const char *host, const char *port, tlsuv_connect_cb cb, void *ctx);
+                                         const char *host, const char *port,
+                                         const struct sockaddr *source_addr,
+                                         tlsuv_connect_cb cb, void *ctx);
 static void proxy_cancel(tlsuv_connector_req req);
 
 // prevent freeing default connector
@@ -95,7 +103,7 @@ struct tlsuv_proxy_connector_s {
     int (*set_auth)(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *username, const char *password);
     void (*cancel)(tlsuv_connector_req);
     void (*free)(tlsuv_connector_t *self);
-    
+
     tlsuv_proxy_t type;
     char *host;
     char *port;
@@ -150,6 +158,15 @@ const tlsuv_connector_t* tlsuv_global_connector() {
 
 static void free_conn_req(struct conn_req_s *cr) {
     tlsuv__free(cr);
+}
+
+/** size of the address portion of a sockaddr_storage, based on its family */
+static socklen_t sockaddr_len(const struct sockaddr *addr) {
+    switch (addr->sa_family) {
+        case AF_INET: return sizeof(struct sockaddr_in);
+        case AF_INET6: return sizeof(struct sockaddr_in6);
+        default: return 0;
+    }
 }
 
 static const char *get_name(const struct sockaddr *addr) {
@@ -282,6 +299,15 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
     int count = 0;
     int err = 0;
     while (addr && count < max_connect_socks) {
+        // avoid spending a file descriptor on a candidate that's unusable due to family mismatch
+        if (cr->source_addr.ss_family != AF_UNSPEC && cr->source_addr.ss_family != addr->ai_family) {
+            CR_LOG(TRACE, "source address family does not match destination[%s]; skipping",
+                   get_name(addr->ai_addr));
+            err = EAFNOSUPPORT;
+            addr = addr->ai_next;
+            continue;
+        }
+
         uv_os_sock_t s = tlsuv_socket(addr, 0);
         if (s == INVALID_SOCKET) {
             err = get_error();
@@ -293,6 +319,28 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
                    strerror(err), get_name(addr->ai_addr));
             addr = addr->ai_next;
             continue;
+        }
+
+        if (cr->source_addr.ss_family != AF_UNSPEC) {
+            // SO_REUSEADDR lets this bind succeed past a lingering TIME_WAIT left by an earlier
+            // connection that used this same source address/port (to a different peer)
+            int on = 1;
+            setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *) &on, sizeof(on));
+#ifdef SO_REUSEPORT
+            // SO_REUSEPORT lets multiple candidate sockets in this same loop share the source
+            // address/port concurrently, each connecting to a different destination candidate.
+            // not available on Windows.
+            setsockopt(s, SOL_SOCKET, SO_REUSEPORT, (const char *) &on, sizeof(on));
+#endif
+
+            socklen_t src_len = sockaddr_len((struct sockaddr *) &cr->source_addr);
+            if (bind(s, (struct sockaddr *) &cr->source_addr, src_len) != 0) {
+                err = get_error();
+                CR_LOG(TRACE, "fd[%ld] failed to bind source address: %s", (long)s, strerror(err));
+                closesocket(s);
+                addr = addr->ai_next;
+                continue;
+            }
         }
 
         CR_LOG(TRACE, "fd[%ld] connecting to %s", (long)s, get_name(addr->ai_addr));
@@ -320,11 +368,15 @@ static void on_resolve(uv_getaddrinfo_t *r, int status, struct addrinfo *addrlis
 
 tlsuv_connector_req direct_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
                                    const char *host, const char *port,
+                                   const struct sockaddr *source_addr,
                                    tlsuv_connect_cb cb, void *ctx) {
     assert(cb != NULL);
     struct conn_req_s *cr = tlsuv__calloc(1, sizeof(*cr));
     cr->ctx = ctx;
     cr->cb = cb;
+    if (source_addr != NULL) {
+        memcpy(&cr->source_addr, source_addr, sockaddr_len(source_addr));
+    }
 
     struct addrinfo hints = {
             .ai_socktype = SOCK_STREAM,
@@ -459,7 +511,9 @@ static void on_proxy_connect(uv_os_sock_t fd, int status, void *req) {
 }
 
 tlsuv_connector_req proxy_connect(uv_loop_t *loop, const tlsuv_connector_t *self,
-                                  const char *host, const char *port, tlsuv_connect_cb cb, void *ctx) {
+                                  const char *host, const char *port,
+                                  const struct sockaddr *source_addr,
+                                  tlsuv_connect_cb cb, void *ctx) {
 
     assert(loop);
     assert(self);
@@ -474,7 +528,9 @@ tlsuv_connector_req proxy_connect(uv_loop_t *loop, const tlsuv_connector_t *self
     r->host = tlsuv__strdup(host);
     r->port = tlsuv__strdup(port);
     r->work.loop = loop;
-    r->conn_req = direct_connect(loop, &direct_connector, proxy->host, proxy->port, on_proxy_connect, r);
+    // `source_addr` binds the connection to the proxy itself; the proxy's own connection to
+    // `host` is made on the proxy server and is not something this process can bind.
+    r->conn_req = direct_connect(loop, &direct_connector, proxy->host, proxy->port, source_addr, on_proxy_connect, r);
     return r;
 }
 

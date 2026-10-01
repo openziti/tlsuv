@@ -35,8 +35,14 @@ typedef enum tlsuv_proxy_auth {
 typedef const void* tlsuv_connector_req;
 typedef struct tlsuv_connector_s tlsuv_connector_t;
 typedef void (*tlsuv_connect_cb)(uv_os_sock_t sock, int status, void *ctx);
+// `source_addr`, when not NULL, is the local address the connector should bind() the connecting
+// socket to before connect()ing (its family must match the family of whichever candidate
+// destination address is being tried). it is applied to whichever socket the connector actually
+// opens - e.g. a proxy connector binds the leg it makes to the proxy, not any downstream
+// connection the proxy itself makes to `host`.
 typedef tlsuv_connector_req (*tlsuv_connect)(uv_loop_t *loop, const tlsuv_connector_t *connector,
                                              const char *host, const char *port,
+                                             const struct sockaddr *source_addr,
                                              tlsuv_connect_cb cb, void *ctx);
 
 extern void tlsuv_set_global_connector(const tlsuv_connector_t* connector);

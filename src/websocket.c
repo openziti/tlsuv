@@ -277,7 +277,7 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
     }
 
     const tlsuv_connector_t *c = ws->connector ? ws->connector : tlsuv_global_connector();
-    ws->connect_req = c->connect(ws->loop, c, host, portstr, on_connect, req);
+    ws->connect_req = c->connect(ws->loop, c, host, portstr, NULL, on_connect, req);
     return 0;
 }
 

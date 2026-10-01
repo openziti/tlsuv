@@ -702,7 +702,7 @@ static void process_requests(uv_idle_t *ar) {
         } else {
             CLT_LOG(VERB, "staring connect");
             const tlsuv_connector_t *connector = c->connector ? c->connector : tlsuv_global_connector();
-            c->connect_req = connector->connect(c->proc.loop, connector, c->host, c->port, tr_connect_cb, c);
+            c->connect_req = connector->connect(c->proc.loop, connector, c->host, c->port, NULL, tr_connect_cb, c);
         }
     } else if (c->connected == Connected) {
         CLT_LOG(VERB, "client connected, processing request[%s] state[%d]", c->active->path, c->active->state);
