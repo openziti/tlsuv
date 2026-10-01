@@ -291,6 +291,9 @@ connection. `engine_handshake()` holds peer ciphertext back until the relay exis
   in `engine.c` turns into a `sec_identity_t`.
 - **FIPS**: `fips_status` reports `TLS_FIPS_ENABLED` ("Apple corecrypto"), since
   corecrypto always runs in FIPS mode and has no switch or query API.
+- **`require_fips`**: restricts the cipher suites to TLS 1.3 AES-GCM and TLS 1.2 ECDHE AES-GCM
+  (`sec_protocol_options_append_tls_ciphersuite`). Network.framework has no public API for
+  key-agreement groups or signature algorithms, so those stay at the system defaults.
 
 ## Teardown
 
