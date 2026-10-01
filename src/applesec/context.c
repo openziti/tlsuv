@@ -15,6 +15,7 @@
 
 #include "context.h"
 #include "../keychain.h"
+#include "cert_text.h"
 #include "tlsuv/tls_engine.h"
 #include "tlsuv/tlsuv.h"
 #include "um_debug.h"
@@ -321,27 +322,6 @@ static int pem_to_der(const char* pem, size_t len, uint8_t** der, size_t* derlen
     return 0;
 }
 
-// reads one DER tag, returning its contents
-static bool der_next(const uint8_t** p, const uint8_t* end, uint8_t tag,
-                     const uint8_t** body, size_t* bodylen) {
-    if (end - *p < 2 || **p != tag) return false;
-    (*p)++;
-
-    size_t l = *(*p)++;
-    if (l & 0x80) {
-        size_t n = l & 0x7f;
-        if (n == 0 || n > 4 || (size_t)(end - *p) < n) return false;
-        l = 0;
-        while (n-- > 0) l = (l << 8) | *(*p)++;
-    }
-    if ((size_t)(end - *p) < l) return false;
-
-    *body = *p;
-    *bodylen = l;
-    *p += l;
-    return true;
-}
-
 // writes a DER tag and length, returning the number of bytes written
 static size_t der_write_tl(uint8_t* out, uint8_t tag, size_t len) {
     size_t n = 0;
@@ -382,42 +362,24 @@ static const uint8_t* curve_oid(size_t field, size_t* len) {
     }
 }
 
-// growable byte buffer for building DER and PEM
-struct buf {
-    uint8_t* data;
-    size_t len;
-    size_t cap;
-};
-
-static void buf_put(struct buf* b, const void* bytes, size_t len) {
-    if (b->len + len > b->cap) {
-        size_t cap = b->cap ? b->cap : 256;
-        while (cap < b->len + len) cap *= 2;
-        b->data = tlsuv__realloc(b->data, cap);
-        b->cap = cap;
-    }
-    memcpy(b->data + b->len, bytes, len);
-    b->len += len;
-}
-
 // appends tag + length + content
-static void der_put(struct buf* b, uint8_t tag, const void* content, size_t len) {
+static void der_put(struct tlsuv_buf* b, uint8_t tag, const void* content, size_t len) {
     uint8_t tl[8];
     size_t n = der_write_tl(tl, tag, len);
-    buf_put(b, tl, n);
-    buf_put(b, content, len);
+    tlsuv__buf_put(b, tl, n);
+    tlsuv__buf_put(b, content, len);
 }
 
 // appends a BIT STRING with no unused bits
-static void der_put_bits(struct buf* b, const uint8_t* bits, size_t len) {
+static void der_put_bits(struct tlsuv_buf* b, const uint8_t* bits, size_t len) {
     uint8_t tl[8];
     size_t n = der_write_tl(tl, 0x03, len + 1);
-    buf_put(b, tl, n);
-    buf_put(b, "\0", 1);
-    buf_put(b, bits, len);
+    tlsuv__buf_put(b, tl, n);
+    tlsuv__buf_put(b, "\0", 1);
+    tlsuv__buf_put(b, bits, len);
 }
 
-static void b64_encode_lines(struct buf* out, const uint8_t* in, size_t len) {
+static void b64_encode_lines(struct tlsuv_buf* out, const uint8_t* in, size_t len) {
     static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     int col = 0;
     for (size_t i = 0; i < len; i += 3) {
@@ -426,28 +388,28 @@ static void b64_encode_lines(struct buf* out, const uint8_t* in, size_t len) {
         if (i + 2 < len) v |= in[i + 2];
         char q[4] = {tbl[(v >> 18) & 63], tbl[(v >> 12) & 63],
                      i + 1 < len ? tbl[(v >> 6) & 63] : '=', i + 2 < len ? tbl[v & 63] : '='};
-        buf_put(out, q, 4);
+        tlsuv__buf_put(out, q, 4);
         col += 4;
         if (col == 64) {
-            buf_put(out, "\n", 1);
+            tlsuv__buf_put(out, "\n", 1);
             col = 0;
         }
     }
-    if (col > 0) buf_put(out, "\n", 1);
+    if (col > 0) tlsuv__buf_put(out, "\n", 1);
 }
 
-static void pem_put(struct buf* out, const char* label, const uint8_t* der, size_t len) {
+static void pem_put(struct tlsuv_buf* out, const char* label, const uint8_t* der, size_t len) {
     char line[80];
     snprintf(line, sizeof(line), "-----BEGIN %s-----\n", label);
-    buf_put(out, line, strlen(line));
+    tlsuv__buf_put(out, line, strlen(line));
     b64_encode_lines(out, der, len);
     snprintf(line, sizeof(line), "-----END %s-----\n", label);
-    buf_put(out, line, strlen(line));
+    tlsuv__buf_put(out, line, strlen(line));
 }
 
 // hands a PEM buffer to the caller as a NUL-terminated tlsuv__ allocation
-static int pem_result(struct buf* b, char** pem, size_t* pemlen) {
-    buf_put(b, "", 1); // NUL, not counted
+static int pem_result(struct tlsuv_buf* b, char** pem, size_t* pemlen) {
+    tlsuv__buf_put(b, "", 1); // NUL, not counted
     *pem = (char*) b->data;
     *pemlen = b->len - 1;
     return 0;
@@ -507,7 +469,7 @@ static CFArrayRef certs_from_pkcs7(const uint8_t* der, size_t len) {
     const uint8_t *p = der, *end = der + len;
     const uint8_t* body;
     size_t bodylen;
-    if (!der_next(&p, end, 0x30, &body, &bodylen)) return NULL;
+    if (!tlsuv__der_next(&p, end, 0x30, &body, &bodylen)) return NULL;
 
     const uint8_t *q = body, *qend = body + bodylen;
     if ((size_t)(qend - q) < sizeof(OID_PKCS7_SIGNED_DATA) ||
@@ -518,15 +480,15 @@ static CFArrayRef certs_from_pkcs7(const uint8_t* der, size_t len) {
 
     const uint8_t* item;
     size_t itemlen;
-    if (!der_next(&q, qend, 0xA0, &item, &itemlen)) return NULL; // [0] EXPLICIT
+    if (!tlsuv__der_next(&q, qend, 0xA0, &item, &itemlen)) return NULL; // [0] EXPLICIT
     const uint8_t *r = item, *rend = item + itemlen;
-    if (!der_next(&r, rend, 0x30, &item, &itemlen)) return NULL; // SignedData
+    if (!tlsuv__der_next(&r, rend, 0x30, &item, &itemlen)) return NULL; // SignedData
     r = item;
     rend = item + itemlen;
-    if (!der_next(&r, rend, 0x02, &item, &itemlen)) return NULL; // version
-    if (!der_next(&r, rend, 0x31, &item, &itemlen)) return NULL; // digestAlgorithms
-    if (!der_next(&r, rend, 0x30, &item, &itemlen)) return NULL; // encapContentInfo
-    if (!der_next(&r, rend, 0xA0, &item, &itemlen)) return NULL; // certificates
+    if (!tlsuv__der_next(&r, rend, 0x02, &item, &itemlen)) return NULL; // version
+    if (!tlsuv__der_next(&r, rend, 0x31, &item, &itemlen)) return NULL; // digestAlgorithms
+    if (!tlsuv__der_next(&r, rend, 0x30, &item, &itemlen)) return NULL; // encapContentInfo
+    if (!tlsuv__der_next(&r, rend, 0xA0, &item, &itemlen)) return NULL; // certificates
 
     CFMutableArrayRef certs = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
     const uint8_t *c = item, *cend = item + itemlen;
@@ -534,7 +496,7 @@ static CFArrayRef certs_from_pkcs7(const uint8_t* der, size_t len) {
         const uint8_t* tlv = c;
         const uint8_t* cert;
         size_t certlen;
-        if (!der_next(&c, cend, 0x30, &cert, &certlen) || !add_certificate(certs, tlv, c - tlv)) {
+        if (!tlsuv__der_next(&c, cend, 0x30, &cert, &certlen) || !add_certificate(certs, tlv, c - tlv)) {
             CFRelease(certs);
             return NULL;
         }
@@ -547,7 +509,7 @@ static CFArrayRef certs_from_pkcs7(const uint8_t* der, size_t len) {
 }
 
 // SubjectPublicKeyInfo DER for a public key
-static bool spki_der(SecKeyRef key, enum applesec_key_type type, struct buf* out) {
+static bool spki_der(SecKeyRef key, enum applesec_key_type type, struct tlsuv_buf* out) {
     CFErrorRef err = NULL;
     CFDataRef rep = SecKeyCopyExternalRepresentation(key, &err);
     if (rep == NULL) {
@@ -558,7 +520,7 @@ static bool spki_der(SecKeyRef key, enum applesec_key_type type, struct buf* out
     const uint8_t* raw = CFDataGetBytePtr(rep);
     size_t rawlen = CFDataGetLength(rep);
 
-    struct buf alg = {0}, spki = {0};
+    struct tlsuv_buf alg = {0}, spki = {0};
     bool ok = true;
     if (type == APPLESEC_KEY_EC) {
         // X9.63 uncompressed point: 04 || X || Y
@@ -566,13 +528,13 @@ static bool spki_der(SecKeyRef key, enum applesec_key_type type, struct buf* out
         const uint8_t* oid = curve_oid((rawlen - 1) / 2, &oidlen);
         ok = oid != NULL && raw[0] == 0x04;
         if (ok) {
-            buf_put(&alg, OID_EC_PUBLIC_KEY, sizeof(OID_EC_PUBLIC_KEY));
-            buf_put(&alg, oid, oidlen);
+            tlsuv__buf_put(&alg, OID_EC_PUBLIC_KEY, sizeof(OID_EC_PUBLIC_KEY));
+            tlsuv__buf_put(&alg, oid, oidlen);
         }
     } else if (type == APPLESEC_KEY_RSA) {
         // PKCS#1 RSAPublicKey
-        buf_put(&alg, OID_RSA_ENCRYPTION, sizeof(OID_RSA_ENCRYPTION));
-        buf_put(&alg, "\x05\x00", 2); // NULL parameters
+        tlsuv__buf_put(&alg, OID_RSA_ENCRYPTION, sizeof(OID_RSA_ENCRYPTION));
+        tlsuv__buf_put(&alg, "\x05\x00", 2); // NULL parameters
     } else {
         ok = false;
     }
@@ -593,7 +555,7 @@ static bool spki_der(SecKeyRef key, enum applesec_key_type type, struct buf* out
 // PEM for a private key: PKCS#8 "PRIVATE KEY", as the OpenSSL backend writes it
 //   PrivateKeyInfo ::= SEQUENCE { version 0, privateKeyAlgorithm AlgorithmIdentifier,
 //                                 privateKey OCTET STRING }
-static bool private_key_pem(SecKeyRef key, enum applesec_key_type type, struct buf* pem) {
+static bool private_key_pem(SecKeyRef key, enum applesec_key_type type, struct tlsuv_buf* pem) {
     CFErrorRef err = NULL;
     CFDataRef rep = SecKeyCopyExternalRepresentation(key, &err);
     if (rep == NULL) {
@@ -604,14 +566,14 @@ static bool private_key_pem(SecKeyRef key, enum applesec_key_type type, struct b
     const uint8_t* raw = CFDataGetBytePtr(rep);
     size_t rawlen = CFDataGetLength(rep);
 
-    struct buf alg = {0}, inner = {0}, body = {0}, der = {0};
+    struct tlsuv_buf alg = {0}, inner = {0}, body = {0}, der = {0};
     bool ok = false;
     if (type == APPLESEC_KEY_RSA) {
         // AlgorithmIdentifier { rsaEncryption, NULL }; privateKey is the PKCS#1
         // RSAPrivateKey Security exports as is
-        buf_put(&alg, OID_RSA_ENCRYPTION, sizeof(OID_RSA_ENCRYPTION));
-        buf_put(&alg, "\x05\x00", 2);
-        buf_put(&inner, raw, rawlen);
+        tlsuv__buf_put(&alg, OID_RSA_ENCRYPTION, sizeof(OID_RSA_ENCRYPTION));
+        tlsuv__buf_put(&alg, "\x05\x00", 2);
+        tlsuv__buf_put(&inner, raw, rawlen);
         ok = true;
     } else if (type == APPLESEC_KEY_EC && rawlen > 1 && raw[0] == 0x04 && (rawlen - 1) % 3 == 0) {
         // X9.63 private: 04 || X || Y || K
@@ -624,12 +586,12 @@ static bool private_key_pem(SecKeyRef key, enum applesec_key_type type, struct b
             //                               [1] publicKey BIT STRING }
             // (the curve is in the algorithm identifier, so ECPrivateKey leaves out
             // [0] parameters; the public key is kept, load_key() needs it)
-            buf_put(&alg, OID_EC_PUBLIC_KEY, sizeof(OID_EC_PUBLIC_KEY));
-            buf_put(&alg, oid, oidlen);
+            tlsuv__buf_put(&alg, OID_EC_PUBLIC_KEY, sizeof(OID_EC_PUBLIC_KEY));
+            tlsuv__buf_put(&alg, oid, oidlen);
 
-            struct buf pub = {0}, ec = {0};
+            struct tlsuv_buf pub = {0}, ec = {0};
             der_put_bits(&pub, raw, 1 + 2 * field);
-            buf_put(&ec, "\x02\x01\x01", 3);
+            tlsuv__buf_put(&ec, "\x02\x01\x01", 3);
             der_put(&ec, 0x04, raw + 1 + 2 * field, field);
             der_put(&ec, 0xA1, pub.data, pub.len);
             der_put(&inner, 0x30, ec.data, ec.len);
@@ -639,7 +601,7 @@ static bool private_key_pem(SecKeyRef key, enum applesec_key_type type, struct b
         }
     }
     if (ok) {
-        buf_put(&body, "\x02\x01\x00", 3);
+        tlsuv__buf_put(&body, "\x02\x01\x00", 3);
         der_put(&body, 0x30, alg.data, alg.len);
         der_put(&body, 0x04, inner.data, inner.len);
         der_put(&der, 0x30, body.data, body.len);
@@ -685,23 +647,23 @@ static bool cert_not_after(const uint8_t* der, size_t len, time_t* t) {
     const uint8_t *p = der, *end = der + len;
     const uint8_t* item;
     size_t itemlen;
-    if (!der_next(&p, end, 0x30, &item, &itemlen)) return false; // Certificate
+    if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) return false; // Certificate
     p = item;
     end = item + itemlen;
-    if (!der_next(&p, end, 0x30, &item, &itemlen)) return false; // tbsCertificate
+    if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) return false; // tbsCertificate
     p = item;
     end = item + itemlen;
-    if (p < end && *p == 0xA0 && !der_next(&p, end, 0xA0, &item, &itemlen)) return false; // version
-    if (!der_next(&p, end, 0x02, &item, &itemlen)) return false; // serialNumber
-    if (!der_next(&p, end, 0x30, &item, &itemlen)) return false; // signature
-    if (!der_next(&p, end, 0x30, &item, &itemlen)) return false; // issuer
-    if (!der_next(&p, end, 0x30, &item, &itemlen)) return false; // validity
+    if (p < end && *p == 0xA0 && !tlsuv__der_next(&p, end, 0xA0, &item, &itemlen)) return false; // version
+    if (!tlsuv__der_next(&p, end, 0x02, &item, &itemlen)) return false; // serialNumber
+    if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) return false; // signature
+    if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) return false; // issuer
+    if (!tlsuv__der_next(&p, end, 0x30, &item, &itemlen)) return false; // validity
     p = item;
     end = item + itemlen;
-    if (p >= end || !der_next(&p, end, *p, &item, &itemlen)) return false; // notBefore
+    if (p >= end || !tlsuv__der_next(&p, end, *p, &item, &itemlen)) return false; // notBefore
     if (p >= end) return false;
     uint8_t tag = *p;
-    if (!der_next(&p, end, tag, &item, &itemlen)) return false; // notAfter
+    if (!tlsuv__der_next(&p, end, tag, &item, &itemlen)) return false; // notAfter
     return parse_asn1_time(tag, item, itemlen, t);
 }
 
@@ -725,13 +687,13 @@ static CFDataRef unwrap_pkcs8_ec(const uint8_t* der, size_t derlen) {
     const uint8_t *p = der, *end = der + derlen;
     const uint8_t* seq;
     size_t seqlen;
-    if (!der_next(&p, end, 0x30, &seq, &seqlen)) return NULL;
+    if (!tlsuv__der_next(&p, end, 0x30, &seq, &seqlen)) return NULL;
 
     const uint8_t *q = seq, *qend = seq + seqlen;
     const uint8_t* item;
     size_t itemlen;
-    if (!der_next(&q, qend, 0x02, &item, &itemlen)) return NULL; // version
-    if (!der_next(&q, qend, 0x30, &item, &itemlen)) return NULL; // algorithm
+    if (!tlsuv__der_next(&q, qend, 0x02, &item, &itemlen)) return NULL; // version
+    if (!tlsuv__der_next(&q, qend, 0x30, &item, &itemlen)) return NULL; // algorithm
     if (itemlen < sizeof(OID_EC_PUBKEY) || memcmp(item, OID_EC_PUBKEY, sizeof(OID_EC_PUBKEY)) != 0) {
         return NULL; // not an EC key
     }
@@ -741,23 +703,23 @@ static CFDataRef unwrap_pkcs8_ec(const uint8_t* der, size_t derlen) {
     const uint8_t* curve_tlv = a;
     const uint8_t* curve;
     size_t curvelen;
-    if (!der_next(&a, aend, 0x06, &curve, &curvelen)) return NULL;
+    if (!tlsuv__der_next(&a, aend, 0x06, &curve, &curvelen)) return NULL;
     size_t curve_tlv_len = a - curve_tlv;
 
     const uint8_t* inner;
     size_t innerlen;
-    if (!der_next(&q, qend, 0x04, &inner, &innerlen)) return NULL; // privateKey
+    if (!tlsuv__der_next(&q, qend, 0x04, &inner, &innerlen)) return NULL; // privateKey
 
     // walk the wrapped ECPrivateKey: version, privateKey, then whatever follows
     const uint8_t *r = inner, *rend = inner + innerlen;
     const uint8_t* iseq;
     size_t iseqlen;
-    if (!der_next(&r, rend, 0x30, &iseq, &iseqlen)) return NULL;
+    if (!tlsuv__der_next(&r, rend, 0x30, &iseq, &iseqlen)) return NULL;
 
     const uint8_t *s = iseq, *send = iseq + iseqlen;
     const uint8_t* head = s;
-    if (!der_next(&s, send, 0x02, &item, &itemlen)) return NULL; // version
-    if (!der_next(&s, send, 0x04, &item, &itemlen)) return NULL; // privateKey
+    if (!tlsuv__der_next(&s, send, 0x02, &item, &itemlen)) return NULL; // version
+    if (!tlsuv__der_next(&s, send, 0x04, &item, &itemlen)) return NULL; // privateKey
     size_t headlen = s - head;
     const uint8_t* tail = s;
     size_t taillen = send - s;
@@ -800,28 +762,28 @@ static CFDataRef sec1_to_x963(const uint8_t* sec1, size_t len) {
     const uint8_t *p = sec1, *end = sec1 + len;
     const uint8_t* seq;
     size_t seqlen;
-    if (!der_next(&p, end, 0x30, &seq, &seqlen)) return NULL;
+    if (!tlsuv__der_next(&p, end, 0x30, &seq, &seqlen)) return NULL;
 
     const uint8_t *q = seq, *qend = seq + seqlen;
     const uint8_t* item;
     size_t itemlen;
-    if (!der_next(&q, qend, 0x02, &item, &itemlen)) return NULL; // version
+    if (!tlsuv__der_next(&q, qend, 0x02, &item, &itemlen)) return NULL; // version
 
     const uint8_t* priv;
     size_t privlen;
-    if (!der_next(&q, qend, 0x04, &priv, &privlen)) return NULL; // privateKey
+    if (!tlsuv__der_next(&q, qend, 0x04, &priv, &privlen)) return NULL; // privateKey
 
     // skip the optional [0] parameters to reach [1] publicKey
     const uint8_t* pub = NULL;
     size_t publen = 0;
     while (q < qend) {
         const uint8_t tag = *q;
-        if (!der_next(&q, qend, tag, &item, &itemlen)) break;
+        if (!tlsuv__der_next(&q, qend, tag, &item, &itemlen)) break;
         if (tag == 0xA1) {
             const uint8_t *b = item, *bend = item + itemlen;
             const uint8_t* bits;
             size_t bitslen;
-            if (der_next(&b, bend, 0x03, &bits, &bitslen) && bitslen > 1 && bits[0] == 0) {
+            if (tlsuv__der_next(&b, bend, 0x03, &bits, &bitslen) && bitslen > 1 && bits[0] == 0) {
                 pub = bits + 1; // drop the unused-bits count
                 publen = bitslen - 1;
             }
@@ -857,23 +819,23 @@ static CFDataRef key_data_for(const uint8_t* der, size_t derlen, enum applesec_k
     const uint8_t *p = der, *end = der + derlen;
     const uint8_t* seq;
     size_t seqlen;
-    if (!der_next(&p, end, 0x30, &seq, &seqlen)) return NULL;
+    if (!tlsuv__der_next(&p, end, 0x30, &seq, &seqlen)) return NULL;
 
     const uint8_t *q = seq, *qend = seq + seqlen;
     const uint8_t* item;
     size_t itemlen;
-    if (!der_next(&q, qend, 0x02, &item, &itemlen)) return NULL; // version
+    if (!tlsuv__der_next(&q, qend, 0x02, &item, &itemlen)) return NULL; // version
     if (q >= qend) return NULL;
 
     // PKCS#8 PrivateKeyInfo: the version is followed by an AlgorithmIdentifier
     if (*q == 0x30) {
         const uint8_t* alg;
         size_t alglen;
-        if (!der_next(&q, qend, 0x30, &alg, &alglen)) return NULL;
+        if (!tlsuv__der_next(&q, qend, 0x30, &alg, &alglen)) return NULL;
 
         const uint8_t* inner;
         size_t innerlen;
-        if (!der_next(&q, qend, 0x04, &inner, &innerlen)) return NULL;
+        if (!tlsuv__der_next(&q, qend, 0x04, &inner, &innerlen)) return NULL;
 
         if (alglen >= sizeof(OID_RSA_ENC) && memcmp(alg, OID_RSA_ENC, sizeof(OID_RSA_ENC)) == 0) {
             *type = APPLESEC_KEY_RSA; // privateKey is a PKCS#1 RSAPrivateKey
@@ -1099,7 +1061,7 @@ static int privkey_to_pem(struct tlsuv_private_key_s* pk, char** pem, size_t* pe
     }
 
     // always PKCS#8, whatever format the key was loaded from
-    struct buf out = {0};
+    struct tlsuv_buf out = {0};
     if (!private_key_pem(key->key, key->key_type, &out)) {
         tlsuv__free(out.data);
         return -1;
@@ -1179,12 +1141,12 @@ static int pubkey_to_pem(struct tlsuv_public_key_s* pk, char** pem, size_t* peml
     struct applesec_pub_key* key = container_of(pk, struct applesec_pub_key, api);
     enum applesec_key_type type = key->key_type != APPLESEC_KEY_UNKNOWN ? key->key_type : key_type_of(key->key);
 
-    struct buf der = {0};
+    struct tlsuv_buf der = {0};
     if (!spki_der(key->key, type, &der)) {
         tlsuv__free(der.data);
         return -1;
     }
-    struct buf out = {0};
+    struct tlsuv_buf out = {0};
     pem_put(&out, "PUBLIC KEY", der.data, der.len);
     tlsuv__free(der.data);
     return pem_result(&out, pem, pemlen);
@@ -1210,6 +1172,7 @@ static void cert_free(struct tlsuv_certificate_s* c) {
 
     struct applesec_cert* cert = container_of(c, struct applesec_cert, api);
     if (cert->chain) CFRelease(cert->chain);
+    tlsuv__free(cert->text);
     tlsuv__free(cert);
 }
 
@@ -1217,7 +1180,7 @@ static int cert_to_pem(const struct tlsuv_certificate_s* c, int full, char** pem
     struct applesec_cert* cert = container_of(c, struct applesec_cert, api);
     CFIndex count = full ? CFArrayGetCount(cert->chain) : 1;
 
-    struct buf out = {0};
+    struct tlsuv_buf out = {0};
     for (CFIndex i = 0; i < count; i++) {
         SecCertificateRef crt = (SecCertificateRef) CFArrayGetValueAtIndex(cert->chain, i);
         CFDataRef der = SecCertificateCopyData(crt);
@@ -1243,6 +1206,20 @@ static int cert_expiration(const struct tlsuv_certificate_s* c, struct tm* exp) 
     return 0;
 }
 
+static const char* cert_text(const struct tlsuv_certificate_s* c) {
+    struct applesec_cert* cert = container_of(c, struct applesec_cert, api);
+    if (cert->text) return cert->text;
+
+    SecCertificateRef leaf = (SecCertificateRef)CFArrayGetValueAtIndex(cert->chain, 0);
+    CFDataRef der = SecCertificateCopyData(leaf);
+    cert->text = tlsuv__cert_der_to_text(CFDataGetBytePtr(der), CFDataGetLength(der));
+    CFRelease(der);
+    if (cert->text == NULL) {
+        UM_LOG(WARN, "failed to read certificate");
+    }
+    return cert->text;
+}
+
 static int cert_verify(const struct tlsuv_certificate_s* c, enum hash_algo algo,
                        const char* data, size_t datalen,
                        const char* sig, size_t siglen) {
@@ -1264,8 +1241,7 @@ static struct tlsuv_certificate_s sec_cert_api = {
     .free = cert_free,
     .to_pem = cert_to_pem,
     .get_expiration = cert_expiration,
-    // Security has no X509_print_ex equivalent
-    .get_text = NULL,
+    .get_text = cert_text,
     .verify = cert_verify,
 };
 
@@ -1425,7 +1401,7 @@ static int make_identity(struct applesec_ctx* c, struct applesec_priv_key* key,
     // encode a generated key (PKCS#8, which import_key() converts as needed)
     CFDataRef pem = key->pem;
     if (pem == NULL) {
-        struct buf out = {0};
+        struct tlsuv_buf out = {0};
         if (private_key_pem(key->key, key->key_type, &out)) {
             pem = CFDataCreate(kCFAllocatorDefault, out.data, (CFIndex)out.len);
         }
@@ -1737,38 +1713,7 @@ static int remove_keychain_key(const char* name) {
 
 // ------------------------------------------------------------------ CSR (PKCS#10)
 
-// subject attribute names as OpenSSL accepts them (short and long), with the
-// string type OpenSSL's defaults produce for each
-static const struct {
-    const char* sn;
-    const char* ln;
-    const char* oid;
-    uint8_t str_tag;
-} dn_attrs[] = {
-#define PRINTABLE 0x13
-#define IA5 0x16
-#define UTF8 0x0C
-    {"CN", "commonName", "2.5.4.3", UTF8},
-    {"SN", "surname", "2.5.4.4", UTF8},
-    {"serialNumber", "serialNumber", "2.5.4.5", PRINTABLE},
-    {"C", "countryName", "2.5.4.6", PRINTABLE},
-    {"L", "localityName", "2.5.4.7", UTF8},
-    {"ST", "stateOrProvinceName", "2.5.4.8", UTF8},
-    {"street", "streetAddress", "2.5.4.9", UTF8},
-    {"O", "organizationName", "2.5.4.10", UTF8},
-    {"OU", "organizationalUnitName", "2.5.4.11", UTF8},
-    {"title", "title", "2.5.4.12", UTF8},
-    {"GN", "givenName", "2.5.4.42", UTF8},
-    {"dnQualifier", "dnQualifier", "2.5.4.46", PRINTABLE},
-    {"emailAddress", "emailAddress", "1.2.840.113549.1.9.1", IA5},
-    {"UID", "userId", "0.9.2342.19200300.100.1.1", UTF8},
-    {"DC", "domainComponent", "0.9.2342.19200300.100.1.25", IA5},
-#undef PRINTABLE
-#undef IA5
-#undef UTF8
-};
-
-static void der_put_base128(struct buf* b, unsigned long v) {
+static void der_put_base128(struct tlsuv_buf* b, unsigned long v) {
     uint8_t tmp[10];
     size_t n = 0;
     do {
@@ -1777,12 +1722,12 @@ static void der_put_base128(struct buf* b, unsigned long v) {
         v >>= 7;
     } while (v != 0);
     while (n > 0) {
-        buf_put(b, &tmp[--n], 1);
+        tlsuv__buf_put(b, &tmp[--n], 1);
     }
 }
 
 // dotted decimal ("2.5.4.3") to a DER OBJECT IDENTIFIER
-static bool der_put_oid(struct buf* out, const char* dotted) {
+static bool der_put_oid(struct tlsuv_buf* out, const char* dotted) {
     unsigned long arcs[32];
     size_t n = 0;
     const char* p = dotted;
@@ -1796,7 +1741,7 @@ static bool der_put_oid(struct buf* out, const char* dotted) {
     }
     if (n < 2 || arcs[0] > 2 || (arcs[0] < 2 && arcs[1] > 39)) return false;
 
-    struct buf body = {0};
+    struct tlsuv_buf body = {0};
     der_put_base128(&body, arcs[0] * 40 + arcs[1]);
     for (size_t i = 2; i < n; i++) {
         der_put_base128(&body, arcs[i]);
@@ -1807,18 +1752,18 @@ static bool der_put_oid(struct buf* out, const char* dotted) {
 }
 
 // RelativeDistinguishedName ::= SET { SEQUENCE { type OID, value string } }
-static bool der_put_rdn(struct buf* name, const char* id, const char* val) {
+static bool der_put_rdn(struct tlsuv_buf* name, const char* id, const char* val) {
     const char* oid = NULL;
     uint8_t tag = 0x0C;
-    for (size_t i = 0; i < sizeof(dn_attrs) / sizeof(dn_attrs[0]); i++) {
-        if (strcmp(id, dn_attrs[i].sn) == 0 || strcasecmp(id, dn_attrs[i].ln) == 0) {
-            oid = dn_attrs[i].oid;
-            tag = dn_attrs[i].str_tag;
+    for (size_t i = 0; i < tlsuv__dn_attrs_count; i++) {
+        if (strcmp(id, tlsuv__dn_attrs[i].sn) == 0 || strcasecmp(id, tlsuv__dn_attrs[i].ln) == 0) {
+            oid = tlsuv__dn_attrs[i].oid;
+            tag = tlsuv__dn_attrs[i].str_tag;
             break;
         }
     }
 
-    struct buf atv = {0}, seq = {0};
+    struct tlsuv_buf atv = {0}, seq = {0};
     bool ok = der_put_oid(&atv, oid ? oid : id); // or an OID given in dotted form
     if (ok) {
         der_put(&atv, tag, val, strlen(val));
@@ -1841,7 +1786,7 @@ static bool der_put_rdn(struct buf* name, const char* id, const char* val) {
 // signed with SHA-256, as the OpenSSL backend does
 static int generate_csr(tlsuv_private_key_t pk, char** pem, size_t* pemlen, ...) {
     struct applesec_priv_key* key = container_of(pk, struct applesec_priv_key, api);
-    struct buf rdns = {0}, info = {0}, cri = {0}, alg = {0}, body = {0}, der = {0}, out = {0};
+    struct tlsuv_buf rdns = {0}, info = {0}, cri = {0}, alg = {0}, body = {0}, der = {0}, out = {0};
     CFDataRef sig = NULL;
     int rc = -1;
 
@@ -1865,7 +1810,7 @@ static int generate_csr(tlsuv_private_key_t pk, char** pem, size_t* pemlen, ...)
     } else if (key->key_type == APPLESEC_KEY_RSA) {
         sig_alg = kSecKeyAlgorithmRSASignatureMessagePKCS1v15SHA256;
         der_put_oid(&alg, "1.2.840.113549.1.1.11"); // sha256WithRSAEncryption
-        buf_put(&alg, "\x05\x00", 2);
+        tlsuv__buf_put(&alg, "\x05\x00", 2);
     } else {
         UM_LOG(WARN, "unsupported private key type");
         goto done;
@@ -1876,12 +1821,12 @@ static int generate_csr(tlsuv_private_key_t pk, char** pem, size_t* pemlen, ...)
         UM_LOG(WARN, "failed to derive public key");
         goto done;
     }
-    buf_put(&info, "\x02\x01\x00", 3);
+    tlsuv__buf_put(&info, "\x02\x01\x00", 3);
     der_put(&info, 0x30, rdns.data, rdns.len);
     ok = spki_der(pub, key->key_type, &info);
     CFRelease(pub);
     if (!ok) goto done;
-    buf_put(&info, "\xA0\x00", 2);
+    tlsuv__buf_put(&info, "\xA0\x00", 2);
     der_put(&cri, 0x30, info.data, info.len);
 
     CFDataRef tbs = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, cri.data, (CFIndex)cri.len,
@@ -1895,7 +1840,7 @@ static int generate_csr(tlsuv_private_key_t pk, char** pem, size_t* pemlen, ...)
         goto done;
     }
 
-    buf_put(&body, cri.data, cri.len);
+    tlsuv__buf_put(&body, cri.data, cri.len);
     der_put(&body, 0x30, alg.data, alg.len);
     der_put_bits(&body, CFDataGetBytePtr(sig), CFDataGetLength(sig));
     der_put(&der, 0x30, body.data, body.len);
