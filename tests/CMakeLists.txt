@@ -119,6 +119,8 @@ if (TARGET OpenSSL::SSL)
 elseif (TLSUV_TLSLIB STREQUAL "boringssl")
     # tlsuv already links BoringSSL's libssl
     target_compile_definitions(all_tests PRIVATE TEST_OPENSSL_PEER)
+else ()
+    message(WARNING "tests: no OpenSSL found, the raw-peer TLS tests (server_tests.cpp) are disabled")
 endif ()
 
 target_include_directories(all_tests PRIVATE ../src)
