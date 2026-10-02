@@ -56,9 +56,9 @@ and is listed last as the least preferred choice.
 | ALPN | ✅ | ✅ | ✅ | ✅ | ✅ |
 | FIPS status reporting | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Custom certificate verification callback | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Replace the CA bundle (`set_ca_bundle`) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Replace the CA bundle (`set_ca_bundle`) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Accept partial certificate chains | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Peer certificate after handshake (`get_peer_cert`) | ✅ [^1] | ✅ [^1] | ✅ | ✅ | ❌ |
+| Peer certificate after handshake (`get_peer_cert`) | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Key generation, CSR generation | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [PKCS#11](https://en.wikipedia.org/wiki/PKCS_11) keys | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Keys in the platform keychain (`*_keychain_key`) | ✅ [^2] | ✅ [^2] | ✅ [^3] | ❌ | ❌ |
@@ -67,17 +67,23 @@ and is listed last as the least preferred choice.
 | Client certificate and key (`set_own_cert`) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Server** | | | | | |
 | Server connections (`new_server_engine`) | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Server asks for a client certificate | ❌ | ❌ | ✅ [^4] | ❌ | ❌ |
+| Server requires a client certificate | ✅ [^1] | ✅ [^1] | ✅ [^1] | ✅ [^1] | ❌ |
+| Server sends the acceptable client CAs hint | ✅ [^4] | ✅ [^4] | ❌ [^5] | ❌ [^6] | ❌ |
 
-[^1]: Client connections only: server engines of this backend do not request client certificates, so they
-have no peer certificate and leave `get_peer_cert` `NULL`.
+[^1]: Only when the context has an explicit CA bundle (`set_ca_bundle`) or a verification callback
+(`set_cert_verify`). The system CA store is never used for client certificates, and a client that presents none
+(or an untrusted one) fails the handshake. The callback takes precedence over the bundle.
 [^2]: Needs a keychain: the built-in one on Apple platforms, or one the application registers with
 `tlsuv_set_keychain()` (for example one backed by the Android Keystore). Register it before creating a TLS context,
 contexts created earlier have no keychain support. Generated keychain keys are EC. RSA keychain keys sign with
 PKCS#1 v1.5 (TLS 1.2) or RSA-PSS (TLS 1.3); for RSA-PSS the keychain is asked to sign the already padded block
 (`RSA_NO_PADDING`), so it has to support that.
 [^3]: Windows CNG key storage, no registration needed.
-[^4]: Only when a certificate verification callback is set, and the client may still connect without one.
+[^4]: The CA names of the bundle, so clients can pick a matching identity. Only with a CA bundle (not with a
+verification callback alone). It is a hint: validation never depends on it.
+[^5]: Left to Schannel: whether and which issuers it sends is a system-wide setting (`SendTrustedIssuerList`,
+off by default since Windows Server 2012), not controlled by the bundle.
+[^6]: Network.framework has no public API for it.
 
 Every member of the [TLS engine interfaces](include/tlsuv/tls_engine.h) that a backend does not provide is `NULL`,
 so check before calling.
