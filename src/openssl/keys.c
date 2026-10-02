@@ -612,14 +612,22 @@ int load_kc_key(EVP_PKEY **pkey, keychain_key_t k) {
         pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
         p = (uint8_t *)pub;
         RSA *rsa = d2i_RSAPublicKey(NULL, &p, (long)publen);
+        if (rsa == NULL) {
+            UM_LOG(ERR, "failed to parse RSA public key from keychain");
+            rc = -1;
+            goto error;
+        }
         RSA_set_ex_data(rsa, kc_rsa_idx, k);
         RSA_set_method(rsa, ext_rsa_method);
 
         *pkey = EVP_PKEY_new();
         int r = EVP_PKEY_set1_RSA(*pkey, rsa);
+        RSA_free(rsa); // decrease refcount: the EVP_PKEY holds its own
         if(r != 1) {
             unsigned long err = ERR_get_error();
             UM_LOG(ERR, "failed to set RSA pubkey for key id[%s] label[%s]: %ld/%s", "id", "label", err, ERR_lib_error_string(err));
+            EVP_PKEY_free(*pkey);
+            *pkey = NULL;
             rc = -1;
             goto error;
         }
