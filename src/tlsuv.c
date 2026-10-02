@@ -86,7 +86,7 @@ struct tlsuv_write_s {
 };
 
 static void init_default_tls() {
-    DEFAULT_TLS = default_tls_context(NULL, 0);
+    DEFAULT_TLS = default_tls_context();
     atexit(free_default_tls);
 }
 

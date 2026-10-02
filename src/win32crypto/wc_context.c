@@ -55,13 +55,9 @@ const char* win32_error(DWORD code) {
     return msg;
 }
 
-tls_context * new_win32crypto_ctx(const char* ca, size_t ca_len) {
+tls_context * new_win32crypto_ctx(void) {
     struct win32tls *ctx = tlsuv__calloc(1, sizeof(*ctx));
     ctx->api = win32tls_context_api;
-    if (ca && ca_len > 0) {
-        ctx->api.set_ca_bundle((tls_context *) ctx, ca, ca_len);
-    }
-
     return (tls_context*)ctx;
 }
 
@@ -71,6 +67,9 @@ static void tls_free_ctx (tls_context *ctx) {
         tlsuv__free(c->alpn_protocols);
     }
 
+    if (c->ca_bundle != NULL) {
+        CertCloseStore(c->ca_bundle, 0);
+    }
     tlsuv__free(c);
 }
 
@@ -234,11 +233,19 @@ static void tls_set_cert_verify(
 static int set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len) {
     struct win32tls *c = (struct win32tls*)ctx;
 
-    HCERTSTORE store;
-    if (load_cert_internal(&store, NULL, ca, ca_len) || store == INVALID_HANDLE_VALUE) {
-        return -1;
+    HCERTSTORE store = NULL;
+    // NULL (or empty) bundle means system CA store
+    if (ca != NULL && ca_len > 0) {
+        // a bad bundle leaves the current one in place
+        if (load_cert_internal(&store, NULL, ca, ca_len) || store == INVALID_HANDLE_VALUE) {
+            return -1;
+        }
     }
 
+    // engines hold their own reference to the store
+    if (c->ca_bundle != NULL) {
+        CertCloseStore(c->ca_bundle, 0);
+    }
     c->ca_bundle = store;
     return 0;
 }

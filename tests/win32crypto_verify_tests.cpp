@@ -24,6 +24,7 @@
 #include <catch2/catch_all.hpp>
 
 #include <tlsuv/tls_engine.h>
+#include "fixtures.h"
 
 #include <cstring>
 #include <deque>
@@ -184,7 +185,8 @@ tls_handshake_state client_handshake_with(const std::string &bundle_pem,
                                           const std::string &server_cert_pem,
                                           const char *host = "localhost",
                                           const int *verify_result = nullptr) {
-    tls_context *srv = default_tls_context(nullptr, 0);
+    tls_context *srv = default_tls_context();
+    DEFER { srv->free_ctx(srv); };
     tlsuv_private_key_t key = nullptr;
     tlsuv_certificate_t cert = nullptr;
     REQUIRE(srv->load_key(&key, server_key_pem.c_str(), server_key_pem.size()) == 0);
@@ -193,7 +195,9 @@ tls_handshake_state client_handshake_with(const std::string &bundle_pem,
 
     // a CA bundle and, unless verify_result is set, no verify callback: the backend's own chain
     // check runs
-    tls_context *clt = default_tls_context(bundle_pem.c_str(), bundle_pem.size());
+    tls_context *clt = default_tls_context();
+    DEFER { clt->free_ctx(clt); };
+    REQUIRE(clt->set_ca_bundle(clt, bundle_pem.c_str(), bundle_pem.size()) == 0);
     if (verify_result) {
         clt->set_cert_verify(clt, verify_returns, (void *) verify_result);
     }
@@ -216,13 +220,11 @@ tls_handshake_state client_handshake_with(const std::string &bundle_pem,
     srv_eng->free(srv_eng);
     cert->free(cert);
     key->free(key);
-    clt->free_ctx(clt);
-    srv->free_ctx(srv);
     return cs;
 }
 
 bool is_win32crypto() {
-    tls_context *probe = default_tls_context(nullptr, 0);
+    tls_context *probe = default_tls_context();
     bool w = strstr(probe->version(), "win32crypto") != nullptr;
     probe->free_ctx(probe);
     return w;
@@ -434,13 +436,17 @@ TEST_CASE("win32crypto server rejects a client cert the trusted CA did not sign"
     std::string srv_cert_pem = to_pem(srv_cert.get());
 
     auto run = [&](const std::string &clt_key_pem, const std::string &clt_cert_pem) -> tls_handshake_state {
-        tls_context *srv = default_tls_context(ca.bundle.c_str(), ca.bundle.size());
+        tls_context *srv = default_tls_context();
+        DEFER { srv->free_ctx(srv); };
+        REQUIRE(srv->set_ca_bundle(srv, ca.bundle.c_str(), ca.bundle.size()) == 0);
         tlsuv_private_key_t sk = nullptr; tlsuv_certificate_t sc = nullptr;
         REQUIRE(srv->load_key(&sk, srv_key_pem.c_str(), srv_key_pem.size()) == 0);
         REQUIRE(srv->load_cert(&sc, srv_cert_pem.c_str(), srv_cert_pem.size()) == 0);
         REQUIRE(srv->set_own_cert(srv, sk, sc) == 0);
 
-        tls_context *clt = default_tls_context(ca.bundle.c_str(), ca.bundle.size());
+        tls_context *clt = default_tls_context();
+        DEFER { clt->free_ctx(clt); };
+        REQUIRE(clt->set_ca_bundle(clt, ca.bundle.c_str(), ca.bundle.size()) == 0);
         tlsuv_private_key_t ck = nullptr; tlsuv_certificate_t cc = nullptr;
         REQUIRE(clt->load_key(&ck, clt_key_pem.c_str(), clt_key_pem.size()) == 0);
         REQUIRE(clt->load_cert(&cc, clt_cert_pem.c_str(), clt_cert_pem.size()) == 0);
@@ -462,7 +468,6 @@ TEST_CASE("win32crypto server rejects a client cert the trusted CA did not sign"
 
         clt_eng->free(clt_eng); srv_eng->free(srv_eng);
         cc->free(cc); ck->free(ck); sc->free(sc); sk->free(sk);
-        clt->free_ctx(clt); srv->free_ctx(srv);
         return ss;
     };
 

@@ -81,6 +81,8 @@ static void engine_free(tlsuv_engine_t e) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)e;
     tlsuv__free(engine->hostname);
     tlsuv__free(engine->protocols);
+    if (engine->ca != NULL && engine->ca != INVALID_HANDLE_VALUE)
+        CertCloseStore(engine->ca, 0);
     if (SecIsValidHandle(&engine->ctxt_handle))
         DeleteSecurityContext(&engine->ctxt_handle);
     if (SecIsValidHandle(&engine->cred_handle))
@@ -947,11 +949,14 @@ static struct win32crypto_engine_s* engine_alloc(
     SecInvalidateHandle(&engine->cred_handle);
     SecInvalidateHandle(&engine->ctxt_handle);
 
-    engine->ca = ca;
+    // the engine holds its own reference: the context may replace its bundle while engines are alive
+    if (ca != NULL && ca != INVALID_HANDLE_VALUE) {
+        engine->ca = CertDuplicateStore(ca);
+    }
     if (cert_verify_f) {
         engine->cert_verify_f = cert_verify_f;
         engine->verify_ctx = verify_ctx;
-    } else if (ca != NULL && ca != INVALID_HANDLE_VALUE) {
+    } else if (engine->ca != NULL) {
         engine->cert_verify_f = verify_cert_ca;
         engine->verify_ctx = engine;
     }

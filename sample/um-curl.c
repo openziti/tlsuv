@@ -98,7 +98,11 @@ int main(int argc, char **argv) {
     tlsuv_private_key_t tlsKey = NULL;
     tlsuv_certificate_t tlsCert = NULL;
     if (CA || (cert && key)) {
-        tls = default_tls_context(CA, CA ? strlen(CA) + 1 : 0);
+        tls = default_tls_context();
+        if (CA && tls->set_ca_bundle(tls, CA, strlen(CA) + 1) != 0) {
+            fprintf(stderr, "failed to load CA bundle\n");
+            exit(1);
+        }
 
         if (cert && key) {
             tls->load_key(&tlsKey, key, strlen(key));

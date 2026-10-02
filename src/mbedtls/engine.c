@@ -107,6 +107,7 @@ struct mbedtls_engine {
 
 static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** protos, int len);
 static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certificate_t cert);
+static int mbedtls_set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len);
 
 tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host);
 
@@ -176,6 +177,7 @@ static tls_context mbedtls_context_api = {
         .strerror = mbedtls_error,
         .new_engine = new_mbedtls_engine,
         .free_ctx = mbedtls_free_ctx,
+        .set_ca_bundle = mbedtls_set_ca_bundle,
         .set_own_cert = mbedtls_set_own_cert,
         .set_cert_verify = mbedtls_set_cert_verify,
         .parse_pkcs7_certs = parse_pkcs7_certs,
@@ -230,16 +232,50 @@ int configure_mbedtls() {
     return 0;
 }
 
-tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len) {
+tls_context *new_mbedtls_ctx(void) {
     struct mbedtls_context *c = tlsuv__calloc(1, sizeof(struct mbedtls_context));
     c->api = mbedtls_context_api;
+    return &c->api;
+}
+
+// mbedtls wants a PEM buffer NUL terminated, with the terminator counted in the length.
+// buf must be NUL terminated (len does not have to include the terminator).
+static int parse_ca(mbedtls_x509_crt *crt, const char *buf, size_t len) {
+    size_t n = strstr(buf, "-----BEGIN") != NULL ? strlen(buf) + 1 : len;
+    return mbedtls_x509_crt_parse(crt, (const unsigned char *) buf, n);
+}
+
+static int mbedtls_set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len) {
+    struct mbedtls_context *c = (struct mbedtls_context *) ctx;
+
+    char *bundle = NULL;
+    // NULL (or empty) bundle means system CA store
     if (ca && ca_len > 0) {
-        c->ca_len = ca_len;
-        c->ca = tlsuv__calloc(1, ca_len + 1);
-        memcpy(c->ca, ca, ca_len);
+        bundle = tlsuv__calloc(1, ca_len + 1);
+        memcpy(bundle, ca, ca_len);
+
+        // same lookup as the engine: PEM/DER in memory, else a file path.
+        // A bad bundle leaves the current one in place.
+        mbedtls_x509_crt probe;
+        mbedtls_x509_crt_init(&probe);
+        int rc = parse_ca(&probe, bundle, ca_len);
+        if (rc < 0) {
+            mbedtls_x509_crt_free(&probe);
+            mbedtls_x509_crt_init(&probe);
+            rc = mbedtls_x509_crt_parse_file(&probe, bundle);
+        }
+        mbedtls_x509_crt_free(&probe);
+        if (rc < 0) {
+            UM_LOG(ERR, "failed to load CA from file or memory: %s", mbedtls_error(rc));
+            tlsuv__free(bundle);
+            return -1;
+        }
     }
 
-    return &c->api;
+    tlsuv__free(c->ca);
+    c->ca = bundle;
+    c->ca_len = bundle ? ca_len : 0;
+    return 0;
 }
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
@@ -275,7 +311,7 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
     mbedtls_x509_crt_init(engine->ca);
 
     if (cabuf != NULL) {
-        int rc = cabuf_len > 0 ? mbedtls_x509_crt_parse(engine->ca, (const unsigned char *)cabuf, cabuf_len) : 0;
+        int rc = cabuf_len > 0 ? parse_ca(engine->ca, cabuf, cabuf_len) : 0;
         if (rc < 0) {
             UM_LOG(VERB, "mbedtls_engine: %s", mbedtls_error(rc));
             mbedtls_x509_crt_init(engine->ca);

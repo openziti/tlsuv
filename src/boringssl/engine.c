@@ -74,7 +74,7 @@ extern const char* tlsuv_get_config_path();
 
 static int is_self_signed(X509 * cert);
 static const char* name_str(const X509_NAME* n);
-static void init_ssl_context(struct openssl_ctx* c, const char* cabuf, size_t cabuf_len);
+static void init_ssl_context(struct openssl_ctx* c);
 static int tls_set_own_cert(tls_context* ctx, tlsuv_private_key_t key,
                             tlsuv_certificate_t cert);
 
@@ -217,7 +217,7 @@ static const char* tls_eng_error(tlsuv_engine_t self) {
     return err;
 }
 
-tls_context* new_boringssl_ctx(const char* ca, size_t ca_len) {
+tls_context* new_boringssl_ctx(void) {
     OPENSSL_init_ssl(OPENSSL_INIT_SSL_DEFAULT, NULL);
 
     struct openssl_ctx* c = tlsuv__calloc(1, sizeof(struct openssl_ctx));
@@ -229,14 +229,16 @@ tls_context* new_boringssl_ctx(const char* ca, size_t ca_len) {
         c->api.load_keychain_key = load_keychain_key;
         c->api.remove_keychain_key = remove_keychain_key;
     }
-    init_ssl_context(c, ca, ca_len);
+    init_ssl_context(c);
 
     return &c->api;
 }
 
+// returns NULL if the bundle is unusable: unreadable file, or non-empty buffer with no certificates
 static X509_STORE* load_certs(const char* buf, size_t buf_len) {
     X509_STORE* certs = X509_STORE_new();
     X509* c;
+    bool ok = true;
 
     // try as file
     struct stat fstat;
@@ -244,32 +246,48 @@ static X509_STORE* load_certs(const char* buf, size_t buf_len) {
         if (fstat.st_mode & S_IFREG) {
             if (!X509_STORE_load_locations(certs, buf, NULL)) {
                 UM_LOG(ERR, "failed to load certs from [%s]", buf);
+                ok = false;
             }
         } else if (fstat.st_mode & S_IFDIR) {
             // BoringSSL does not support directory-based (hashed) CA
             // bundles the way OpenSSL does (no X509_STORE_load_path);
             // callers must supply a file or PEM buffer instead.
             UM_LOG(ERR, "directory-based CA bundle[%s] is not supported with the BoringSSL backend", buf);
+            ok = false;
         } else {
             UM_LOG(ERR, "cert bundle[%s] is not a regular file", buf);
+            ok = false;
         }
     } else {
         // try as PEM
         BIO* crt_bio = BIO_new_mem_buf(buf, (int)buf_len);
+        int count = 0;
         while ((c = PEM_read_bio_X509(crt_bio, NULL, NULL, NULL)) != NULL) {
             int root = is_self_signed(c);
             UM_LOG(VERB, "%s root[%s]",
                    name_str(X509_get_subject_name(c)), root ? "true" : "false");
             X509_STORE_add_cert(certs, c);
             X509_free(c);
+            count++;
         }
         BIO_free(crt_bio);
+        if (count == 0 && buf_len > 0) {
+            UM_LOG(ERR, "no certificates found in CA bundle");
+            ok = false;
+        }
+    }
+    if (!ok) {
+        X509_STORE_free(certs);
+        return NULL;
     }
     return certs;
 }
 
 static int load_cert(tlsuv_certificate_t* cert, const char* buf, size_t buflen) {
     X509_STORE* store = load_certs(buf, buflen);
+    if (store == NULL) {
+        return -1;
+    }
 
     STACK_OF(X509_OBJECT) * certs = X509_STORE_get0_objects(store);
     int count = sk_X509_OBJECT_num(certs);
@@ -343,11 +361,23 @@ static int set_ca_bundle(tls_context* tls, const char* ca, size_t ca_len) {
     struct openssl_ctx* c = (struct openssl_ctx*)tls;
     SSL_CTX* ctx = c->ctx;
 
+    // a bad bundle leaves the current one in place
+    bool custom = ca != NULL && ca_len > 0;
+    X509_STORE* store = NULL;
+    if (custom) {
+        store = load_certs(ca, ca_len);
+        if (store == NULL) {
+            return -1;
+        }
+    }
+
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-    if (ca != NULL) {
-        X509_STORE* store = load_certs(ca, ca_len);
+    if (custom) {
         SSL_CTX_set0_verify_cert_store(ctx, store);
     } else {
+        // the verify store takes precedence over the cert store the default
+        // loader below fills, so drop the one a previous bundle set
+        SSL_CTX_set0_verify_cert_store(ctx, NULL);
         // try loading default CA stores
 #if __APPLE__
         // Apple deprecated all access to system CA roots store on macOS and iOS(was never available).
@@ -360,7 +390,7 @@ static int set_ca_bundle(tls_context* tls, const char* ca, size_t ca_len) {
     return 0;
 }
 
-static void init_ssl_context(struct openssl_ctx* c, const char* cabuf, size_t cabuf_len) {
+static void init_ssl_context(struct openssl_ctx* c) {
     // a single SSL_CTX serves both roles; the role is fixed per-SSL with
     // SSL_set_connect_state()/SSL_set_accept_state()
     const SSL_METHOD* method = TLS_method();
@@ -381,7 +411,7 @@ static void init_ssl_context(struct openssl_ctx* c, const char* cabuf, size_t ca
     // session resumption - don't grow a cache nothing reads.
     SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
 
-    set_ca_bundle((tls_context*)c, cabuf, cabuf_len);
+    set_ca_bundle((tls_context*)c, NULL, 0);
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
 

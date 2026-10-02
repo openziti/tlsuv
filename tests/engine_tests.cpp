@@ -98,7 +98,7 @@ pSyX32tccwqCKIFz/a8GYcvdrjJquBmLVJ2a4hQl8p1RLnFY6T5nymlpGTXojTgk
 fcwJ0v2IisYTCMavk0DJSj9Hd+coMSyTa7ghp8ja/0PSoQAxAA==
 )";
 
-    tls_context *ctx = default_tls_context(nullptr, 0);
+    tls_context *ctx = default_tls_context();
     tlsuv_certificate_t chain;
     REQUIRE(ctx->parse_pkcs7_certs(&chain, pkcs7, strlen(pkcs7)) == 0);
 
@@ -115,7 +115,7 @@ fcwJ0v2IisYTCMavk0DJSj9Hd+coMSyTa7ghp8ja/0PSoQAxAA==
 }
 
 TEST_CASE("implementation test", "[engine]") {
-    tls_context *tls = default_tls_context(nullptr, 0);
+    tls_context *tls = default_tls_context();
     auto ver = tls->version();
 #if defined(TEST_mbedtls)
     CHECK_THAT(tls->version(), Catch::Matchers::StartsWith("mbed TLS", Catch::CaseSensitive::No));
@@ -139,7 +139,7 @@ TEST_CASE (
 "[engine]"
 )
  {
-    tls_context *tls = default_tls_context(nullptr, 0);
+    tls_context *tls = default_tls_context();
 
     // every backend implements this one, so a compliance check can never be
     // skipped by accident
@@ -191,12 +191,11 @@ TEST_CASE("load multi-cert PEM with and without NUL", "[engine]") {
     size_t chain_len = chain.size() + (with_nul ? 1 : 0);
     size_t key_len = key.size() + (with_nul ? 1 : 0);
 
-    tls_context *tls = default_tls_context(chain.c_str(), chain_len);
+    tls_context *tls = default_tls_context();
     REQUIRE(tls != nullptr);
-    // optional: not every backend implements it (e.g. mbedtls)
-    if (tls->set_ca_bundle) {
-        CHECK(tls->set_ca_bundle(tls, chain.c_str(), chain_len) == 0);
-    }
+    DEFER { tls->free_ctx(tls); };
+    REQUIRE(tls->set_ca_bundle != nullptr);
+    CHECK(tls->set_ca_bundle(tls, chain.c_str(), chain_len) == 0);
 
     tlsuv_certificate_t cert = nullptr;
     REQUIRE(tls->load_cert(&cert, chain.c_str(), chain_len) == 0);
@@ -216,7 +215,32 @@ TEST_CASE("load multi-cert PEM with and without NUL", "[engine]") {
     tls->set_own_cert(tls, nullptr, nullptr);
     pk->free(pk);
     cert->free(cert);
-    tls->free_ctx(tls);
+}
+
+TEST_CASE("set_ca_bundle rejects a bad CA bundle", "[engine]") {
+    auto ca = read_pem(pem_path_str(TEST_SERVER_CA));
+
+    tls_context *tls = default_tls_context();
+    REQUIRE(tls != nullptr);
+    DEFER { tls->free_ctx(tls); };
+    REQUIRE(tls->set_ca_bundle != nullptr);
+
+    auto [name, bad] = GENERATE(table<const char *, const char *>({
+        {"garbage", "this is not a certificate"},
+        {"corrupt PEM", "-----BEGIN CERTIFICATE-----\n!!not base64!!\n-----END CERTIFICATE-----\n"},
+    }));
+    INFO("bad bundle: " << name);
+    CHECK(tls->set_ca_bundle(tls, bad, strlen(bad)) != 0);
+
+    // a failure does not break the context, a good bundle can still be set
+    CHECK(tls->set_ca_bundle(tls, ca.c_str(), ca.size()) == 0);
+
+    // a failure after a good bundle is still an error
+    CHECK(tls->set_ca_bundle(tls, bad, strlen(bad)) != 0);
+
+    // NULL goes back to the system CA store
+    CHECK(tls->set_ca_bundle(tls, nullptr, 0) == 0);
+    CHECK(tls->set_ca_bundle(tls, ca.c_str(), ca.size()) == 0);
 }
 
 // e.g. a renewed certificate installed with the same key, on a long-lived context
@@ -224,7 +248,7 @@ TEST_CASE("set_own_cert repeatedly on one context", "[engine]") {
     auto cert_pem = read_pem(pem_path_str(TEST_SERVER_CERT));
     auto key_pem = read_pem(pem_path_str(TEST_SERVER_KEY));
 
-    tls_context *tls = default_tls_context(nullptr, 0);
+    tls_context *tls = default_tls_context();
     REQUIRE(tls != nullptr);
 
     for (int i = 0; i < 3; i++) {
@@ -270,7 +294,7 @@ kG3jUp0PZP+esKmxJpNZCK86YxA5iedhI+4z/2kqrUW2quknZja7FMyjWj6Vato3
 rzqUvKOfg8HVwOSngZyPa4zgd5ieZfxcFnDc2IK4fnI=
 -----END CERTIFICATE-----
 )";
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
 
     tlsuv_certificate_t c;
     tls->load_cert(&c, certpem, strlen(certpem));
@@ -314,7 +338,7 @@ TEST_CASE("ALPN negotiation", "[engine]") {
         return;
     }
 
-    tls_context *tls = default_tls_context(nullptr, 0);
+    tls_context *tls = default_tls_context();
     REQUIRE(tls != nullptr);
     printf("tls engine: %s\n", tls->version());
     const char *protos[] = {

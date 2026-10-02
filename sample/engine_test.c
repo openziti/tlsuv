@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
 
     printf("ip: %s\n", ip);
 
-    tls_context *tls = default_tls_context(NULL, 0);
+    tls_context *tls = default_tls_context();
 
     printf("TLS: %s\n", tls->version());
 

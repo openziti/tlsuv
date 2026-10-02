@@ -326,7 +326,7 @@ TEST_CASE("pkcs11_client_cert_test","[http]") {
     std::string keyType = GENERATE("rsa","ec");
 
     UvLoopTest test;
-    tls_context *tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+    tls_context *tls = tlsWithCA(test_server_CA, strlen(test_server_CA));
 
     tlsuv_http_t clt;
     resp_capture resp(resp_body_cb);
@@ -390,7 +390,7 @@ TEST_CASE("client_cert_test","[http]") {
 
     WHEN("client cert set") {
         tlsuv_http_init(test.loop, &clt, testServerURL("auth").c_str());
-        tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+        tls = tlsWithCA(test_server_CA, strlen(test_server_CA));
         tlsuv_http_set_ssl(&clt, tls);
         tlsuv_http_req_t *req = tlsuv_http_req(&clt, "GET", "/", resp_capture_cb, &resp);
 
@@ -837,7 +837,7 @@ TEST_CASE("TLS verify with JWT", "[http]") {
     dot = strchr(dot + 1, '.');
 
     // no default CAs
-    std::unique_ptr<tls_context, TlsDeleter> tls(default_tls_context("", 0));
+    std::unique_ptr<tls_context, TlsDeleter> tls(tlsWithCA("", 0));
     verify_ctx vtx;
     vtx.tls = tls.get();
     vtx.data = jwt;
@@ -1409,7 +1409,7 @@ VkgTm92+jiqJTO5SSA9QUa092S5cTKiHkH2cOM6m
 -----END CERTIFICATE-----
 )";
 
-    std::unique_ptr<tls_context, TlsDeleter> tls(default_tls_context(ca, strlen(ca)));
+    std::unique_ptr<tls_context, TlsDeleter> tls(tlsWithCA(ca, strlen(ca)));
     if (tls->allow_partial_chain == nullptr) {
         SKIP("engine always allows partial chains");
         return;
@@ -1473,7 +1473,7 @@ TEST_CASE("old-ca-store", "[http]") {
     tlsuv_http_t clt{};
     tlsuv_http_init(loop, &clt, "https://google.com");
 
-    auto tls = default_tls_context(ca_dir, 0);
+    auto tls = tlsWithCA(ca_dir, 0);
     tlsuv_http_set_ssl(&clt, tls);
 
     struct result_t {
@@ -1710,7 +1710,7 @@ static void keychain_client_auth(tls_context *tls, tlsuv_private_key_t pk) {
 
 TEST_CASE("keychain_client_cert_test", "[http]") {
     mock_keychain_register(); // platforms without a keychain use the software one
-    tls_context *tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+    tls_context *tls = tlsWithCA(test_server_CA, strlen(test_server_CA));
     if (tls->generate_keychain_key == nullptr || tls->generate_csr_to_pem == nullptr) {
         tls->free_ctx(tls);
         SKIP("keychain or CSR generation not supported");
@@ -1739,7 +1739,7 @@ TEST_CASE("mock_keychain_client_cert_test", "[http]") {
     auto &mock = mock_keychain();
     mock.set_format(MockFormat::SPKI);
 
-    tls_context *tls = default_tls_context(test_server_CA, strlen(test_server_CA));
+    tls_context *tls = tlsWithCA(test_server_CA, strlen(test_server_CA));
     REQUIRE(tls->load_keychain_key != nullptr);
 
     std::string name = "mock-auth-key";

@@ -112,31 +112,34 @@ static enum applesec_key_type key_type_of(SecKeyRef k) {
 
 // ---------------------------------------------------------------- CA bundle
 
-// `ca` is either a PEM/DER blob or a path to one
+// `ca` is either a PEM/DER blob or a path to one; NULL (or empty) means the system CA store.
+// A bad bundle leaves the current one in place.
 static int load_ca(struct applesec_ctx* ctx, const char* ca, size_t ca_len) {
+    CFArrayRef bundle = NULL;
+    if (ca != NULL && ca_len > 0) {
+        char* file_buf = NULL;
+        size_t file_len = 0;
+        const char* buf = ca;
+        size_t buflen = ca_len;
+        if (load_file(ca, &file_buf, &file_len) == 0) {
+            buf = file_buf;
+            buflen = file_len;
+        }
+
+        buflen = pem_trimmed_len(buf, buflen);
+        bundle = certs_from_data(buf, buflen);
+        tlsuv__free(file_buf);
+
+        if (bundle == NULL) {
+            UM_LOG(WARN, "failed to load CA bundle");
+            return -1;
+        }
+    }
+
     if (ctx->ca_bundle != NULL) {
         CFRelease(ctx->ca_bundle);
-        ctx->ca_bundle = NULL;
     }
-    if (ca == NULL || ca_len == 0) return 0;
-
-    char* file_buf = NULL;
-    size_t file_len = 0;
-    const char* buf = ca;
-    size_t buflen = ca_len;
-    if (load_file(ca, &file_buf, &file_len) == 0) {
-        buf = file_buf;
-        buflen = file_len;
-    }
-
-    buflen = pem_trimmed_len(buf, buflen);
-    ctx->ca_bundle = certs_from_data(buf, buflen);
-    tlsuv__free(file_buf);
-
-    if (ctx->ca_bundle == NULL) {
-        UM_LOG(WARN, "failed to load CA bundle");
-        return -1;
-    }
+    ctx->ca_bundle = bundle;
     return 0;
 }
 
@@ -146,7 +149,7 @@ static int tls_set_ca_bundle(tls_context* ctx, const char* ca, size_t ca_len) {
 
 // ------------------------------------------------------------------ context
 
-tls_context* new_applesec_ctx(const char* ca, size_t ca_len) {
+tls_context* new_applesec_ctx(void) {
     struct applesec_ctx* ctx = tlsuv__calloc(1, sizeof(*ctx));
     ctx->api = ctx_api;
     if (keychain_is_platform()) {
@@ -156,8 +159,6 @@ tls_context* new_applesec_ctx(const char* ca, size_t ca_len) {
     }
 
     UM_LOG(INFO, "using %s", ctx->api.version());
-
-    load_ca(ctx, ca, ca_len);
 
     return &ctx->api;
 }

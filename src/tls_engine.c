@@ -26,7 +26,7 @@ typedef int (*tls_configure)(void);
 #define TLS_CONFIGURE_NAME(impl) configure_## impl
 #define TLS_CONFIGURE(impl) TLS_CONFIGURE_NAME(impl)
 
-extern tls_context* TLS_FACTORY(TLS_IMPL)(const char* ca, size_t ca_len);
+extern tls_context* TLS_FACTORY(TLS_IMPL)(void);
 extern int TLS_CONFIGURE(TLS_IMPL)();
 
 static tls_configure configure_tls = TLS_CONFIGURE(TLS_IMPL);
@@ -40,12 +40,12 @@ void set_default_tls_impl(tls_context_factory f) {
     factory = f;
 }
 
-tls_context *default_tls_context(const char *ca, size_t ca_len) {
+tls_context *default_tls_context(void) {
     if (factory == NULL) {
         UM_LOG(ERR, "FATAL error no default TLS engine is set");
         return NULL;
     }
-    return factory(ca, ca_len);
+    return factory();
 }
 
 static char tls_config_path[PATH_MAX] = {0};

@@ -23,6 +23,7 @@ limitations under the License.
 #include <catch2/catch_all.hpp>
 
 #include <tlsuv/tls_engine.h>
+#include "fixtures.h"
 #include <uv.h>
 
 #include <algorithm>
@@ -301,7 +302,14 @@ struct tls_ctx_holder {
     tlsuv_certificate_t cert = nullptr;
 
     explicit tls_ctx_holder(const char *ca) {
-        tls = default_tls_context(ca, ca ? strlen(ca) : 0);
+        tls = default_tls_context();
+        // the destructor does not run when the constructor throws
+        bool ready = false;
+        DEFER { if (!ready) tls->free_ctx(tls); };
+        if (ca) {
+            REQUIRE(tls->set_ca_bundle(tls, ca, strlen(ca)) == 0);
+        }
+        ready = true;
     }
 
     ~tls_ctx_holder() {
@@ -404,6 +412,83 @@ TEST_CASE("server engine handshake and data", "[engine][server]") {
         char buf[128];
         size_t n = 0;
         CHECK(read_some(srv_eng, buf, sizeof(buf), &n) == TLS_EOF);
+    }
+}
+
+// a CA that did not sign tests/certs/server.crt
+static const char *unrelated_ca = R"(-----BEGIN CERTIFICATE-----
+MIIBqjCCAVCgAwIBAgIUSKubiTHEMl29Fr5v20tGMtgmQWowCgYIKoZIzj0EAwIw
+MjEUMBIGA1UECgwLdGxzdXYgdGVzdHMxGjAYBgNVBAMMEVVucmVsYXRlZCBUZXN0
+IENBMCAXDTI2MTAwMjEzMzc1MVoYDzIxMjYwOTA4MTMzNzUxWjAyMRQwEgYDVQQK
+DAt0bHN1diB0ZXN0czEaMBgGA1UEAwwRVW5yZWxhdGVkIFRlc3QgQ0EwWTATBgcq
+hkjOPQIBBggqhkjOPQMBBwNCAATwn4ApSZjC3I3HwYTFij9gaWQ64dYwJszBrMEJ
+XoaQcPtBT/7b5af6KkhyWNtGfMAk9NqcgrDOd7gOgy4ZQruao0IwQDAdBgNVHQ4E
+FgQUPpS2JZYaENmsdFXZ5CDTdIBgdRcwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8B
+Af8EBAMCAQYwCgYIKoZIzj0EAwIDSAAwRQIgJioIfrIHeHaTZBfWnedVSqQ8u0S3
++gcaVIyaqRPNOEwCIQDkZ5OV7VsdPxGD398+1rk7Zflly97Mgo7d0Daet7iSzA==
+-----END CERTIFICATE-----
+)";
+
+// handshake a new client engine of `clt` against a new server engine of `srv`
+static bool handshake_succeeds(tls_context *clt, tls_context *srv) {
+    engine_holder srv_eng(srv->new_server_engine(srv));
+    engine_holder clt_eng(clt->new_engine(clt, test_host));
+    REQUIRE(srv_eng.e != nullptr);
+    REQUIRE(clt_eng.e != nullptr);
+
+    auto t = make_mem();
+    t->attach(clt_eng, srv_eng);
+    return do_handshake(clt_eng, srv_eng);
+}
+
+TEST_CASE("client CA bundle decides which server is trusted", "[engine][server]") {
+    tls_ctx_holder srv(nullptr);
+    SKIP_UNLESS_SERVER_SUPPORTED(srv);
+    srv.set_identity();
+
+    // the test CA is not in the system CA store
+    tls_ctx_holder clt(nullptr);
+    CHECK_FALSE(handshake_succeeds(clt.tls, srv.tls));
+
+    SECTION("a custom bundle with the signing CA") {
+        REQUIRE(clt.tls->set_ca_bundle(clt.tls, test_ca, strlen(test_ca)) == 0);
+        CHECK(handshake_succeeds(clt.tls, srv.tls));
+    }
+
+    SECTION("a custom bundle without the signing CA") {
+        REQUIRE(clt.tls->set_ca_bundle(clt.tls, unrelated_ca, strlen(unrelated_ca)) == 0);
+        CHECK_FALSE(handshake_succeeds(clt.tls, srv.tls));
+    }
+
+    SECTION("a new bundle replaces the previous one") {
+        REQUIRE(clt.tls->set_ca_bundle(clt.tls, test_ca, strlen(test_ca)) == 0);
+        CHECK(handshake_succeeds(clt.tls, srv.tls));
+
+        REQUIRE(clt.tls->set_ca_bundle(clt.tls, unrelated_ca, strlen(unrelated_ca)) == 0);
+        CHECK_FALSE(handshake_succeeds(clt.tls, srv.tls));
+
+        REQUIRE(clt.tls->set_ca_bundle(clt.tls, test_ca, strlen(test_ca)) == 0);
+        CHECK(handshake_succeeds(clt.tls, srv.tls));
+    }
+
+    SECTION("NULL goes back to the system CA store") {
+        REQUIRE(clt.tls->set_ca_bundle(clt.tls, test_ca, strlen(test_ca)) == 0);
+        CHECK(handshake_succeeds(clt.tls, srv.tls));
+
+        REQUIRE(clt.tls->set_ca_bundle(clt.tls, nullptr, 0) == 0);
+        CHECK_FALSE(handshake_succeeds(clt.tls, srv.tls));
+
+        // and a custom bundle can be set again afterwards
+        REQUIRE(clt.tls->set_ca_bundle(clt.tls, test_ca, strlen(test_ca)) == 0);
+        CHECK(handshake_succeeds(clt.tls, srv.tls));
+    }
+
+    SECTION("a rejected bundle leaves the current one in place") {
+        REQUIRE(clt.tls->set_ca_bundle(clt.tls, test_ca, strlen(test_ca)) == 0);
+
+        const char *bad = "this is not a certificate";
+        CHECK(clt.tls->set_ca_bundle(clt.tls, bad, strlen(bad)) != 0);
+        CHECK(handshake_succeeds(clt.tls, srv.tls));
     }
 }
 

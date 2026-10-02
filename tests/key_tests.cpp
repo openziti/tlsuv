@@ -27,7 +27,7 @@
 
 
 TEST_CASE("key gen", "[key]") {
-    tls_context *ctx = default_tls_context(nullptr, 0);
+    tls_context *ctx = default_tls_context();
 
     tlsuv_private_key_t key;
     REQUIRE(ctx->generate_key(&key) == 0);
@@ -85,7 +85,7 @@ static void check_key(tlsuv_private_key_t key) {
 
 
 TEST_CASE("key-tests", "[key]") {
-    tls_context *ctx = default_tls_context(nullptr, 0);
+    tls_context *ctx = default_tls_context();
 
     tlsuv_private_key_t key = nullptr;
     WHEN("generated key") {
@@ -186,7 +186,7 @@ JlTFCo9+PRbDqDeGVht898nBQJjE+9i/rOs9c6LzVswsoMrnnkhrESMF
 
 
 TEST_CASE("gen csr", "[engine]") {
-    tls_context *ctx = default_tls_context(nullptr, 0);
+    tls_context *ctx = default_tls_context();
     if (ctx->generate_csr_to_pem == nullptr) {
         ctx->free_ctx(ctx);
         SKIP("TLS does not implement CSR generation");
@@ -225,7 +225,7 @@ TEST_CASE("gen csr", "[engine]") {
 #define HSM_DRIVER xstr(HSM_LIB)
 
 TEST_CASE("pkcs11 valid pkcs#11 key", "[key]") {
-    tls_context *ctx = default_tls_context(nullptr, 0);
+    tls_context *ctx = default_tls_context();
     REQUIRE(ctx->load_pkcs11_key != nullptr);
 
     std::string keyType = GENERATE("ec", "rsa");
@@ -326,7 +326,7 @@ TEST_CASE("gen-pkcs11-key-internals", "[key]") {
 }
 
 TEST_CASE("gen-pkcs11-key", "[key]") {
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     tlsuv_private_key_t key = nullptr;
     REQUIRE(tls->generate_pkcs11_key(&key, HSM_DRIVER, nullptr, "2222", "gen-key-test") == 0);
 
@@ -353,7 +353,7 @@ TEST_CASE("keychain", "[key]") {
 #ifdef TEST_HAVE_OPENSSL_API
     mock_keychain_register(); // platforms without a keychain use the software one
 #endif
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     if (tls->load_keychain_key == nullptr) {
         tls->free_ctx(tls);
         SKIP("keychain not supported");
@@ -429,7 +429,7 @@ TEST_CASE("keychain-manual", "[.]") {
         SKIP("keychain key not specified");
         return;
     }
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     if (tls->load_keychain_key == nullptr) {
         tls->free_ctx(tls);
         SKIP("keychain not supported");
@@ -577,7 +577,7 @@ Z8AgrJehwuXYVyJrG5Tc1vnlSUhUrK2812JyXA7tkWj/qzc=
 
 TEST_CASE("cert-chain", "[key]") {
     auto pem = CERT_CHAIN_PEM;
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     tlsuv_certificate_t cert = nullptr;
     CHECK(tls->load_cert(&cert, pem, strlen(pem)) == 0);
 
@@ -606,7 +606,7 @@ TEST_CASE("cert-chain", "[key]") {
 // the same text on every backend
 TEST_CASE("cert text of an EC leaf", "[key]") {
     using Catch::Matchers::ContainsSubstring;
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     tlsuv_certificate_t cert = nullptr;
     REQUIRE(tls->load_cert(&cert, CERT_CHAIN_PEM, strlen(CERT_CHAIN_PEM)) == 0);
     REQUIRE(cert->get_text != nullptr);
@@ -643,7 +643,7 @@ TEST_CASE("cert text of an EC leaf", "[key]") {
 TEST_CASE("cert text of a server certificate", "[key]") {
     using Catch::Matchers::ContainsSubstring;
     // RSA, a 160 bit serial, SAN and an authority key identifier with issuer and serial
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     tlsuv_certificate_t cert = nullptr;
     const char *path = xstr(TEST_SERVER_CERT);
     REQUIRE(tls->load_cert(&cert, path, strlen(path)) == 0);
@@ -676,7 +676,7 @@ TEST_CASE("cert text of an RSA CA", "[key]") {
                             "-----BEGIN CERTIFICATE-----");
     REQUIRE(ca != nullptr);
 
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     tlsuv_certificate_t cert = nullptr;
     REQUIRE(tls->load_cert(&cert, ca, strlen(ca)) == 0);
     REQUIRE(cert->get_text != nullptr);
@@ -766,7 +766,7 @@ emyX/S63aziH1I9+m+3BUF+bg75zTmirgzIPt3B0mbD4Rx99DC6bE9n8Z8AgrJeh
 wuXYVyJrG5Tc1vnlSUhUrK2812JyXA7tkWj/qzc=
 -----END CERTIFICATE-----)";
 
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     tlsuv_certificate_t c = nullptr;
     tlsuv_private_key_t k = nullptr;
     CHECK(tls->load_key(&k, key, strlen(key)) == 0);
@@ -870,7 +870,7 @@ gVR4vMEhZP3bGvqSofXMxTlVj56IQFruBV3B+cKmOavMgEFw/4gzPCCHmMbFkorf
 -----END CERTIFICATE-----
 )";
 
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     tlsuv_certificate_t c = nullptr;
     tlsuv_private_key_t k = nullptr;
     CHECK(tls->load_key(&k, key, strlen(key)) == 0);
@@ -893,7 +893,7 @@ gVR4vMEhZP3bGvqSofXMxTlVj56IQFruBV3B+cKmOavMgEFw/4gzPCCHmMbFkorf
 #ifdef TEST_HAVE_OPENSSL_API
 TEST_CASE("keychain_csr", "[key]") {
     mock_keychain_register(); // platforms without a keychain use the software one
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     if (tls->generate_keychain_key == nullptr || tls->generate_csr_to_pem == nullptr) {
         tls->free_ctx(tls);
         SKIP("keychain or CSR generation not supported");
@@ -939,7 +939,7 @@ TEST_CASE("keychain_mock_keys", "[key]") {
     // EC point needs key_bits() to pick the curve: without it the key cannot be loaded
     bool loadable = !(format == MockFormat::RawNoBits && type == keychain_key_ec);
 
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     REQUIRE(tls->load_keychain_key != nullptr);
     DEFER {
         tls->free_ctx(tls);
