@@ -43,6 +43,10 @@ struct openssl_ctx {
     EVP_PKEY* pkey;
     X509_STORE* store;
 
+    // explicit CA bundle set with set_ca_bundle(); NULL means none (system store).
+    // Kept so server engines can verify client certificates against it only.
+    X509_STORE* ca_store;
+
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx);
     void* verify_ctx;
 };
@@ -371,9 +375,16 @@ static int set_ca_bundle(tls_context* tls, const char* ca, size_t ca_len) {
         }
     }
 
+    // may be called more than once on the same context
+    X509_STORE_free(c->ca_store);
+    c->ca_store = NULL;
+
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     if (custom) {
+        // set0 hands our reference to the SSL_CTX: take another one for server engines
+        X509_STORE_up_ref(store);
         SSL_CTX_set0_verify_cert_store(ctx, store);
+        c->ca_store = store;
     } else {
         // the verify store takes precedence over the cert store the default
         // loader below fills, so drop the one a previous bundle set
@@ -628,6 +639,54 @@ tlsuv_engine_t new_boringssl_engine(tls_context* ctx, const char* host) {
     return &engine->api;
 }
 
+// subject names of the CA certificates in the given store, for advertising
+// acceptable client CAs. Returns NULL when there is nothing to advertise.
+static STACK_OF(X509_NAME) *ca_subject_names(X509_STORE* store) {
+    STACK_OF(X509_NAME) *names = sk_X509_NAME_new_null();
+    STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
+    for (size_t i = 0; i < sk_X509_OBJECT_num(objs); i++) {
+        X509* x = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(objs, i));
+        if (x == NULL || X509_check_ca(x) == 0) continue;
+
+        X509_NAME* n = X509_NAME_dup(X509_get_subject_name(x));
+        if (n != NULL && sk_X509_NAME_push(names, n) == 0) {
+            X509_NAME_free(n);
+        }
+    }
+    if (sk_X509_NAME_num(names) == 0) {
+        sk_X509_NAME_free(names);
+        return NULL;
+    }
+    return names;
+}
+
+static void setup_client_auth(struct openssl_ctx* c, SSL* ssl) {
+    // Client certificates are only requested when there is something to verify
+    // them against: an explicit CA bundle or a verify callback. The system trust
+    // store is never used for client certificates.
+    if (c->ca_store == NULL && c->cert_verify_f == NULL) {
+        SSL_set_verify(ssl, SSL_VERIFY_NONE, NULL);
+        return;
+    }
+
+    // Once requested, a certificate is required: a client that sends none fails
+    // the handshake (same on every backend).
+    // SSL_set_verify also replaces any verify callback inherited from the
+    // SSL_CTX. That is deliberate: on Apple the context callback is
+    // apple_ca_verify, which validates against the *system* trust store - the
+    // wrong store for client certificates.
+    SSL_set_verify(ssl, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+
+    if (c->ca_store != NULL) {
+        SSL_set1_verify_cert_store(ssl, c->ca_store);
+        // advertise acceptable client CAs so clients can pick a usable identity
+        STACK_OF(X509_NAME) *names = ca_subject_names(c->ca_store);
+        if (names != NULL) {
+            SSL_set_client_CA_list(ssl, names); // takes ownership of the stack
+        }
+    }
+}
+
 tlsuv_engine_t new_boringssl_server_engine(tls_context* ctx) {
     struct openssl_ctx* context = (openssl_ctx*)ctx;
 
@@ -639,8 +698,6 @@ tlsuv_engine_t new_boringssl_server_engine(tls_context* ctx) {
 
     struct openssl_engine* engine = tlsuv__calloc(1, sizeof(struct openssl_engine));
     engine->api = openssl_engine_api;
-    // not requesting client certs yet, so there is no peer certificate to get
-    engine->api.get_peer_cert = NULL;
     engine->is_server = true;
 
     engine->ssl = SSL_new(context->ctx);
@@ -660,8 +717,7 @@ tlsuv_engine_t new_boringssl_server_engine(tls_context* ctx) {
         return NULL;
     }
 
-    // disable for now: maybe add engine->set_client_auth()
-    SSL_set_verify(engine->ssl, SSL_VERIFY_NONE, NULL);
+    setup_client_auth(context, engine->ssl);
 
     return &engine->api;
 }
@@ -806,6 +862,7 @@ static void tls_free_ctx(tls_context* ctx) {
 
     EVP_PKEY_free(c->pkey);
     X509_STORE_free(c->store);
+    X509_STORE_free(c->ca_store);
     SSL_CTX_free(c->ctx);
     tlsuv__free(c);
 }
