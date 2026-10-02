@@ -47,6 +47,10 @@ struct win32crypto_engine_s {
 
     SECURITY_STATUS status;
     tls_handshake_state handshake_st;
+    // TLS 1.3 only: inbound starts with a post-handshake message (NewSessionTicket,
+    // KeyUpdate) that DecryptMessage handed back with SEC_I_RENEGOTIATE and that
+    // Initialize/AcceptSecurityContext has not finished processing yet
+    bool post_handshake;
     io_ctx io;
     io_read read_fn;
     io_write write_fn;
@@ -58,20 +62,30 @@ struct win32crypto_engine_s {
     size_t decoded_len;
 };
 
+/**
+ * Creates a client side engine.
+ * [fips_required] restricts the credentials to the approved algorithm set (see
+ * acquire_fips_credentials() in engine.c). Builds whose headers lack SCH_CREDENTIALS
+ * cannot restrict: they create an unrestricted engine and log a WARN.
+ */
 extern struct win32crypto_engine_s *new_win32engine(
     const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
-    void *verify_ctx);
+    void *verify_ctx, bool fips_required);
 
 /**
  * Creates a server(accept) side engine. [own_cert] is required and must have an
  * associated private key. A client certificate is requested only when [ca] or
  * [cert_verify_f] is provided, and is optional even then.
  * Returns NULL when server credentials cannot be acquired.
+ * [fips_required] restricts the credentials to the approved algorithm set (see
+ * acquire_fips_credentials() in engine.c); the engine is not created when that
+ * restriction cannot be applied. Builds whose headers lack SCH_CREDENTIALS cannot
+ * restrict: they create an unrestricted engine and log a WARN.
  */
 extern struct win32crypto_engine_s* new_win32_server_engine(
     HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
-    void* verify_ctx);
+    void* verify_ctx, bool fips_required);
 
 #endif //ENGINE_H
