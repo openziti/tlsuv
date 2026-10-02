@@ -477,8 +477,9 @@ static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
     SSL_CTX *ctx = c->ctx;
 
     // a bad bundle leaves the current one in place
+    bool custom = ca != NULL && ca_len > 0;
     X509_STORE *store = NULL;
-    if (ca != NULL) {
+    if (custom) {
         store = load_certs(ca, ca_len);
         if (store == NULL) {
             return -1;
@@ -490,11 +491,14 @@ static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len) {
     c->ca_store = NULL;
 
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-    if (ca != NULL) {
+    if (custom) {
         // set1: SSL_CTX takes its own reference, we keep ours for server engines
         SSL_CTX_set1_verify_cert_store(ctx, store);
         c->ca_store = store;
     } else {
+        // the verify store takes precedence over the cert store the default
+        // loaders below fill, so drop the one a previous bundle set
+        SSL_CTX_set0_verify_cert_store(ctx, NULL);
         // try loading default CA stores
 #if _WIN32
         // try to use windows trust store provider
