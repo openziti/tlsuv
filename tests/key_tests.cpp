@@ -606,7 +606,7 @@ TEST_CASE("cert-chain", "[key]") {
 // the same text on every backend
 TEST_CASE("cert text of an EC leaf", "[key]") {
     using Catch::Matchers::ContainsSubstring;
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     tlsuv_certificate_t cert = nullptr;
     REQUIRE(tls->load_cert(&cert, CERT_CHAIN_PEM, strlen(CERT_CHAIN_PEM)) == 0);
     REQUIRE(cert->get_text != nullptr);
@@ -643,7 +643,7 @@ TEST_CASE("cert text of an EC leaf", "[key]") {
 TEST_CASE("cert text of a server certificate", "[key]") {
     using Catch::Matchers::ContainsSubstring;
     // RSA, a 160 bit serial, SAN and an authority key identifier with issuer and serial
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     tlsuv_certificate_t cert = nullptr;
     const char *path = xstr(TEST_SERVER_CERT);
     REQUIRE(tls->load_cert(&cert, path, strlen(path)) == 0);
@@ -676,7 +676,7 @@ TEST_CASE("cert text of an RSA CA", "[key]") {
                             "-----BEGIN CERTIFICATE-----");
     REQUIRE(ca != nullptr);
 
-    auto tls = default_tls_context(nullptr, 0);
+    auto tls = default_tls_context();
     tlsuv_certificate_t cert = nullptr;
     REQUIRE(tls->load_cert(&cert, ca, strlen(ca)) == 0);
     REQUIRE(cert->get_text != nullptr);
