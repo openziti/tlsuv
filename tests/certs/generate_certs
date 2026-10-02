@@ -5,3 +5,9 @@ openssl genrsa -out server.key
 openssl req -new -key server.key -out server.csr -config localhost_san.conf
 openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -days 3650 -out server.crt -extensions v3_ext -extfile localhost_san.conf
 # openssl x509 -in server.csr -noout -text
+
+# client auth tests: a CA the test server does not trust, and a client cert signed by it
+openssl req -x509 -newkey rsa:2048 -nodes -keyout other-ca.key -out other-ca.pem -sha256 -days 3650 -subj "/C=US/ST=New York/O=openziti.org/CN=other test CA"
+openssl genrsa -out other-client.key 2048
+openssl req -new -key other-client.key -out other-client.csr -subj "/CN=other-client"
+openssl x509 -req -in other-client.csr -CA other-ca.pem -CAkey other-ca.key -CAcreateserial -days 3650 -out other-client.crt -extensions v3_client -extfile other_client.conf

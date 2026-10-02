@@ -51,6 +51,11 @@ static const char *test_ca = to_str(TEST_SERVER_CA);
 static const char *test_cert = to_str(TEST_SERVER_CERT);
 static const char *test_key = to_str(TEST_SERVER_KEY);
 
+// a CA the test server does not trust, and a client identity signed by it
+static const char *other_ca = to_str(TEST_OTHER_CA);
+static const char *other_cert = to_str(TEST_OTHER_CERT);
+static const char *other_key = to_str(TEST_OTHER_KEY);
+
 // certs/server.crt is CN=localhost with SAN DNS:localhost + IP:127.0.0.1
 static const char *test_host = "localhost";
 
@@ -326,6 +331,13 @@ struct tls_ctx_holder {
         REQUIRE(tls->set_own_cert(tls, key, cert) == 0);
     }
 
+    // client identity from tests/certs/other-client.{key,crt}: signed by other-ca.pem
+    void set_other_identity() {
+        REQUIRE(tls->load_key(&key, other_key, strlen(other_key)) == 0);
+        REQUIRE(tls->load_cert(&cert, other_cert, strlen(other_cert)) == 0);
+        REQUIRE(tls->set_own_cert(tls, key, cert) == 0);
+    }
+
     bool supports_server() const { return tls != nullptr && tls->new_server_engine != nullptr; }
 };
 
@@ -370,7 +382,8 @@ TEST_CASE("server engine requires own cert", "[engine][server]") {
 TEST_CASE("server engine handshake and data", "[engine][server]") {
     auto make = GENERATE(as<transport_factory>{}, make_mem, make_socketpair, make_socket);
 
-    tls_ctx_holder srv(test_ca);
+    // no CA bundle: a server with one requires client certificates
+    tls_ctx_holder srv(nullptr);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
     srv.set_identity();
 
@@ -495,7 +508,7 @@ TEST_CASE("client CA bundle decides which server is trusted", "[engine][server]"
 TEST_CASE("server engine ALPN", "[engine][server]") {
     auto make = GENERATE(as<transport_factory>{}, make_mem, make_socketpair, make_socket);
 
-    tls_ctx_holder srv(test_ca);
+    tls_ctx_holder srv(nullptr);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
     srv.set_identity();
 
@@ -553,9 +566,28 @@ TEST_CASE("server engine ALPN", "[engine][server]") {
     }
 }
 
-TEST_CASE("server engine optional client cert", "[engine][server]") {
+// the server sees a client certificate whose subject has the given CN
+static void check_peer_cn(tlsuv_engine_t srv_eng, const char *cn) {
+    REQUIRE(srv_eng->get_peer_cert != nullptr);
+    cert_holder peer;
+    REQUIRE(srv_eng->get_peer_cert(srv_eng, &peer.c) == 0);
+    REQUIRE(peer.c != nullptr);
+
+    const char *text = peer.c->get_text(peer.c);
+    REQUIRE(text != nullptr);
+    CHECK_THAT(text, Catch::Matchers::ContainsSubstring(cn));
+
+    char *pem = nullptr;
+    size_t pemlen = 0;
+    REQUIRE(peer.c->to_pem(peer.c, 0, &pem, &pemlen) == 0);
+    std::unique_ptr<char, decltype(&free)> pem_guard(pem, free);
+    CHECK(pemlen > 0);
+}
+
+TEST_CASE("server engine with CA bundle requires client cert", "[engine][server]") {
     auto make = GENERATE(as<transport_factory>{}, make_mem, make_socketpair, make_socket);
 
+    // the bundle is what makes the server ask for (and require) a client cert
     tls_ctx_holder srv(test_ca);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
     srv.set_identity();
@@ -563,58 +595,69 @@ TEST_CASE("server engine optional client cert", "[engine][server]") {
     tls_ctx_holder clt(test_ca);
 
     engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
-    if (srv_eng->get_peer_cert == nullptr) {
-        SKIP("get_peer_cert is not implemented");
-    }
+    REQUIRE(srv_eng.e != nullptr);
 
-    SECTION("client presents a certificate") {
-#if defined(TEST_applesec)
-        // Network.framework has no public optional-client-auth mode, so the applesec
-        // server engine never requests client certificates
-        SKIP("applesec server engine does not request client certificates");
-#endif
+    SECTION("client presents a certificate from the bundle's CA") {
         clt.set_identity();
 
         engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
-
         auto t = make();
         t->attach(clt_eng, srv_eng);
         REQUIRE(do_handshake(clt_eng, srv_eng));
 
-        REQUIRE(srv_eng->get_peer_cert != nullptr);
-        cert_holder peer;
-        REQUIRE(srv_eng->get_peer_cert(srv_eng, &peer.c) == 0);
-        REQUIRE(peer.c != nullptr);
+        check_peer_cn(srv_eng, "CN=localhost");
+        check_transfer(clt_eng, srv_eng, "mutual");
+    }
 
-        const char *text = peer.c->get_text(peer.c);
-        REQUIRE(text != nullptr);
-        CHECK_THAT(text, Catch::Matchers::ContainsSubstring("CN=localhost"));
+    SECTION("client presents a certificate from another CA") {
+        clt.set_other_identity();
 
-        char *pem = nullptr;
-        size_t pemlen = 0;
-        REQUIRE(peer.c->to_pem(peer.c, 0, &pem, &pemlen) == 0);
-        std::unique_ptr<char, decltype(&free)> pem_guard(pem, free);
-        CHECK(pemlen > 0);
+        engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
+        auto t = make();
+        t->attach(clt_eng, srv_eng);
+        CHECK_FALSE(do_handshake(clt_eng, srv_eng));
     }
 
     SECTION("client presents no certificate") {
         engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
         auto t = make();
         t->attach(clt_eng, srv_eng);
+        CHECK_FALSE(do_handshake(clt_eng, srv_eng));
+    }
+}
 
-        // client certs are optional: the handshake completes anyway
-        REQUIRE(do_handshake(clt_eng, srv_eng));
+TEST_CASE("server engine trusts only its CA bundle for client certs", "[engine][server]") {
+    // the bundle replaces the default CAs: with a bundle holding only the other
+    // CA, a cert signed by the test CA is not accepted, and vice versa
+    tls_ctx_holder srv(other_ca);
+    SKIP_UNLESS_SERVER_SUPPORTED(srv);
+    srv.set_identity();
 
-        cert_holder peer;
-        CHECK(srv_eng->get_peer_cert(srv_eng, &peer.c) == TLS_ERR);
-        CHECK(peer.c == nullptr);
+    tls_ctx_holder clt(test_ca);
+
+    SECTION("cert signed by the bundle's CA") {
+        clt.set_other_identity();
+        CHECK(handshake_succeeds(clt.tls, srv.tls));
+    }
+
+    SECTION("cert signed by a CA outside the bundle") {
+        clt.set_identity();
+        CHECK_FALSE(handshake_succeeds(clt.tls, srv.tls));
+    }
+
+    SECTION("a new bundle replaces the previous one") {
+        clt.set_identity();
+        CHECK_FALSE(handshake_succeeds(clt.tls, srv.tls));
+
+        REQUIRE(srv.tls->set_ca_bundle(srv.tls, test_ca, strlen(test_ca)) == 0);
+        CHECK(handshake_succeeds(clt.tls, srv.tls));
     }
 }
 
 TEST_CASE("client engine peer certificate", "[engine][server]") {
     auto make = GENERATE(as<transport_factory>{}, make_mem, make_socketpair, make_socket);
 
-    tls_ctx_holder srv(test_ca);
+    tls_ctx_holder srv(nullptr);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
     srv.set_identity();
 
@@ -698,20 +741,31 @@ TEST_CASE("server engine client cert verify callback", "[engine][server]") {
 
     verify_calls = 0;
 
-    // set_cert_verify mutates the shared SSL_CTX, so this needs its own context
-    tls_ctx_holder srv(test_ca);
+    // callback only, no CA bundle: the callback alone decides, the system trust
+    // store is never consulted
+    tls_ctx_holder srv(nullptr);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
     srv.set_identity();
     srv.tls->set_cert_verify(srv.tls, counting_verify, nullptr);
 
     tls_ctx_holder clt(test_ca);
     engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
-    if (srv_eng->get_peer_cert == nullptr) {
-        SKIP("get_peer_cert is not implemented");
+    REQUIRE(srv_eng.e != nullptr);
+
+    SECTION("callback accepts a client cert no trusted CA signed") {
+        // nothing trusts other-ca (not the system store either): it only gets
+        // through if the callback is the sole judge
+        verify_result = 0;
+        clt.set_other_identity();
+
+        engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
+        auto t = make();
+        t->attach(clt_eng, srv_eng);
+
+        CHECK(do_handshake(clt_eng, srv_eng));
+        CHECK(verify_calls == 1);
+        check_peer_cn(srv_eng, "CN=other-client");
     }
-#if defined(TEST_applesec)
-    SKIP("applesec server engine does not request client certificates");
-#endif
 
     SECTION("callback accepts the client cert") {
         verify_result = 0;
@@ -737,15 +791,54 @@ TEST_CASE("server engine client cert verify callback", "[engine][server]") {
         CHECK(verify_calls == 1);
     }
 
-    SECTION("callback is not invoked without a client cert") {
-        verify_result = -1; // would reject, but never gets asked
+    SECTION("a client without a cert is rejected, callback not invoked") {
+        verify_result = 0; // would accept, but never gets asked
+
+        engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
+        auto t = make();
+        t->attach(clt_eng, srv_eng);
+
+        CHECK_FALSE(do_handshake(clt_eng, srv_eng));
+        CHECK(verify_calls == 0);
+    }
+}
+
+TEST_CASE("server engine callback takes precedence over CA bundle", "[engine][server]") {
+    auto make = GENERATE(as<transport_factory>{}, make_mem, make_socketpair, make_socket);
+
+    verify_calls = 0;
+
+    tls_ctx_holder srv(test_ca);
+    SKIP_UNLESS_SERVER_SUPPORTED(srv);
+    srv.set_identity();
+    srv.tls->set_cert_verify(srv.tls, counting_verify, nullptr);
+
+    tls_ctx_holder clt(test_ca);
+    engine_holder srv_eng(srv.tls->new_server_engine(srv.tls));
+    REQUIRE(srv_eng.e != nullptr);
+
+    SECTION("callback accepts a cert outside the bundle") {
+        verify_result = 0;
+        clt.set_other_identity();
 
         engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
         auto t = make();
         t->attach(clt_eng, srv_eng);
 
         CHECK(do_handshake(clt_eng, srv_eng));
-        CHECK(verify_calls == 0);
+        CHECK(verify_calls == 1);
+    }
+
+    SECTION("callback rejects a cert from the bundle's CA") {
+        verify_result = -1;
+        clt.set_identity();
+
+        engine_holder clt_eng(clt.tls->new_engine(clt.tls, test_host));
+        auto t = make();
+        t->attach(clt_eng, srv_eng);
+
+        CHECK_FALSE(do_handshake(clt_eng, srv_eng));
+        CHECK(verify_calls == 1);
     }
 }
 
@@ -753,7 +846,7 @@ TEST_CASE("server engine client cert verify callback", "[engine][server]") {
 TEST_CASE("engine reports an error on failure", "[engine][server]") {
     auto make = GENERATE(as<transport_factory>{}, make_mem, make_socketpair, make_socket);
 
-    tls_ctx_holder srv(test_ca);
+    tls_ctx_holder srv(nullptr);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
     srv.set_identity();
 
@@ -800,7 +893,7 @@ TEST_CASE("engine reports an error on failure", "[engine][server]") {
 TEST_CASE("server engine reset", "[engine][server]") {
     auto make = GENERATE(as<transport_factory>{}, make_socketpair, make_socket);
 
-    tls_ctx_holder srv(test_ca);
+    tls_ctx_holder srv(nullptr);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
     srv.set_identity();
 

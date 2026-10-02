@@ -1422,6 +1422,73 @@ static bool only_validity_cap_failed(SecTrustRef trust) {
     return cap_failed && !other_failed;
 }
 
+// Installs the verify block that validates the peer's certificate chain: the verify
+// callback if there is one, else the configured CA bundle as the only trust anchors.
+// Does nothing when neither is set, which leaves the decision to Network.framework
+// (system trust on a client, and no client authentication on a server).
+// `what` ("server"/"client") names the peer's certificate in logs and errors.
+// e->policies must hold the policies for that peer.
+static void set_peer_verify(struct applesec_engine_s *e, sec_protocol_options_t sec_options,
+                            const char *what) {
+    if (e->cert_verify_f) {
+        sec_protocol_options_set_verify_block(sec_options,
+            ^(sec_protocol_metadata_t metadata, sec_trust_t trust_ref, sec_protocol_verify_complete_t complete){
+                CFMutableArrayRef certs = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+                sec_protocol_metadata_access_peer_certificate_chain(metadata, ^(sec_certificate_t cert){
+                    SecCertificateRef ref = sec_certificate_copy_ref(cert);
+                    CFArrayAppendValue(certs, ref);
+                    CFRelease(ref);
+                });
+                tlsuv_certificate_t tlsuv_cert = applesec_cert_new(certs);
+                int rc = e->cert_verify_f(tlsuv_cert, e->verify_ctx);
+                tlsuv_cert->free(tlsuv_cert);
+                if (rc != 0) {
+                    char msg[96];
+                    snprintf(msg, sizeof(msg), "%s certificate rejected by the verify callback", what);
+                    UM_LOG(WARN, "%s: %d", msg, rc);
+                    set_error(e, describe_error(errSSLBadCert, msg));
+                }
+                complete(rc == 0);
+            },
+            e->queue);
+    } else if (e->ca) {
+        sec_protocol_options_set_verify_block(sec_options,
+            ^(sec_protocol_metadata_t metadata, sec_trust_t trust_ref, sec_protocol_verify_complete_t complete){
+                SecTrustRef ref = sec_trust_copy_ref(trust_ref);
+                SecTrustSetPolicies(ref, e->policies);
+                SecTrustSetAnchorCertificates(ref, e->ca);
+                SecTrustSetAnchorCertificatesOnly(ref, true);
+                CFErrorRef err = NULL;
+                if (SecTrustEvaluateWithError(ref, &err)) {
+                    complete(true);
+                } else if (only_validity_cap_failed(ref)) {
+                    UM_LOG(DEBG, "accepting %s certificate over Apple's max validity period"
+                                 " (anchored to configured CA bundle)", what);
+                    if (err) CFRelease(err);
+                    complete(true);
+                } else {
+                    char msg[256] = "unknown error";
+                    if (err) {
+                        CFStringRef desc = CFErrorCopyDescription(err);
+                        CFStringGetCString(desc, msg, sizeof(msg), kCFStringEncodingUTF8);
+                        CFRelease(desc);
+                    } else {
+                        char text[96];
+                        snprintf(text, sizeof(text), "%s certificate verification failed", what);
+                        err = describe_error(errSSLXCertChainInvalid, text);
+                    }
+                    UM_LOG(WARN, "%s certificate verification failed: %s", what, msg);
+                    // the reason for engine_strerror(): NW's own error after this
+                    // is a generic -9808
+                    set_error(e, err);
+                    complete(false);
+                }
+                CFRelease(ref);
+            },
+            e->queue);
+    }
+}
+
 // ctx->ssl_chain is [SecIdentityRef, intermediates...] (built by tls_set_own_cert).
 // sec_identity_create_with_certificates() takes the chain to send, leaf first.
 static sec_identity_t new_client_identity(struct applesec_ctx *ctx) {
@@ -1510,60 +1577,7 @@ tlsuv_engine_t applesec_new_engine(tls_context *ctx, const char *host) {
             if (e->identity) {
                 sec_protocol_options_set_local_identity(sec_options, e->identity);
             }
-            if (e->cert_verify_f) {
-                sec_protocol_options_set_verify_block(sec_options,
-                    ^(sec_protocol_metadata_t metadata, sec_trust_t trust_ref, sec_protocol_verify_complete_t complete){
-                        CFMutableArrayRef certs = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-                        sec_protocol_metadata_access_peer_certificate_chain(metadata, ^(sec_certificate_t cert){
-                            SecCertificateRef ref = sec_certificate_copy_ref(cert);
-                            CFArrayAppendValue(certs, ref);
-                            CFRelease(ref);
-                        });
-                        tlsuv_certificate_t tlsuv_cert = applesec_cert_new(certs);
-                        int rc = e->cert_verify_f(tlsuv_cert, e->verify_ctx);
-                        tlsuv_cert->free(tlsuv_cert);
-                        if (rc != 0) {
-                            UM_LOG(WARN, "server certificate rejected by the verify callback: %d", rc);
-                            set_error(e, describe_error(errSSLBadCert,
-                                                        "server certificate rejected by the verify callback"));
-                        }
-                        complete(rc == 0);
-                    },
-                    e->queue);
-            } else if (e->ca) {
-                sec_protocol_options_set_verify_block(sec_options,
-                    ^(sec_protocol_metadata_t metadata, sec_trust_t trust_ref, sec_protocol_verify_complete_t complete){
-                        SecTrustRef ref = sec_trust_copy_ref(trust_ref);
-                        SecTrustSetPolicies(ref, e->policies);
-                        SecTrustSetAnchorCertificates(ref, e->ca);
-                        SecTrustSetAnchorCertificatesOnly(ref, true);
-                        CFErrorRef err = NULL;
-                        if (SecTrustEvaluateWithError(ref, &err)) {
-                            complete(true);
-                        } else if (only_validity_cap_failed(ref)) {
-                            UM_LOG(DEBG, "accepting server certificate over Apple's max validity period"
-                                         " (anchored to configured CA bundle)");
-                            if (err) CFRelease(err);
-                            complete(true);
-                        } else {
-                            char msg[256] = "unknown error";
-                            if (err) {
-                                CFStringRef desc = CFErrorCopyDescription(err);
-                                CFStringGetCString(desc, msg, sizeof(msg), kCFStringEncodingUTF8);
-                                CFRelease(desc);
-                            } else {
-                                err = describe_error(errSSLXCertChainInvalid, "server certificate verification failed");
-                            }
-                            UM_LOG(WARN, "server certificate verification failed: %s", msg);
-                            // the reason for engine_strerror(): NW's own error after this
-                            // is a generic -9808
-                            set_error(e, err);
-                            complete(false);
-                        }
-                        CFRelease(ref);
-                    },
-                    e->queue);
-            }
+            set_peer_verify(e, sec_options, "server");
             nw_release(sec_options);
         },
         ^(nw_protocol_options_t opts) {
@@ -1574,9 +1588,9 @@ tlsuv_engine_t applesec_new_engine(tls_context *ctx, const char *host) {
     return (tlsuv_engine_t) e;
 }
 
-// Client certificates are not requested: Network.framework only offers "required"
-// publicly (the optional mode is not public API), and a required client cert would
-// reject clients that have none. get_peer_cert() therefore returns TLS_ERR.
+// Client certificates are required (and validated) when the context has a CA bundle or a
+// verify callback, and not requested otherwise. Network.framework only offers "required"
+// publicly (the optional mode is not public API), which is also what the other backends do.
 tlsuv_engine_t applesec_new_server_engine(tls_context *ctx) {
     struct applesec_ctx* sec_ctx = (struct applesec_ctx *) ctx;
     if (sec_ctx->ssl_chain == NULL) {
@@ -1592,11 +1606,31 @@ tlsuv_engine_t applesec_new_server_engine(tls_context *ctx) {
         return NULL;
     }
 
+    // required mode needs a verify block of ours: without one Network.framework would
+    // fall back to evaluating the client certificate against the system trust store
+    bool client_auth = e->cert_verify_f != NULL || e->ca != NULL;
+    if (client_auth) {
+        // `false` = we are evaluating a client certificate
+        SecPolicyRef ssl_policy = SecPolicyCreateSSL(false, NULL);
+        SecPolicyRef x509_policy = SecPolicyCreateBasicX509();
+        CFMutableArrayRef policies =
+                CFArrayCreateMutable(kCFAllocatorDefault, 2, &kCFTypeArrayCallBacks);
+        CFArrayAppendValue(policies, ssl_policy);
+        CFArrayAppendValue(policies, x509_policy);
+        CFRelease(ssl_policy);
+        CFRelease(x509_policy);
+        e->policies = policies;
+    }
+
     e->protocol_parameters = nw_parameters_create_secure_tcp(
         ^(nw_protocol_options_t opts){
             sec_protocol_options_t sec_options = nw_tls_copy_sec_protocol_options(opts);
             sec_protocol_options_set_min_tls_protocol_version(sec_options, tls_protocol_version_TLSv12);
             sec_protocol_options_set_local_identity(sec_options, e->identity);
+            if (client_auth) {
+                sec_protocol_options_set_peer_authentication_required(sec_options, true);
+                set_peer_verify(e, sec_options, "client");
+            }
             nw_release(sec_options);
         },
         ^(nw_protocol_options_t opts) {
