@@ -1731,7 +1731,7 @@ TEST_CASE("keychain_client_cert_test", "[http]") {
     keychain_client_auth(tls, pk);
 }
 
-// software keychain: EC (TLS 1.3 capable) and RSA (PKCS#1 v1.5 only, so TLS 1.2)
+// software keychain: EC and RSA keys
 TEST_CASE("mock_keychain_client_cert_test", "[http]") {
     MockKeychainScope mock_scope;
 

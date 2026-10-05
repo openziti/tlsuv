@@ -231,6 +231,42 @@ int keychain_sign_digest(EVP_PKEY* pkey, const EVP_MD* md, const uint8_t* digest
     return 0;
 }
 
+int keychain_sign_digest_pss(EVP_PKEY* pkey, const EVP_MD* md, const uint8_t* digest, size_t digestlen,
+                             uint8_t* sig, size_t* siglen) {
+    keychain_key_t k = pkey_keychain_key(pkey);
+    if (k == NULL || EVP_PKEY_id(pkey) != EVP_PKEY_RSA) {
+        return -1;
+    }
+
+    // keychain implementations do not check the capacity of `sig`
+    size_t size = (size_t)EVP_PKEY_size(pkey);
+    if (*siglen < size) {
+        UM_LOG(WARN, "signature buffer is too small: %zd < %zd", *siglen, size);
+        return -1;
+    }
+
+    uint8_t* em = tlsuv__malloc(size);
+    size_t len = *siglen;
+    int rc = -1;
+    // salt length -1: as long as the digest
+    if (RSA_padding_add_PKCS1_PSS_mgf1(EVP_PKEY_get0_RSA(pkey), em, digest, md, md, -1) != 1) {
+        UM_LOG(WARN, "failed to build PSS block: %s", tls_error(ERR_get_error()));
+        goto done;
+    }
+
+    rc = keychain_key_sign(k, em, size, sig, &len, RSA_NO_PADDING);
+    if (rc != 0) {
+        UM_LOG(WARN, "keychain failed to sign: %d", rc);
+        rc = -1;
+        goto done;
+    }
+    *siglen = len;
+
+done:
+    tlsuv__free(em);
+    return rc;
+}
+
 int keychain_sign_csr(X509_REQ* req, EVP_PKEY* pkey) {
     const EVP_MD* md = EVP_sha256();
     int rc = -1;

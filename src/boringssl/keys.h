@@ -58,11 +58,17 @@ int remove_keychain_key(const char* name);
 keychain_key_t pkey_keychain_key(EVP_PKEY* pkey);
 
 // Signs an already computed `digest` with a keychain key.
-// EC keys produce a DER ECDSA signature, RSA keys PKCS#1 v1.5.
+// EC keys produce a DER ECDSA signature, RSA keys PKCS#1 v1.5 (see keychain_sign_digest_pss() for RSA-PSS).
 // `*siglen` is the capacity of `sig` on input (at least EVP_PKEY_size()) and the
 // signature length on output.
 int keychain_sign_digest(EVP_PKEY* pkey, const EVP_MD* md, const uint8_t* digest, size_t digestlen,
                          uint8_t* sig, size_t* siglen);
+
+// Same, for an RSA key and an RSA-PSS signature (MGF1 with `md`, salt as long as the digest,
+// as TLS 1.3 requires). The keychain is asked to sign the padded block (RSA_NO_PADDING), it
+// does not have to implement PSS.
+int keychain_sign_digest_pss(EVP_PKEY* pkey, const EVP_MD* md, const uint8_t* digest, size_t digestlen,
+                             uint8_t* sig, size_t* siglen);
 
 // Signs (SHA-256) and completes a certificate request made for a keychain key.
 int keychain_sign_csr(X509_REQ* req, EVP_PKEY* pkey);

@@ -74,7 +74,8 @@ have no peer certificate and leave `get_peer_cert` `NULL`.
 [^2]: Needs a keychain: the built-in one on Apple platforms, or one the application registers with
 `tlsuv_set_keychain()` (for example one backed by the Android Keystore). Register it before creating a TLS context,
 contexts created earlier have no keychain support. Generated keychain keys are EC. RSA keychain keys sign with
-PKCS#1 v1.5, which limits them to TLS 1.2 with `boringssl`.
+PKCS#1 v1.5 (TLS 1.2) or RSA-PSS (TLS 1.3); for RSA-PSS the keychain is asked to sign the already padded block
+(`RSA_NO_PADDING`), so it has to support that.
 [^3]: Windows CNG key storage, no registration needed.
 [^4]: Only when a certificate verification callback is set, and the client may still connect without one.
 

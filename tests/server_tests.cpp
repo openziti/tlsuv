@@ -24,6 +24,8 @@ limitations under the License.
 
 #include <tlsuv/tls_engine.h>
 #include "fixtures.h"
+#include "mock_keychain.h"
+#include "openssl_fixtures.h"
 #include <uv.h>
 
 #include <algorithm>
@@ -831,3 +833,40 @@ TEST_CASE("server engine reset", "[engine][server]") {
     }
 }
 
+
+#ifdef TEST_HAVE_OPENSSL_API
+// TLS 1.3 only allows RSA-PSS for RSA keys, and keychains do not sign RSA-PSS themselves:
+// they sign the padded block that tlsuv builds (RSA_NO_PADDING)
+TEST_CASE("server engine with RSA keychain key signs RSA-PSS", "[engine][server]") {
+    MockKeychainScope mock_scope;
+    auto &mock = mock_keychain();
+    mock.set_format(MockFormat::SPKI);
+
+    tls_ctx_holder srv(nullptr);
+    SKIP_UNLESS_SERVER_SUPPORTED(srv);
+    REQUIRE(srv.tls->load_keychain_key != nullptr);
+
+    std::string name = "rsa-pss-test-key";
+    REQUIRE(mock.add(name, keychain_key_rsa));
+    DEFER { mock.remove(name); };
+
+    REQUIRE(srv.tls->load_keychain_key(&srv.key, name.c_str()) == 0);
+
+    char *pem = nullptr;
+    size_t pemlen = 0;
+    REQUIRE(srv.tls->generate_csr_to_pem(srv.key, &pem, &pemlen, "CN", "localhost", NULL) == 0);
+    std::string cert_pem = cert_from_csr(std::string(pem, pemlen));
+    free(pem);
+    REQUIRE(!cert_pem.empty());
+    REQUIRE(srv.tls->load_cert(&srv.cert, cert_pem.data(), cert_pem.size()) == 0);
+    REQUIRE(srv.tls->set_own_cert(srv.tls, srv.key, srv.cert) == 0);
+
+    // the certificate is not issued by a CA the client knows
+    tls_ctx_holder clt(nullptr);
+    clt.tls->set_cert_verify(clt.tls, [](const tlsuv_certificate_s *, void *) { return 0; }, nullptr);
+
+    mock.last_sign_padding = 0;
+    CHECK(handshake_succeeds(clt.tls, srv.tls));
+    CHECK(mock.last_sign_padding == RSA_NO_PADDING);
+}
+#endif
