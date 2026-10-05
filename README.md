@@ -68,6 +68,8 @@ and is listed last as the least preferred choice.
 | **Server** | | | | | |
 | Server connections (`new_server_engine`) | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Server asks for a client certificate | ❌ | ❌ | ✅ [^4] | ❌ | ❌ |
+| **Protocol** | | | | | |
+| TLS 1.3 | ✅ | ✅ | ✅ [^5] | ✅ | ✅ |
 
 [^1]: Client connections only: server engines of this backend do not request client certificates, so they
 have no peer certificate and leave `get_peer_cert` `NULL`.
@@ -78,6 +80,7 @@ PKCS#1 v1.5 (TLS 1.2) or RSA-PSS (TLS 1.3); for RSA-PSS the keychain is asked to
 (`RSA_NO_PADDING`), so it has to support that.
 [^3]: Windows CNG key storage, no registration needed.
 [^4]: Only when a certificate verification callback is set, and the client may still connect without one.
+[^5]: Windows 11 and Windows Server 2022 or later. Older Windows versions negotiate TLS 1.2.
 
 Every member of the [TLS engine interfaces](include/tlsuv/tls_engine.h) that a backend does not provide is `NULL`,
 so check before calling.
