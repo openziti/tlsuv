@@ -359,10 +359,10 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
         if (rc != ERROR_SUCCESS) {
             // Schannel only uses persisted keys, so there is no fallback. The user key store
             // is not reachable when the process runs without its user profile loaded
-            // (e.g. LogonUser without LoadUserProfile)
-            UM_LOG(ERR, "failed to persist key[%ls] to provider[%ls]: 0x%lX/%s"
-                   " (Schannel needs a persisted key; is the user profile loaded?)",
-                   key_name, prov_name, (unsigned long)rc, win32_error(rc));
+            // (e.g. LogonUser without LoadUserProfile), which fails with file not found
+            UM_LOG(ERR, "failed to persist key[%ls] to provider[%ls]: 0x%lX/%s%s",
+                   key_name, prov_name, (unsigned long)rc, win32_error(rc),
+                   rc == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) ? " (is the user profile loaded?)" : "");
             tlsuv__free(key_name);
             CertFreeCertificateContext(pcc);
             return -1;

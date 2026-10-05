@@ -405,6 +405,17 @@ static tls_handshake_state handshake_1(struct win32crypto_engine_s *engine) {
     return TLS_HS_ERROR;
 }
 
+// drops the first consumed bytes of inbound, keeping the unprocessed tail
+static int inbound_keep_tail(struct win32crypto_engine_s *engine, size_t extra) {
+    if (extra > engine->inbound_len) {
+        UM_LOG(ERR, "extra data[%zu] exceeds input[%zu]", extra, engine->inbound_len);
+        return TLS_ERR;
+    }
+    memmove(engine->inbound, engine->inbound + engine->inbound_len - extra, extra);
+    engine->inbound_len = extra;
+    return 0;
+}
+
 static u_long handshake_req_flags(const struct win32crypto_engine_s *engine) {
     if (engine->is_server) {
         u_long req_flags =
@@ -541,9 +552,10 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
 
     if (inbuf[1].BufferType == SECBUFFER_EXTRA) {
         UM_LOG(VERB, "leftover data in handshake buffer: %lu bytes", inbuf[1].cbBuffer);
-        size_t consumed = engine->inbound_len - inbuf[1].cbBuffer;
-        memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
-        engine->inbound_len -= consumed;
+        if (inbound_keep_tail(engine, inbuf[1].cbBuffer) != 0) {
+            engine->handshake_st = TLS_HS_ERROR;
+            return engine->handshake_st;
+        }
     } else {
         engine->inbound_len = 0;
     }
@@ -819,17 +831,6 @@ static int engine_write(tlsuv_engine_t self, const char *data, size_t data_len) 
     return (int)sent;
 }
 
-// drops the first consumed bytes of inbound, keeping the unprocessed tail
-static int inbound_keep_tail(struct win32crypto_engine_s *engine, size_t extra) {
-    if (extra > engine->inbound_len) {
-        UM_LOG(ERR, "extra data[%zu] exceeds input[%zu]", extra, engine->inbound_len);
-        return TLS_ERR;
-    }
-    memmove(engine->inbound, engine->inbound + engine->inbound_len - extra, extra);
-    engine->inbound_len = extra;
-    return 0;
-}
-
 // bounds the post-handshake messages one engine_read() call processes, so a peer
 // that keeps sending them cannot hold the reader in the loop
 #define MAX_POST_HANDSHAKE_MSGS 16
@@ -920,9 +921,9 @@ static int process_post_handshake(struct win32crypto_engine_s *engine) {
     }
 
     if (inbuf[1].BufferType == SECBUFFER_EXTRA) {
-        size_t consumed = engine->inbound_len - inbuf[1].cbBuffer;
-        memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
-        engine->inbound_len -= consumed;
+        if (inbound_keep_tail(engine, inbuf[1].cbBuffer) != 0) {
+            return TLS_ERR;
+        }
     } else {
         engine->inbound_len = 0;
     }
@@ -1059,10 +1060,9 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
                 UM_LOG(ERR, "post-handshake message without the data to process it");
                 return TLS_ERR;
             }
-            size_t consumed = engine->inbound_len - extra->cbBuffer;
-            assert(consumed <= engine->inbound_len);
-            memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
-            engine->inbound_len -= consumed;
+            if (inbound_keep_tail(engine, extra->cbBuffer) != 0) {
+                return TLS_ERR;
+            }
             engine->post_handshake = true;
         } else {
             engine->status = rc;
@@ -1167,37 +1167,33 @@ static void cert_subject(PCCERT_CONTEXT cert, char* subj, size_t len) {
 // either, so unless TLS 1.3 is required the legacy SCHANNEL_CRED is tried with TLS 1.2 only.
 // Any other failure is not about the structure and must not downgrade to TLS 1.2.
 
-// set once SCH_CREDENTIALS has been rejected and SCHANNEL_CRED accepted, so later
-// engines go straight to the fallback and the warning is logged once per process
-static volatile LONG sch_credentials_unsupported;
+// logs the fallback warning once per process
+static volatile LONG sch_credentials_warned;
 
 static SECURITY_STATUS acquire_credentials(PCredHandle handle, ULONG direction, bool server,
                                            DWORD flags, PCCERT_CONTEXT *certs, DWORD ncerts,
                                            enum tls_version min_version) {
-    SECURITY_STATUS rc = SEC_E_UNKNOWN_CREDENTIALS;
-    if (!sch_credentials_unsupported) {
-        TLS_PARAMETERS tls_params = {
-            // anything below the minimum (TLS 1.0/1.1 included, as before) stays disabled
-            .grbitDisabledProtocols = (DWORD) (min_version == TLSUV_TLS13
-                                                   ? ~SP_PROT_TLS1_3
-                                                   : ~(SP_PROT_TLS1_2 | SP_PROT_TLS1_3)),
-        };
-        SCH_CREDENTIALS credentials = {
-            .dwVersion = SCH_CREDENTIALS_VERSION,
-            .cCreds = ncerts,
-            .paCred = certs,
-            .dwFlags = flags,
-            .cTlsParameters = 1,
-            .pTlsParameters = &tls_params,
-        };
+    TLS_PARAMETERS tls_params = {
+        // anything below the minimum (TLS 1.0/1.1 included, as before) stays disabled
+        .grbitDisabledProtocols = (DWORD) (min_version == TLSUV_TLS13
+                                               ? ~SP_PROT_TLS1_3
+                                               : ~(SP_PROT_TLS1_2 | SP_PROT_TLS1_3)),
+    };
+    SCH_CREDENTIALS credentials = {
+        .dwVersion = SCH_CREDENTIALS_VERSION,
+        .cCreds = ncerts,
+        .paCred = certs,
+        .dwFlags = flags,
+        .cTlsParameters = 1,
+        .pTlsParameters = &tls_params,
+    };
 
-        rc = AcquireCredentialsHandleA(NULL,
-                                  (TCHAR *)(UNISP_NAME),
-                                  direction, NULL,
-                                  &credentials, NULL, NULL,
-                                  handle,
-                                  NULL);
-    }
+    SECURITY_STATUS rc = AcquireCredentialsHandleA(NULL,
+                              (TCHAR *)(UNISP_NAME),
+                              direction, NULL,
+                              &credentials, NULL, NULL,
+                              handle,
+                              NULL);
     if (rc != SEC_E_UNKNOWN_CREDENTIALS || min_version == TLSUV_TLS13) {
         return rc;
     }
@@ -1216,7 +1212,7 @@ static SECURITY_STATUS acquire_credentials(PCredHandle handle, ULONG direction, 
                               handle,
                               NULL);
     // only blame the structure when the legacy one works with the same credentials
-    if (legacy_rc == SEC_E_OK && InterlockedExchange(&sch_credentials_unsupported, 1) == 0) {
+    if (legacy_rc == SEC_E_OK && InterlockedExchange(&sch_credentials_warned, 1) == 0) {
         LOG_ERROR(WARN, rc, "SCH_CREDENTIALS rejected, using SCHANNEL_CRED (TLS 1.2 only)");
     }
     return legacy_rc;
