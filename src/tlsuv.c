@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "tlsuv/tlsuv.h"
+#include "tlsuv/listener.h"
 #include "um_debug.h"
 #include "util.h"
 #include "tlsuv/queue.h"
@@ -100,7 +101,9 @@ const char* tlsuv_version(void) {
 }
 
 int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
+    void *data = clt->data; // callers may set it before init, as libuv allows
     *clt = (tlsuv_stream_t){0};
+    clt->data = data;
 
     clt->loop = l;
 
@@ -329,12 +332,18 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     }
 
     if (clt->tls_engine == NULL) {
-        clt->tls_engine = clt->tls->new_engine(clt->tls, clt->host);
+        bool server = clt->hs != NULL;
+        if (server) {
+            clt->tls_engine = clt->tls->new_server_engine ? clt->tls->new_server_engine(clt->tls) : NULL;
+        } else {
+            clt->tls_engine = clt->tls->new_engine(clt->tls, clt->host);
+        }
         if (clt->tls_engine == NULL) {
             TLS_LOG(ERR, "failed to create TLS engine");
             clt->conn_req = NULL;
             uv_poll_stop(&clt->watcher);
-            req->cb(req, UV_ENOMEM);
+            // a server engine fails to build when the context has no certificate
+            req->cb(req, server ? UV_EINVAL : UV_ENOMEM);
             return;
         }
 
@@ -656,6 +665,46 @@ int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_sock_t fd, u
     return 0;
 }
 
+// per accepted-connection handshake state, heap allocated, freed when the handshake finishes
+struct tlsuv_hs {
+    uv_connect_t req;
+    tlsuv_handshake_cb cb;
+};
+
+// process_connect() and on_internal_close() never touch `req` after calling req->cb,
+// so freeing it here is safe
+static void server_handshake_done(uv_connect_t *req, int status) {
+    struct tlsuv_hs *hs = container_of(req, struct tlsuv_hs, req);
+    tlsuv_stream_t *s = (tlsuv_stream_t *) req->handle;
+    tlsuv_handshake_cb cb = hs->cb;
+    s->hs = NULL;
+    tlsuv__free(hs);
+    cb(s, status);
+}
+
+int tlsuv__stream_accept(tlsuv_stream_t *s, uv_os_sock_t fd, int alpn_count, const char **alpn,
+                         tlsuv_handshake_cb cb) {
+    struct tlsuv_hs *hs = tlsuv__calloc(1, sizeof(*hs));
+    if (hs == NULL) {
+        return UV_ENOMEM;
+    }
+    hs->cb = cb;
+    s->hs = hs;
+
+    // the listener owns the strings; the engine copies them inside tlsuv_stream_open()
+    s->alpn_count = alpn_count;
+    s->alpn_protocols = alpn;
+    int rc = tlsuv_stream_open(&hs->req, s, fd, server_handshake_done);
+    s->alpn_protocols = NULL;
+    s->alpn_count = 0;
+
+    if (rc != 0) {
+        s->hs = NULL;
+        tlsuv__free(hs);
+    }
+    return rc;
+}
+
 int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const struct addrinfo *addr, uv_connect_cb cb) {
     if (!req) {
         return UV_EINVAL;
@@ -835,6 +884,10 @@ int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_w
 }
 
 int tlsuv_stream_free(tlsuv_stream_t *clt) {
+    if (clt->hs) {
+        tlsuv__free(clt->hs);
+        clt->hs = NULL;
+    }
     if (clt->host) {
         tlsuv__free(clt->host);
         clt->host = NULL;

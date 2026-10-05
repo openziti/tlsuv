@@ -142,8 +142,34 @@ Similar in purpose to `mbedtls_ssl_ctx` or `SSL` in OpenSSL
 
 Both interfaces carry optional members that may be `NULL` when an implementation does not provide them,
 so always check before calling; the [TLS backends](#tls-backends) table shows which backend provides what.
-Server support is engine-level: the application owns the listening socket and the accept loop, and
-`tlsuv_stream_t` has no listen/accept API.
+Server support is available at two levels: `new_server_engine()` on the context for applications that own
+the listening socket and accept loop, and [`tlsuv_listener_t`](include/tlsuv/listener.h) for libuv-style
+listen/accept that hands out `tlsuv_stream_t`s with the TLS handshake already completed:
+
+```c
+static tlsuv_stream_t *on_accept(tlsuv_listener_t *l, const struct sockaddr *peer, int status) {
+    if (status != 0) return NULL; // accepting failed, see below
+    return tlsuv_stream_new();    // NULL refuses the connection
+}
+
+static void on_handshake(tlsuv_stream_t *clt, int status) {
+    if (status != 0) { tlsuv_stream_close(clt, on_closed); return; } // a failed stream stays open
+    tlsuv_stream_read_start(clt, alloc_cb, read_cb);
+}
+
+tlsuv_listener_t *l = tlsuv_listener_new();
+tlsuv_listener_init(loop, l, tls); // tls: set_own_cert() already called
+tlsuv_listener_bind(l, (const struct sockaddr *) &addr, 0);
+tlsuv_listener_start_listen(l, 128, on_accept, on_handshake);
+```
+
+`on_accept` is also called with a non-zero `status` (and `peer == NULL`) when accepting fails. `UV_EMFILE`/`UV_ENFILE`
+means the process is out of descriptors: the listener has shed the connections that were waiting, using a spare descriptor,
+and keeps listening. For any other error the listener has stopped and can be resumed with `tlsuv_listener_start_listen()`.
+If `on_accept` returns a stream for a failure, it is initialised and `on_handshake` is called with the same error code
+(close the stream there as for any failed handshake).
+
+Requires a backend with `new_server_engine` (not mbedtls); `tlsuv_listener_init()` returns `UV_ENOTSUP` otherwise.
 
 ## Building standalone 
 See [development](HACKING.md) instruction for building this project standalone 

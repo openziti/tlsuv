@@ -422,7 +422,9 @@ struct tls_context_s {
      *
      * Not implemented yet:
      * SNI based certificate selection, session ticket key
-     * management, and there is no tlsuv_stream_t listen/accept path.
+     * management.
+     *
+     * tlsuv_listener_t (tlsuv/listener.h) uses this to accept TLS streams.
      *
      * Optional: may be NULL when the TLS backend has no server support.
      *

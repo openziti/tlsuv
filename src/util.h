@@ -70,4 +70,12 @@ if ((b).getp == (b).buf + sizeof((b).buf)) (b).getp = (b).buf; \
 uv_os_sock_t tlsuv_socket(const struct addrinfo *addr, bool blocking);
 int tlsuv_socket_set_blocking(uv_os_sock_t s, bool blocking);
 
+// nosigpipe + cloexec for an accepted socket
+void tlsuv_socket_configure(uv_os_sock_t sock);
+
+struct tlsuv_stream_s;
+// server side of tlsuv_stream_open(): see src/tlsuv.c
+int tlsuv__stream_accept(struct tlsuv_stream_s *s, uv_os_sock_t fd, int alpn_count, const char **alpn,
+                         void (*cb)(struct tlsuv_stream_s *, int));
+
 #endif //TLSUV_UTIL_H
