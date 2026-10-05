@@ -914,12 +914,12 @@ static int set_keychain_key(SSL* ssl, EVP_PKEY* pkey) {
         SSL_SIGN_ECDSA_SECP521R1_SHA512,
     };
     static const uint16_t rsa_algs[] = {
-        SSL_SIGN_RSA_PSS_RSAE_SHA256,
-        SSL_SIGN_RSA_PSS_RSAE_SHA384,
-        SSL_SIGN_RSA_PSS_RSAE_SHA512,
         SSL_SIGN_RSA_PKCS1_SHA256,
         SSL_SIGN_RSA_PKCS1_SHA384,
         SSL_SIGN_RSA_PKCS1_SHA512,
+        SSL_SIGN_RSA_PSS_RSAE_SHA256,
+        SSL_SIGN_RSA_PSS_RSAE_SHA384,
+        SSL_SIGN_RSA_PSS_RSAE_SHA512,
     };
 
     int rc;

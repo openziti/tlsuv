@@ -245,9 +245,13 @@ int keychain_sign_digest_pss(EVP_PKEY* pkey, const EVP_MD* md, const uint8_t* di
         return -1;
     }
 
-    uint8_t* em = tlsuv__malloc(size);
-    size_t len = *siglen;
     int rc = -1;
+    uint8_t* em = tlsuv__malloc(size);
+    if (em == NULL) {
+        UM_LOG(WARN, "failed to allocate memory for PSS block");
+        goto done;
+    }
+    size_t len = *siglen;
     // salt length -1: as long as the digest
     if (RSA_padding_add_PKCS1_PSS_mgf1(EVP_PKEY_get0_RSA(pkey), em, digest, md, md, -1) != 1) {
         UM_LOG(WARN, "failed to build PSS block: %s", tls_error(ERR_get_error()));
@@ -257,6 +261,12 @@ int keychain_sign_digest_pss(EVP_PKEY* pkey, const EVP_MD* md, const uint8_t* di
     rc = keychain_key_sign(k, em, size, sig, &len, RSA_NO_PADDING);
     if (rc != 0) {
         UM_LOG(WARN, "keychain failed to sign: %d", rc);
+        rc = -1;
+        goto done;
+    }
+    // a raw RSA signature is always as long as the modulus
+    if (len != size) {
+        UM_LOG(WARN, "keychain returned unexpected signature length: %zd != %zd", len, size);
         rc = -1;
         goto done;
     }
