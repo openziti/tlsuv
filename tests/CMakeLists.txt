@@ -84,6 +84,9 @@ target_compile_definitions(all_tests PRIVATE
         TEST_SERVER_CA=${TLSUV_TEST_CERTS_DIR}/ca.pem
         TEST_SERVER_CERT=${TLSUV_TEST_CERTS_DIR}/server.crt
         TEST_SERVER_KEY=${TLSUV_TEST_CERTS_DIR}/server.key
+        TEST_OTHER_CA=${TLSUV_TEST_CERTS_DIR}/other-ca.pem
+        TEST_OTHER_CERT=${TLSUV_TEST_CERTS_DIR}/other-client.crt
+        TEST_OTHER_KEY=${TLSUV_TEST_CERTS_DIR}/other-client.key
         )
 if (softhsm_lib)
     target_compile_definitions(all_tests PRIVATE

@@ -459,14 +459,15 @@ static int apple_ca_verify(int pre_verify, X509_STORE_CTX *st) {
     }
     sk_X509_pop_free(chain, X509_free);
 
-    SecTrustRef trust;
+    SecTrustRef trust = NULL;
     SecPolicyRef policy = SecPolicyCreateBasicX509();
 
     CFErrorRef err = NULL;
     bool result =
             SecTrustCreateWithCertificates(certs, policy, &trust) == errSecSuccess &&
             SecTrustEvaluateWithError(trust, &err);
-    CFRelease(trust);
+    if (err) CFRelease(err);
+    if (trust) CFRelease(trust);
     CFRelease(policy);
     CFRelease(certs);
 
@@ -787,20 +788,21 @@ static STACK_OF(X509_NAME) *ca_subject_names(X509_STORE *store) {
 }
 
 static void setup_client_auth(struct openssl_ctx *c, SSL *ssl) {
-    // Client certificates are OPTIONAL: on a server SSL_VERIFY_PEER *requests* a
-    // certificate, and without SSL_VERIFY_FAIL_IF_NO_PEER_CERT a client that
-    // sends none still completes the handshake.
+    // Client certificates are only requested when there is something to verify
+    // them against: an explicit CA bundle or a verify callback. The system trust
+    // store is never used for client certificates.
     if (c->ca_store == NULL && c->cert_verify_f == NULL) {
-        // nothing to verify against, so don't even ask
         SSL_set_verify(ssl, SSL_VERIFY_NONE, NULL);
         return;
     }
 
+    // Once requested, a certificate is required: a client that sends none fails
+    // the handshake (same on every backend).
     // SSL_set_verify also replaces any verify callback inherited from the
     // SSL_CTX. That is deliberate: on Apple the context callback is
     // apple_ca_verify, which validates against the *system* trust store - the
     // wrong store for client certificates.
-    SSL_set_verify(ssl, SSL_VERIFY_PEER, NULL);
+    SSL_set_verify(ssl, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 
     if (c->ca_store != NULL) {
         SSL_set1_verify_cert_store(ssl, c->ca_store);
@@ -824,8 +826,6 @@ tlsuv_engine_t new_openssl_server_engine(tls_context *ctx) {
 
     struct openssl_engine *engine = tlsuv__calloc(1, sizeof(struct openssl_engine));
     engine->api = openssl_engine_api;
-    // not requesting client certs yet
-    engine->api.get_peer_cert = NULL;
     engine->is_server = true;
 
     engine->ssl = SSL_new(context->ctx);
@@ -845,9 +845,7 @@ tlsuv_engine_t new_openssl_server_engine(tls_context *ctx) {
         return NULL;
     }
 
-    // disable for now: maybe add engine->set_client_auth()
-    // setup_client_auth(context, engine->ssl);
-    SSL_set_verify(engine->ssl, SSL_VERIFY_NONE, NULL);
+    setup_client_auth(context, engine->ssl);
 
     return &engine->api;
 }

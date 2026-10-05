@@ -262,6 +262,9 @@ struct tls_context_s {
 
     /**
      * set new CA bundle on TLS context, replacing the current one
+     *
+     * On a context used for server engines the bundle is also the set of CAs accepted for
+     * *client* certificates (unless a verify callback is set), see new_server_engine().
      * @param ctx TLS context
      * @param ca CA bundle (PEM or file), NULL to go back to the system CA store
      * @param ca_len length of CA bundle
@@ -304,9 +307,9 @@ struct tls_context_s {
      *
      * The same callback validates server certificates on client engines and
      * *client* certificates on server engines; it cannot tell the two roles apart.
-     * Note it is not invoked at all when a client presents no certificate, so it
-     * cannot be used to reject an anonymous client -- use
-     * tlsuv_engine_s::get_peer_cert() after the handshake for that.
+     * Setting it makes server engines request (and require) a client certificate,
+     * the callback replaces validation against the CA bundle and is not invoked
+     * for a client that presents no certificate -- that client fails the handshake.
      *
      * @param ctx TLS implementation
      * @param verify_f verification callback, receives opaque(implementation specific) certificate handle and custom data
@@ -401,12 +404,25 @@ struct tls_context_s {
      *
      * The context must be fully configured before any server engine is created.
      *
+     * Client certificates (mTLS):
+     * the engine requests and validates a client certificate only if the context has
+     * an explicit CA bundle (set_ca_bundle() with a bundle) or a verification callback
+     * (set_cert_verify()); with neither it does not ask for one.
+     * The system CA store is never used to validate client certificates.
+     * If both are set the callback decides.
+     * The server also tells clients which CAs it accepts (the TLS "acceptable CAs" hint,
+     * used by clients to pick an identity) when it has a CA bundle, but only the OpenSSL and
+     * BoringSSL backends do. Applesec has no public API for it, and win32crypto leaves it
+     * to Schannel's system-wide settings. Validation does not depend on the hint:
+     * every backend checks the client certificate itself.
+     * Once requested a certificate is required: a client that presents none, or an
+     * untrusted one, fails the handshake. There is no "optional" mode, since not every
+     * backend can offer it.
+     * The validated certificate is available from tlsuv_engine_s::get_peer_cert().
+     *
      * Not implemented yet:
      * SNI based certificate selection, session ticket key
-     * management, a client-certificate-*required* mode, and there is no
-     * tlsuv_stream_t listen/accept path.
-     *
-     * mTLS is not implemented. Client certificates are not requested or validated.
+     * management, and there is no tlsuv_stream_t listen/accept path.
      *
      * Optional: may be NULL when the TLS backend has no server support.
      *
