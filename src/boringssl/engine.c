@@ -862,7 +862,7 @@ static enum ssl_private_key_result_t kc_sign(SSL* ssl, uint8_t* out, size_t* out
                                              uint16_t sigalg, const uint8_t* in, size_t in_len) {
     struct openssl_engine* e = SSL_get_app_data(ssl);
     const EVP_MD* md = SSL_get_signature_algorithm_digest(sigalg);
-    if (e == NULL || e->kc_pkey == NULL || md == NULL || SSL_is_signature_algorithm_rsa_pss(sigalg)) {
+    if (e == NULL || e->kc_pkey == NULL || md == NULL) {
         UM_LOG(ERR, "keychain key cannot sign with signature algorithm 0x%04x", sigalg);
         return ssl_private_key_failure;
     }
@@ -874,7 +874,10 @@ static enum ssl_private_key_result_t kc_sign(SSL* ssl, uint8_t* out, size_t* out
     }
 
     size_t siglen = max_out;
-    if (keychain_sign_digest(e->kc_pkey, md, digest, digestlen, out, &siglen) != 0) {
+    int rc = SSL_is_signature_algorithm_rsa_pss(sigalg)
+                 ? keychain_sign_digest_pss(e->kc_pkey, md, digest, digestlen, out, &siglen)
+                 : keychain_sign_digest(e->kc_pkey, md, digest, digestlen, out, &siglen);
+    if (rc != 0) {
         return ssl_private_key_failure;
     }
     *out_len = siglen;
@@ -903,7 +906,8 @@ static int set_keychain_key(SSL* ssl, EVP_PKEY* pkey) {
     struct openssl_engine* e = SSL_get_app_data(ssl);
     assert(e);
 
-    // keychains sign ECDSA and RSA PKCS#1 v1.5 only (no RSA-PSS)
+    // keychains sign ECDSA and raw RSA: RSA-PSS (the only RSA scheme in TLS 1.3) is padded here,
+    // RSA PKCS#1 v1.5 is left for TLS 1.2
     static const uint16_t ec_algs[] = {
         SSL_SIGN_ECDSA_SECP256R1_SHA256,
         SSL_SIGN_ECDSA_SECP384R1_SHA384,
@@ -913,13 +917,14 @@ static int set_keychain_key(SSL* ssl, EVP_PKEY* pkey) {
         SSL_SIGN_RSA_PKCS1_SHA256,
         SSL_SIGN_RSA_PKCS1_SHA384,
         SSL_SIGN_RSA_PKCS1_SHA512,
+        SSL_SIGN_RSA_PSS_RSAE_SHA256,
+        SSL_SIGN_RSA_PSS_RSAE_SHA384,
+        SSL_SIGN_RSA_PSS_RSAE_SHA512,
     };
 
     int rc;
     if (EVP_PKEY_id(pkey) == EVP_PKEY_RSA) {
         rc = SSL_set_signing_algorithm_prefs(ssl, rsa_algs, sizeof(rsa_algs) / sizeof(rsa_algs[0]));
-        // TLS 1.3 requires RSA-PSS for RSA keys
-        if (rc == 1) rc = SSL_set_max_proto_version(ssl, TLS1_2_VERSION);
     } else {
         rc = SSL_set_signing_algorithm_prefs(ssl, ec_algs, sizeof(ec_algs) / sizeof(ec_algs[0]));
     }

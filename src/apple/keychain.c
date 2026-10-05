@@ -185,6 +185,9 @@ static int key_sign(keychain_key_t k,
                 algorithm = kSecKeyAlgorithmRSASignatureDigestPKCS1v15Raw;
             } else if (p == 3) { // RSA_NO_PADDING
                 algorithm = kSecKeyAlgorithmRSASignatureRaw;
+            } else {
+                UM_LOG(ERR, "unsupported RSA padding[%d]", p);
+                return EINVAL;
             }
             break;
         default:

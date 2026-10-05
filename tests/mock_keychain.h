@@ -51,6 +51,9 @@ class MockKeychain {
 public:
     keychain_t api{};
     std::map<std::string, EVP_PKEY *> keys;
+    // padding argument of the last key_sign() call: RSA_PKCS1_PADDING for a
+    // DigestInfo, RSA_NO_PADDING for an already padded block (RSA-PSS)
+    int last_sign_padding = 0;
 
     MockKeychain() {
         api.gen_key = gen_key;
@@ -187,6 +190,7 @@ private:
     // for RSA-PSS in TLS 1.3
     static int key_sign(keychain_key_t k, const uint8_t *data, size_t datalen,
                         uint8_t *sig, size_t *siglen, int padding) {
+        self().last_sign_padding = padding;
         auto pkey = (EVP_PKEY *)k;
         if (EVP_PKEY_id(pkey) == EVP_PKEY_EC) {
             unsigned int l = 0;
