@@ -79,6 +79,7 @@ struct mbedtls_context {
     mbedtls_x509_crt *own_cert;
     int (*cert_verify_f)(const struct tlsuv_certificate_s* , void *v_ctx);
     void *verify_ctx;
+    enum tls_version min_version;
 };
 
 struct mbedtls_engine {
@@ -108,6 +109,7 @@ struct mbedtls_engine {
 static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** protos, int len);
 static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certificate_t cert);
 static int mbedtls_set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len);
+static int mbedtls_set_min_version(tls_context *ctx, enum tls_version min);
 
 tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host);
 
@@ -174,6 +176,7 @@ static tls_context mbedtls_context_api = {
         // .new_server_engine: TLS server engines are OpenSSL-only
         .version = mbedtls_version,
         .fips_status = mbedtls_fips_status,
+        .set_min_version = mbedtls_set_min_version,
         .strerror = mbedtls_error,
         .new_engine = new_mbedtls_engine,
         .free_ctx = mbedtls_free_ctx,
@@ -275,6 +278,22 @@ static int mbedtls_set_ca_bundle(tls_context *ctx, const char *ca, size_t ca_len
     tlsuv__free(c->ca);
     c->ca = bundle;
     c->ca_len = bundle ? ca_len : 0;
+    return 0;
+}
+
+static int mbedtls_set_min_version(tls_context *ctx, enum tls_version min) {
+    struct mbedtls_context *c = (struct mbedtls_context *) ctx;
+    switch (min) {
+        case TLSUV_TLS12:
+            break;
+#if MBEDTLS_VERSION_MAJOR == 3 && defined(MBEDTLS_SSL_PROTO_TLS1_3)
+        case TLSUV_TLS13:
+            break;
+#endif
+        default:
+            return -1;
+    }
+    c->min_version = min;
     return 0;
 }
 
@@ -445,6 +464,12 @@ tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host) {
 
     struct mbedtls_engine *mbed_eng = tlsuv__calloc(1, sizeof(struct mbedtls_engine));
     init_ssl_context(&mbed_eng->config, context->ca, context->ca_len);
+#if MBEDTLS_VERSION_MAJOR == 3 && defined(MBEDTLS_SSL_PROTO_TLS1_3)
+    // the library default is TLS 1.2
+    if (context->min_version == TLSUV_TLS13) {
+        mbedtls_ssl_conf_min_tls_version(&mbed_eng->config, MBEDTLS_SSL_VERSION_TLS1_3);
+    }
+#endif
 
     if (context->own_key && context->own_cert) {
         mbedtls_ssl_conf_own_cert(&mbed_eng->config, context->own_cert, &context->own_key->pkey);

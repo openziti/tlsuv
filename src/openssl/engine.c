@@ -137,6 +137,7 @@ static void msg_cb (int write_p, int version, int content_type, const void *buf,
 static void info_cb(const SSL *s, int where, int ret);
 
 static int tls_set_partial_vfy(tls_context *ctx, int allow);
+static int tls_set_min_version(tls_context *ctx, enum tls_version min);
 
 static int tls_set_cert_internal(SSL* ssl, X509_STORE* store, EVP_PKEY* pkey);
 
@@ -151,6 +152,7 @@ static X509_STORE *load_system_certs();
 static tls_context openssl_context_api = {
         .version = tls_lib_version,
         .fips_status = tls_fips_status,
+        .set_min_version = tls_set_min_version,
         .strerror = (const char *(*)(long)) tls_error,
         .new_engine = new_openssl_engine,
         .new_server_engine = new_openssl_server_engine,
@@ -975,6 +977,17 @@ int tls_set_partial_vfy(tls_context *ctx, int allow) {
         X509_VERIFY_PARAM_clear_flags(vfy, X509_V_FLAG_PARTIAL_CHAIN);
     }
     return 0;
+}
+
+static int tls_set_min_version(tls_context *ctx, enum tls_version min) {
+    struct openssl_ctx *c = (struct openssl_ctx *) ctx;
+    int version;
+    switch (min) {
+        case TLSUV_TLS12: version = TLS1_2_VERSION; break;
+        case TLSUV_TLS13: version = TLS1_3_VERSION; break;
+        default: return -1;
+    }
+    return SSL_CTX_set_min_proto_version(c->ctx, version) == 1 ? 0 : -1;
 }
 
 static void tls_set_cert_verify(tls_context *ctx,

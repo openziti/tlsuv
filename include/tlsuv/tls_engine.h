@@ -249,6 +249,11 @@ enum tls_fips_status {
     TLS_FIPS_ENABLED = 1, /* FIPS validated crypto is in effect */
 };
 
+enum tls_version {
+    TLSUV_TLS12 = 12,
+    TLSUV_TLS13 = 13,
+};
+
 struct tls_context_s {
     /* creates new TLS engine for a host */
     tlsuv_engine_t (*new_engine)(tls_context *ctx, const char *host);
@@ -427,6 +432,20 @@ struct tls_context_s {
      * @return one of [enum tls_fips_status]
      */
     enum tls_fips_status (*fips_status)(tls_context* ctx, char* module, size_t modulelen);
+
+    /**
+     * Sets the minimum TLS version the context negotiates, for client and server engines.
+     *
+     * The default is [TLSUV_TLS12]. Only engines created after this call are affected.
+     *
+     * Optional: may be NULL when the TLS backend does not support it.
+     *
+     * @param ctx TLS context
+     * @param min one of [enum tls_version]
+     * @return 0 on success; a negative value if the version is unknown or not supported
+     * by the backend, in which case the current minimum is left in place
+     */
+    int (*set_min_version)(tls_context *ctx, enum tls_version min);
 };
 
 typedef tls_context *(*tls_context_factory)(void);
