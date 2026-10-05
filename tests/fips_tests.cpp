@@ -93,7 +93,8 @@ TEST_CASE("require_fips engines complete a handshake", "[engine][server][fips]")
     bool restrict_client = GENERATE(true, false);
     INFO("restrict_server=" << restrict_server << " restrict_client=" << restrict_client);
 
-    tls_ctx_holder srv(test_ca);
+    // no CA bundle: a server with one requires client certificates
+    tls_ctx_holder srv(nullptr);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
     REQUIRE(srv.tls->require_fips != nullptr);
     // restricting *before* configuring the context must stick
@@ -345,6 +346,38 @@ TEST_CASE("require_fips client completes a handshake with approved peers", "[eng
     CHECK_THAT(SSL_CIPHER_get_name(cipher), Catch::Matchers::ContainsSubstring("GCM"));
 }
 
+// require_fips() must not lower a minimum raised with set_min_version(), whichever comes first
+// (BoringSSL's compliance policy resets the minimum to TLS 1.2 itself)
+TEST_CASE("require_fips keeps a TLS 1.3 minimum", "[engine][server][fips]") {
+    bool min_first = GENERATE(true, false);
+    INFO("set_min_version " << (min_first ? "before" : "after") << " require_fips");
+
+    tls_ctx_holder clt(test_ca);
+    REQUIRE(clt.tls->require_fips != nullptr);
+    if (clt.tls->set_min_version == nullptr) {
+        SKIP("set_min_version is not supported by this backend");
+    }
+    if (min_first) REQUIRE(clt.tls->set_min_version(clt.tls, TLSUV_TLS13) == 0);
+    clt.tls->require_fips(clt.tls);
+    if (!min_first) REQUIRE(clt.tls->set_min_version(clt.tls, TLSUV_TLS13) == 0);
+
+    // approved_peers[0]: TLS 1.2 only, otherwise acceptable to a restricted client
+    {
+        engine_holder eng(clt.tls->new_engine(clt.tls, test_host));
+        REQUIRE(eng.e != nullptr);
+        raw_peer peer(approved_peers[0]);
+        CHECK_FALSE(handshake_with_raw_peer(eng, peer));
+    }
+    // approved_peers[1]: library defaults, speaks TLS 1.3
+    {
+        engine_holder eng(clt.tls->new_engine(clt.tls, test_host));
+        REQUIRE(eng.e != nullptr);
+        raw_peer peer(approved_peers[1]);
+        CHECK(handshake_with_raw_peer(eng, peer));
+        CHECK(SSL_version(peer.ssl) == TLS1_3_VERSION);
+    }
+}
+
 TEST_CASE("require_fips client rejects peers offering only non-approved algorithms",
           "[engine][server][fips]") {
     auto policy = GENERATE_COPY(from_range(rejected_peers));
@@ -377,7 +410,8 @@ TEST_CASE("require_fips server engine completes a handshake with approved client
     auto policy = GENERATE_COPY(from_range(approved_peers));
     INFO("peer: " << policy.name);
 
-    tls_ctx_holder srv(test_ca);
+    // no CA bundle: a server with one requires client certificates
+    tls_ctx_holder srv(nullptr);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
     REQUIRE(srv.tls->require_fips != nullptr);
     srv.tls->require_fips(srv.tls);
@@ -405,7 +439,8 @@ TEST_CASE("require_fips server engine rejects clients offering only non-approved
 
     // control: an unrestricted server must get through
     {
-        tls_ctx_holder plain(test_ca);
+        // no CA bundle: a server with one requires client certificates
+        tls_ctx_holder plain(nullptr);
         SKIP_UNLESS_SERVER_SUPPORTED(plain);
         plain.set_identity();
         engine_holder eng(plain.tls->new_server_engine(plain.tls));
@@ -414,7 +449,8 @@ TEST_CASE("require_fips server engine rejects clients offering only non-approved
         CHECK_CONTROL_ACCEPTED(handshake_with_raw_peer(eng, peer));
     }
 
-    tls_ctx_holder fips(test_ca);
+    // no CA bundle: a server with one requires client certificates
+    tls_ctx_holder fips(nullptr);
     REQUIRE(fips.tls->require_fips != nullptr);
     fips.tls->require_fips(fips.tls);
     fips.set_identity();
@@ -477,7 +513,8 @@ TEST_CASE("server engines refuse TLS versions below 1.2", "[engine][server][fips
     bool restricted = GENERATE(false, true);
     INFO("peer: " << policy.name << " restricted=" << restricted);
 
-    tls_ctx_holder srv(test_ca);
+    // no CA bundle: a server with one requires client certificates
+    tls_ctx_holder srv(nullptr);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
     if (!legacy_peer_usable(policy)) SKIP("the OpenSSL build under test cannot speak this version");
     if (restricted) {
@@ -544,26 +581,14 @@ std::string engine_to_peer(tlsuv_engine_t eng, raw_peer &peer, raw_link &link, c
     return got;
 }
 
-// Completes the handshake with a TLS 1.3-only peer. On win32crypto the unrestricted
-// engines use the legacy SCHANNEL_CRED credentials, with which Schannel may not offer
-// TLS 1.3 (only the restricted SCH_CREDENTIALS ones reliably do), so there a refused
-// unrestricted handshake skips the case instead of failing it.
-#if defined(TEST_win32crypto)
-#define REQUIRE_TLS13_HANDSHAKE(eng, peer, link, restricted) \
-    do { \
-        bool ok_ = handshake_with_raw_peer(eng, peer, link); \
-        if (!ok_ && !(restricted)) SKIP("unrestricted Schannel credentials do not negotiate TLS 1.3 here"); \
-        REQUIRE(ok_); \
-        REQUIRE(SSL_version((peer).ssl) == TLS1_3_VERSION); \
-    } while (0)
-#else
+// Completes the handshake with a TLS 1.3-only peer. Every backend must manage it, restricted
+// or not.
 #define REQUIRE_TLS13_HANDSHAKE(eng, peer, link, restricted) \
     do { \
         (void) (restricted); \
         REQUIRE(handshake_with_raw_peer(eng, peer, link)); \
         REQUIRE(SSL_version((peer).ssl) == TLS1_3_VERSION); \
     } while (0)
-#endif
 
 void restrict_if(tls_ctx_holder &h, bool restricted) {
     if (restricted) {
@@ -629,7 +654,8 @@ TEST_CASE("server engine answers a TLS 1.3 KeyUpdate", "[engine][server][fips]")
     bool restricted = GENERATE(false, true);
     INFO("restricted=" << restricted);
 
-    tls_ctx_holder srv(test_ca);
+    // no CA bundle: a server with one requires client certificates
+    tls_ctx_holder srv(nullptr);
     SKIP_UNLESS_SERVER_SUPPORTED(srv);
     restrict_if(srv, restricted);
     srv.set_identity();
