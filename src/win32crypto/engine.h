@@ -19,6 +19,12 @@
 
 #include <tlsuv/tls_engine.h>
 
+// schannel.h declares SCH_CREDENTIALS and TLS_PARAMETERS only with this, and they need UNICODE_STRING.
+// Define it here: the first include of schannel.h decides.
+#ifndef SCHANNEL_USE_BLACKLISTS
+#define SCHANNEL_USE_BLACKLISTS
+#endif
+#include <subauth.h>
 #include <schannel.h>
 #include <sspi.h>
 #include <stdbool.h>

@@ -17,7 +17,6 @@
 #include <windows.h>
 #include "engine.h"
 
-#define SCHANNEL_USE_BLACKLISTS
 #include <sspi.h>
 #include <schannel.h>
 #include <stdint.h>
@@ -970,6 +969,56 @@ static void cert_subject(PCCERT_CONTEXT cert, char* subj, size_t len) {
     }
 }
 
+// Acquires Schannel credentials for a client (SECPKG_CRED_OUTBOUND) or server (SECPKG_CRED_INBOUND).
+//
+// SCH_CREDENTIALS (Windows 10 1809 / Server 2019 and later) is used first: Schannel only supports
+// TLS 1.3 through it, and it takes the protocols to disable (TLS_PARAMETERS), not the ones to enable.
+// Older systems reject the structure; they have no TLS 1.3 either, so unless TLS 1.3 is required
+// the legacy SCHANNEL_CRED is tried with TLS 1.2 only.
+static SECURITY_STATUS acquire_credentials(PCredHandle handle, ULONG direction, bool server,
+                                           DWORD flags, PCCERT_CONTEXT *certs, DWORD ncerts,
+                                           enum tls_version min_version) {
+    TLS_PARAMETERS tls_params = {
+        // anything below the minimum (TLS 1.0/1.1 included, as before) stays disabled
+        .grbitDisabledProtocols = (DWORD) (min_version == TLSUV_TLS13
+                                               ? ~SP_PROT_TLS1_3
+                                               : ~(SP_PROT_TLS1_2 | SP_PROT_TLS1_3)),
+    };
+    SCH_CREDENTIALS credentials = {
+        .dwVersion = SCH_CREDENTIALS_VERSION,
+        .cCreds = ncerts,
+        .paCred = certs,
+        .dwFlags = flags,
+        .cTlsParameters = 1,
+        .pTlsParameters = &tls_params,
+    };
+
+    SECURITY_STATUS rc = AcquireCredentialsHandleA(NULL,
+                              (TCHAR *)(UNISP_NAME),
+                              direction, NULL,
+                              &credentials, NULL, NULL,
+                              handle,
+                              NULL);
+    if (rc == SEC_E_OK || min_version == TLSUV_TLS13) {
+        return rc;
+    }
+
+    LOG_ERROR(WARN, rc, "AcquireCredentialsHandleA(SCH_CREDENTIALS) result, trying SCHANNEL_CRED with TLS 1.2");
+    SCHANNEL_CRED legacy = {
+        .dwVersion = SCHANNEL_CRED_VERSION,
+        .dwFlags = flags,
+        .grbitEnabledProtocols = server ? SP_PROT_TLS1_2_SERVER : SP_PROT_TLS1_2_CLIENT,
+        .cCreds = ncerts,
+        .paCred = certs,
+    };
+    return AcquireCredentialsHandleA(NULL,
+                              (TCHAR *)(UNISP_NAME),
+                              direction, NULL,
+                              &legacy, NULL, NULL,
+                              handle,
+                              NULL);
+}
+
 struct win32crypto_engine_s* new_win32engine(
     const char* hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
@@ -986,21 +1035,8 @@ struct win32crypto_engine_s* new_win32engine(
     flags |= engine->cert_verify_f ? SCH_CRED_MANUAL_CRED_VALIDATION : SCH_CRED_AUTO_CRED_VALIDATION;
 
     PCCERT_CONTEXT certs[1] = {own_cert,};
-    SCHANNEL_CRED credentials = {
-        .dwVersion = SCHANNEL_CRED_VERSION,
-        .dwFlags = flags,
-        .grbitEnabledProtocols = min_version == TLSUV_TLS13 ? SP_PROT_TLS1_3_CLIENT
-                                                           : SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT,
-        .cCreds = own_cert ? 1 : 0,
-        .paCred = certs,
-    };
-
-    SECURITY_STATUS rc = AcquireCredentialsHandleA(NULL,
-                              (TCHAR *)(UNISP_NAME),
-                              SECPKG_CRED_OUTBOUND, NULL,
-                              &credentials, NULL, NULL,
-                              &engine->cred_handle,
-                              NULL);
+    SECURITY_STATUS rc = acquire_credentials(&engine->cred_handle, SECPKG_CRED_OUTBOUND, false,
+                                             flags, certs, own_cert ? 1 : 0, min_version);
     if (rc != ERROR_SUCCESS) {
         LOG_ERROR(ERR, rc, "AcquireCredentialsHandleA result");
     }
@@ -1028,37 +1064,13 @@ struct win32crypto_engine_s *new_win32_server_engine(
            subj, engine->request_client_cert ? "requested" : "off");
 
     PCCERT_CONTEXT certs[1] = { own_cert, };
-    SCHANNEL_CRED credentials = {
-        .dwVersion = SCHANNEL_CRED_VERSION,
-        // client certificates are validated by verify_peer_cert(), not by
-        // Schannel, and are never mapped to a Windows account
-        .dwFlags = SCH_CRED_MEMORY_STORE_CERT |
-                   SCH_CRED_MANUAL_CRED_VALIDATION |
-                   SCH_CRED_NO_SYSTEM_MAPPER,
-        .grbitEnabledProtocols = min_version == TLSUV_TLS13 ? SP_PROT_TLS1_3_SERVER
-                                                           : SP_PROT_TLS1_2_SERVER | SP_PROT_TLS1_3_SERVER,
-        .cCreds = 1,
-        .paCred = certs,
-    };
-
-    SECURITY_STATUS rc = AcquireCredentialsHandleA(NULL,
-                              (TCHAR *)(UNISP_NAME),
-                              SECPKG_CRED_INBOUND, NULL,
-                              &credentials, NULL, NULL,
-                              &engine->cred_handle,
-                              NULL);
-    if (rc != ERROR_SUCCESS && min_version != TLSUV_TLS13) {
-        // TLS 1.3 server support needs the newer SCH_CREDENTIALS structure on
-        // some Windows versions; fall back to TLS 1.2 rather than fail outright
-        LOG_ERROR(WARN, rc, "AcquireCredentialsHandleA(TLS1.2+TLS1.3) result");
-        credentials.grbitEnabledProtocols = SP_PROT_TLS1_2_SERVER;
-        rc = AcquireCredentialsHandleA(NULL,
-                                       (TCHAR *)(UNISP_NAME),
-                                       SECPKG_CRED_INBOUND, NULL,
-                                       &credentials, NULL, NULL,
-                                       &engine->cred_handle,
-                                       NULL);
-    }
+    // client certificates are validated by verify_peer_cert(), not by
+    // Schannel, and are never mapped to a Windows account
+    DWORD flags = SCH_CRED_MEMORY_STORE_CERT |
+                  SCH_CRED_MANUAL_CRED_VALIDATION |
+                  SCH_CRED_NO_SYSTEM_MAPPER;
+    SECURITY_STATUS rc = acquire_credentials(&engine->cred_handle, SECPKG_CRED_INBOUND, true,
+                                             flags, certs, 1, min_version);
 
     if (rc != ERROR_SUCCESS) {
         LOG_ERROR(ERR, rc, "failed to acquire server credentials");
