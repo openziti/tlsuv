@@ -747,8 +747,7 @@ static int engine_flush(struct win32crypto_engine_s *engine) {
             continue;
         }
 
-        // TLS_AGAIN is the io contract for a blocked write; the socket error is only set by
-        // the socket io, not by one that does not go through Winsock
+        // a blocked write returns TLS_AGAIN; only the socket io also sets the Winsock error
         err = rc == TLS_AGAIN ? WSAEWOULDBLOCK : WSAGetLastError();
         break;
     }
@@ -1164,8 +1163,8 @@ static void cert_subject(PCCERT_CONTEXT cert, char* subj, size_t len) {
 //
 // SCH_CREDENTIALS (Windows 10 1809 / Server 2019 and later) is used first: Schannel only supports
 // TLS 1.3 through it, and it takes the protocols to disable (TLS_PARAMETERS), not the ones to enable.
-// Older systems (Server 2016) reject the structure with SEC_E_UNKNOWN_CREDENTIALS; they have no
-// TLS 1.3 either, so unless TLS 1.3 is required the legacy SCHANNEL_CRED is tried with TLS 1.2 only.
+// Older systems reject the structure with SEC_E_UNKNOWN_CREDENTIALS; they have no TLS 1.3
+// either, so unless TLS 1.3 is required the legacy SCHANNEL_CRED is tried with TLS 1.2 only.
 // Any other failure is not about the structure and must not downgrade to TLS 1.2.
 
 // set once SCH_CREDENTIALS has been rejected and SCHANNEL_CRED accepted, so later

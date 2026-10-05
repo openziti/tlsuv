@@ -548,7 +548,7 @@ static void init_ssl_context(struct openssl_ctx *c) {
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
     // a TLS 1.2 renegotiation would run a second handshake that tlsuv never sees, so its peer
-    // goes unchecked; refuse it, as the win32crypto engine does
+    // goes unchecked; refuse it
     SSL_CTX_set_options(ctx, SSL_OP_NO_RENEGOTIATION);
 
     char *tls_debug = getenv("TLS_DEBUG");
