@@ -836,8 +836,12 @@ TEST_CASE("server engine reset", "[engine][server]") {
 
 #ifdef TEST_HAVE_OPENSSL_API
 // TLS 1.3 only allows RSA-PSS for RSA keys, and keychains do not sign RSA-PSS themselves:
-// they sign the padded block that tlsuv builds (RSA_NO_PADDING)
+// they sign the padded block that tlsuv builds (RSA_NO_PADDING). With TLS 1.3 required
+// there is no TLS 1.2 fallback to PKCS#1 v1.5, so the handshake only works with RSA-PSS.
 TEST_CASE("server engine with RSA keychain key signs RSA-PSS", "[engine][server]") {
+    auto min_version = GENERATE(as<enum tls_version>{}, TLSUV_TLS12, TLSUV_TLS13);
+    INFO("minimum TLS version " << min_version);
+
     MockKeychainScope mock_scope;
     auto &mock = mock_keychain();
     mock.set_format(MockFormat::SPKI);
@@ -865,8 +869,36 @@ TEST_CASE("server engine with RSA keychain key signs RSA-PSS", "[engine][server]
     tls_ctx_holder clt(nullptr);
     clt.tls->set_cert_verify(clt.tls, [](const tlsuv_certificate_s *, void *) { return 0; }, nullptr);
 
+    REQUIRE(srv.tls->set_min_version != nullptr);
+    REQUIRE(srv.tls->set_min_version(srv.tls, min_version) == 0);
+    REQUIRE(clt.tls->set_min_version(clt.tls, min_version) == 0);
+
     mock.last_sign_padding = 0;
     CHECK(handshake_succeeds(clt.tls, srv.tls));
     CHECK(mock.last_sign_padding == RSA_NO_PADDING);
 }
 #endif
+
+TEST_CASE("minimum TLS version", "[engine][server]") {
+    tls_ctx_holder srv(test_ca);
+    SKIP_UNLESS_SERVER_SUPPORTED(srv);
+    srv.set_identity();
+    tls_ctx_holder clt(test_ca);
+    if (srv.tls->set_min_version == nullptr || clt.tls->set_min_version == nullptr) {
+        SKIP("set_min_version is not supported by this backend");
+    }
+
+    // both peers speak TLS 1.3, so raising the minimum on either side, or both, still connects
+    auto [clt_min, srv_min] = GENERATE(table<enum tls_version, enum tls_version>({
+        {TLSUV_TLS12, TLSUV_TLS12},
+        {TLSUV_TLS13, TLSUV_TLS12},
+        {TLSUV_TLS12, TLSUV_TLS13},
+        {TLSUV_TLS13, TLSUV_TLS13},
+    }));
+    INFO("client min " << clt_min << ", server min " << srv_min);
+
+    REQUIRE(clt.tls->set_min_version(clt.tls, clt_min) == 0);
+    REQUIRE(srv.tls->set_min_version(srv.tls, srv_min) == 0);
+
+    CHECK(handshake_succeeds(clt.tls, srv.tls));
+}

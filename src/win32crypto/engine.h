@@ -61,7 +61,7 @@ struct win32crypto_engine_s {
 extern struct win32crypto_engine_s *new_win32engine(
     const char *hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
-    void *verify_ctx);
+    void *verify_ctx, enum tls_version min_version);
 
 /**
  * Creates a server(accept) side engine. [own_cert] is required and must have an
@@ -72,6 +72,6 @@ extern struct win32crypto_engine_s *new_win32engine(
 extern struct win32crypto_engine_s* new_win32_server_engine(
     HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
-    void* verify_ctx);
+    void* verify_ctx, enum tls_version min_version);
 
 #endif //ENGINE_H

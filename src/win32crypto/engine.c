@@ -973,7 +973,7 @@ static void cert_subject(PCCERT_CONTEXT cert, char* subj, size_t len) {
 struct win32crypto_engine_s* new_win32engine(
     const char* hostname, HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx),
-    void* verify_ctx) {
+    void* verify_ctx, enum tls_version min_version) {
     struct win32crypto_engine_s* engine = engine_alloc(false, ca, cert_verify_f, verify_ctx);
     engine->hostname = hostname ? tlsuv__strdup(hostname) : NULL;
 
@@ -989,7 +989,8 @@ struct win32crypto_engine_s* new_win32engine(
     SCHANNEL_CRED credentials = {
         .dwVersion = SCHANNEL_CRED_VERSION,
         .dwFlags = flags,
-        .grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT,
+        .grbitEnabledProtocols = min_version == TLSUV_TLS13 ? SP_PROT_TLS1_3_CLIENT
+                                                           : SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT,
         .cCreds = own_cert ? 1 : 0,
         .paCred = certs,
     };
@@ -1009,7 +1010,7 @@ struct win32crypto_engine_s* new_win32engine(
 struct win32crypto_engine_s *new_win32_server_engine(
     HCERTSTORE ca, PCCERT_CONTEXT own_cert,
     int (*cert_verify_f)(const struct tlsuv_certificate_s * cert, void *v_ctx),
-    void *verify_ctx)
+    void *verify_ctx, enum tls_version min_version)
 {
     if (own_cert == NULL || own_cert == INVALID_HANDLE_VALUE) {
         UM_LOG(ERR, "server engine requires server credentials");
@@ -1034,7 +1035,8 @@ struct win32crypto_engine_s *new_win32_server_engine(
         .dwFlags = SCH_CRED_MEMORY_STORE_CERT |
                    SCH_CRED_MANUAL_CRED_VALIDATION |
                    SCH_CRED_NO_SYSTEM_MAPPER,
-        .grbitEnabledProtocols = SP_PROT_TLS1_2_SERVER | SP_PROT_TLS1_3_SERVER,
+        .grbitEnabledProtocols = min_version == TLSUV_TLS13 ? SP_PROT_TLS1_3_SERVER
+                                                           : SP_PROT_TLS1_2_SERVER | SP_PROT_TLS1_3_SERVER,
         .cCreds = 1,
         .paCred = certs,
     };
@@ -1045,7 +1047,7 @@ struct win32crypto_engine_s *new_win32_server_engine(
                               &credentials, NULL, NULL,
                               &engine->cred_handle,
                               NULL);
-    if (rc != ERROR_SUCCESS) {
+    if (rc != ERROR_SUCCESS && min_version != TLSUV_TLS13) {
         // TLS 1.3 server support needs the newer SCH_CREDENTIALS structure on
         // some Windows versions; fall back to TLS 1.2 rather than fail outright
         LOG_ERROR(WARN, rc, "AcquireCredentialsHandleA(TLS1.2+TLS1.3) result");

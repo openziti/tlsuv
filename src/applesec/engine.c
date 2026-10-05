@@ -1479,6 +1479,10 @@ static struct applesec_engine_s *engine_alloc(struct applesec_ctx *sec_ctx) {
     return e;
 }
 
+static tls_protocol_version_t min_tls_version(const struct applesec_ctx *ctx) {
+    return ctx->min_version == TLSUV_TLS13 ? tls_protocol_version_TLSv13 : tls_protocol_version_TLSv12;
+}
+
 tlsuv_engine_t applesec_new_engine(tls_context *ctx, const char *host) {
     struct applesec_ctx* sec_ctx = (struct applesec_ctx *) ctx;
     struct applesec_engine_s *e = engine_alloc(sec_ctx);
@@ -1505,7 +1509,7 @@ tlsuv_engine_t applesec_new_engine(tls_context *ctx, const char *host) {
     e->protocol_parameters = nw_parameters_create_secure_tcp(
         ^(nw_protocol_options_t opts){
             sec_protocol_options_t sec_options = nw_tls_copy_sec_protocol_options(opts);
-            sec_protocol_options_set_min_tls_protocol_version(sec_options, tls_protocol_version_TLSv12);
+            sec_protocol_options_set_min_tls_protocol_version(sec_options, min_tls_version(sec_ctx));
             sec_protocol_options_set_tls_server_name(sec_options, host);
             if (e->identity) {
                 sec_protocol_options_set_local_identity(sec_options, e->identity);
@@ -1595,7 +1599,7 @@ tlsuv_engine_t applesec_new_server_engine(tls_context *ctx) {
     e->protocol_parameters = nw_parameters_create_secure_tcp(
         ^(nw_protocol_options_t opts){
             sec_protocol_options_t sec_options = nw_tls_copy_sec_protocol_options(opts);
-            sec_protocol_options_set_min_tls_protocol_version(sec_options, tls_protocol_version_TLSv12);
+            sec_protocol_options_set_min_tls_protocol_version(sec_options, min_tls_version(sec_ctx));
             sec_protocol_options_set_local_identity(sec_options, e->identity);
             nw_release(sec_options);
         },

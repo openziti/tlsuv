@@ -60,6 +60,9 @@ struct applesec_ctx {
 
     int (*cert_verify_f)(const struct tlsuv_certificate_s *cert, void *v_ctx);
     void *verify_ctx;
+
+    // minimum TLS protocol version of new engines
+    enum tls_version min_version;
 };
 
 struct applesec_priv_key {

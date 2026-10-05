@@ -37,6 +37,7 @@ struct win32tls {
     HCERTSTORE ca_bundle;
     const CERT_CONTEXT *own_cert;
     HCERTSTORE own_store;
+    enum tls_version min_version;
 };
 
 static tls_context win32tls_context_api;
@@ -90,6 +91,12 @@ static const char* tls_lib_version() {
                  HIWORD(ncrypt_ver), LOWORD(ncrypt_ver), fips ? "FIPS" : "");
     }
     return version;
+}
+
+static int set_min_version(tls_context* ctx, enum tls_version min) {
+    if (min != TLSUV_TLS12 && min != TLSUV_TLS13) return -1;
+    ((struct win32tls*) ctx)->min_version = min;
+    return 0;
 }
 
 static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen) {
@@ -447,7 +454,7 @@ static tlsuv_engine_t new_win32_engine(tls_context *ctx, const char *hostname) {
     struct win32tls *c = (struct win32tls*)ctx;
 
     return (tlsuv_engine_t) new_win32engine(
-        hostname, c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx);
+        hostname, c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx, c->min_version);
 }
 
 static tlsuv_engine_t new_win32_server(tls_context* ctx) {
@@ -460,12 +467,13 @@ static tlsuv_engine_t new_win32_server(tls_context* ctx) {
     }
 
     return (tlsuv_engine_t)new_win32_server_engine(
-        c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx);
+        c->ca_bundle, c->own_cert, c->cert_verify_f, c->verify_ctx, c->min_version);
 }
 
 static tls_context win32tls_context_api = {
         .version = tls_lib_version,
         .fips_status = tls_fips_status,
+        .set_min_version = set_min_version,
         .strerror = (const char *(*)(long)) win32_error,
         .new_engine = new_win32_engine,
         .new_server_engine = new_win32_server,

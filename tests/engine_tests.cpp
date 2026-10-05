@@ -243,6 +243,27 @@ TEST_CASE("set_ca_bundle rejects a bad CA bundle", "[engine]") {
     CHECK(tls->set_ca_bundle(tls, ca.c_str(), ca.size()) == 0);
 }
 
+TEST_CASE("set_min_version accepts only known versions", "[engine]") {
+    tls_context *tls = default_tls_context();
+    REQUIRE(tls != nullptr);
+    DEFER { tls->free_ctx(tls); };
+    if (tls->set_min_version == nullptr) {
+        SKIP("set_min_version is not supported by this backend");
+    }
+
+    CHECK(tls->set_min_version(tls, TLSUV_TLS12) == 0);
+    CHECK(tls->set_min_version(tls, TLSUV_TLS13) == 0);
+
+    CHECK(tls->set_min_version(tls, static_cast<enum tls_version>(0)) != 0);
+    CHECK(tls->set_min_version(tls, static_cast<enum tls_version>(11)) != 0);
+    CHECK(tls->set_min_version(tls, static_cast<enum tls_version>(14)) != 0);
+
+    // the context is still usable after a rejected value
+    tlsuv_engine_t engine = tls->new_engine(tls, "localhost");
+    CHECK(engine != nullptr);
+    if (engine) engine->free(engine);
+}
+
 // e.g. a renewed certificate installed with the same key, on a long-lived context
 TEST_CASE("set_own_cert repeatedly on one context", "[engine]") {
     auto cert_pem = read_pem(pem_path_str(TEST_SERVER_CERT));

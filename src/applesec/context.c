@@ -187,6 +187,12 @@ static void tls_free_ctx(tls_context* ctx) {
     tlsuv__free(c);
 }
 
+static int tls_set_min_version(tls_context* ctx, enum tls_version min) {
+    if (min != TLSUV_TLS12 && min != TLSUV_TLS13) return -1;
+    ((struct applesec_ctx*) ctx)->min_version = min;
+    return 0;
+}
+
 static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen) {
     // Network.framework/Security.framework crypto is using Apple corecrypto, which holds
     // FIPS 140 validations and per Apple always runs in FIPS mode: there is no
@@ -1880,6 +1886,7 @@ static tls_context ctx_api = {
     .load_key = load_key,
     .load_cert = load_cert,
     .fips_status = tls_fips_status,
+    .set_min_version = tls_set_min_version,
     .generate_csr_to_pem = generate_csr,
     // .generate_keychain_key, .load_keychain_key, .remove_keychain_key: set by
     // new_applesec_ctx() when the platform keychain is in use
