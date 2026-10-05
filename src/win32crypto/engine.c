@@ -310,11 +310,11 @@ static SECURITY_STATUS verify_peer_cert(struct win32crypto_engine_s* engine) {
     PCCERT_CONTEXT peer_cert = NULL;
     SECURITY_STATUS rc = get_peer_chain(engine, &peer_cert);
     if (rc != SEC_E_OK) {
-        // client certificates are optional: a client that sent none still
-        // completes the handshake, and there is nothing to run the callback on
+        // once client certificates are requested they are required (same as the
+        // other backends): a client that sent none fails the handshake
         if (engine->is_server && rc == SEC_E_NO_CREDENTIALS) {
-            UM_LOG(VERB, "client did not present a certificate");
-            return SEC_E_OK;
+            UM_LOG(WARN, "client did not present a certificate");
+            return rc;
         }
         LOG_ERROR(ERR, rc, "failed to get peer cert");
         return rc;
@@ -425,8 +425,8 @@ static u_long handshake_req_flags(const struct win32crypto_engine_s *engine) {
             ASC_REQ_EXTENDED_ERROR |
             ASC_REQ_STREAM;
         if (engine->request_client_cert) {
-            // requests, but does not require: a client that sends no certificate
-            // still completes the handshake
+            // Schannel only requests; a client that sends none is rejected by
+            // verify_peer_cert() once the handshake completes
             req_flags |= ASC_REQ_MUTUAL_AUTH;
         }
         return req_flags;
