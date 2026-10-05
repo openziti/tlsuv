@@ -69,6 +69,8 @@ and is listed last as the least preferred choice.
 | Server connections (`new_server_engine`) | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Server requires a client certificate | ✅ [^1] | ✅ [^1] | ✅ [^1] | ✅ [^1] | ❌ |
 | Server sends the acceptable client CAs hint | ✅ [^4] | ✅ [^4] | ❌ [^5] | ❌ [^6] | ❌ |
+| **Protocol** | | | | | |
+| TLS 1.3 | ✅ | ✅ | ✅ [^7] | ✅ | ✅ |
 
 [^1]: Only when the context has an explicit CA bundle (`set_ca_bundle`) or a verification callback
 (`set_cert_verify`). The system CA store is never used for client certificates, and a client that presents none
@@ -84,6 +86,7 @@ verification callback alone). It is a hint: validation never depends on it.
 [^5]: Left to Schannel: whether and which issuers it sends is a system-wide setting (`SendTrustedIssuerList`,
 off by default since Windows Server 2012), not controlled by the bundle.
 [^6]: Network.framework has no public API for it.
+[^7]: Windows 11 and Windows Server 2022 or later. Older Windows versions negotiate TLS 1.2.
 
 Every member of the [TLS engine interfaces](include/tlsuv/tls_engine.h) that a backend does not provide is `NULL`,
 so check before calling.

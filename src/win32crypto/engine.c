@@ -405,6 +405,39 @@ static tls_handshake_state handshake_1(struct win32crypto_engine_s *engine) {
     return TLS_HS_ERROR;
 }
 
+// drops the first consumed bytes of inbound, keeping the unprocessed tail
+static int inbound_keep_tail(struct win32crypto_engine_s *engine, size_t extra) {
+    if (extra > engine->inbound_len) {
+        UM_LOG(ERR, "extra data[%zu] exceeds input[%zu]", extra, engine->inbound_len);
+        return TLS_ERR;
+    }
+    memmove(engine->inbound, engine->inbound + engine->inbound_len - extra, extra);
+    engine->inbound_len = extra;
+    return 0;
+}
+
+static u_long handshake_req_flags(const struct win32crypto_engine_s *engine) {
+    if (engine->is_server) {
+        u_long req_flags =
+            ASC_REQ_CONFIDENTIALITY |
+            ASC_REQ_REPLAY_DETECT |
+            ASC_REQ_SEQUENCE_DETECT |
+            ASC_REQ_EXTENDED_ERROR |
+            ASC_REQ_STREAM;
+        if (engine->request_client_cert) {
+            // Schannel only requests; a client that sends none is rejected by
+            // verify_peer_cert() once the handshake completes
+            req_flags |= ASC_REQ_MUTUAL_AUTH;
+        }
+        return req_flags;
+    }
+    return ISC_REQ_USE_SUPPLIED_CREDS |
+           ISC_REQ_CONFIDENTIALITY |
+           ISC_REQ_REPLAY_DETECT |
+           ISC_REQ_SEQUENCE_DETECT |
+           ISC_REQ_STREAM;
+}
+
 static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
     struct win32crypto_engine_s *engine = (struct win32crypto_engine_s *)self;
     assert(engine);
@@ -425,27 +458,7 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
     // which for a server engine is the ClientHello
     bool first = !SecIsValidHandle(&engine->ctxt_handle);
 
-    u_long req_flags;
-    if (engine->is_server) {
-        req_flags =
-            ASC_REQ_CONFIDENTIALITY |
-            ASC_REQ_REPLAY_DETECT |
-            ASC_REQ_SEQUENCE_DETECT |
-            ASC_REQ_EXTENDED_ERROR |
-            ASC_REQ_STREAM;
-        if (engine->request_client_cert) {
-            // Schannel only requests; a client that sends none is rejected by
-            // verify_peer_cert() once the handshake completes
-            req_flags |= ASC_REQ_MUTUAL_AUTH;
-        }
-    } else {
-        req_flags =
-            ISC_REQ_USE_SUPPLIED_CREDS |
-            ISC_REQ_CONFIDENTIALITY |
-            ISC_REQ_REPLAY_DETECT |
-            ISC_REQ_SEQUENCE_DETECT |
-            ISC_REQ_STREAM;
-    }
+    u_long req_flags = handshake_req_flags(engine);
     u_long ret_flags = 0;
 
     // read only when there is nothing buffered to work with, or when the last
@@ -539,9 +552,10 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
 
     if (inbuf[1].BufferType == SECBUFFER_EXTRA) {
         UM_LOG(VERB, "leftover data in handshake buffer: %lu bytes", inbuf[1].cbBuffer);
-        size_t consumed = engine->inbound_len - inbuf[1].cbBuffer;
-        memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
-        engine->inbound_len -= consumed;
+        if (inbound_keep_tail(engine, inbuf[1].cbBuffer) != 0) {
+            engine->handshake_st = TLS_HS_ERROR;
+            return engine->handshake_st;
+        }
     } else {
         engine->inbound_len = 0;
     }
@@ -581,6 +595,21 @@ static tls_handshake_state engine_handshake(tlsuv_engine_t self) {
             return engine->handshake_st;
         }
         QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_STREAM_SIZES, &engine->sizes);
+
+        SecPkgContext_ConnectionInfo info = {0};
+        if (QueryContextAttributesA(&engine->ctxt_handle, SECPKG_ATTR_CONNECTION_INFO, &info) == SEC_E_OK) {
+            const char *proto = (info.dwProtocol & SP_PROT_TLS1_3) ? "TLSv1.3" :
+                                (info.dwProtocol & SP_PROT_TLS1_2) ? "TLSv1.2" : "other";
+            UM_LOG(VERB, "%s handshake complete: protocol[%s/0x%lx] cipher[0x%x] strength[%lu]",
+                   engine->is_server ? "server" : "client", proto, info.dwProtocol,
+                   info.aiCipher, info.dwCipherStrength);
+        }
+        SecPkgContext_CipherInfo suite = { .dwVersion = SECPKGCONTEXT_CIPHERINFO_V1 };
+        if (QueryContextAttributesW(&engine->ctxt_handle, SECPKG_ATTR_CIPHER_INFO, &suite) == SEC_E_OK) {
+            UM_LOG(VERB, "%s negotiated: suite[%ls/0x%04lx] exchange[%ls] key_type[0x%lx]",
+                   engine->is_server ? "server" : "client", suite.szCipherSuite, suite.dwCipherSuite,
+                   suite.szExchange, suite.dwKeyType);
+        }
     }
     return engine->handshake_st;
 }
@@ -730,7 +759,8 @@ static int engine_flush(struct win32crypto_engine_s *engine) {
             continue;
         }
 
-        err = WSAGetLastError();
+        // a blocked write returns TLS_AGAIN; only the socket io also sets the Winsock error
+        err = rc == TLS_AGAIN ? WSAEWOULDBLOCK : WSAGetLastError();
         break;
     }
 
@@ -828,26 +858,7 @@ static int process_post_handshake(struct win32crypto_engine_s *engine) {
     assert(engine->post_handshake);
     assert(engine->inbound_len > 0);
 
-    // the same flags as engine_handshake() uses for the role
-    u_long req_flags;
-    if (engine->is_server) {
-        req_flags =
-            ASC_REQ_CONFIDENTIALITY |
-            ASC_REQ_REPLAY_DETECT |
-            ASC_REQ_SEQUENCE_DETECT |
-            ASC_REQ_EXTENDED_ERROR |
-            ASC_REQ_STREAM;
-        if (engine->request_client_cert) {
-            req_flags |= ASC_REQ_MUTUAL_AUTH;
-        }
-    } else {
-        req_flags =
-            ISC_REQ_USE_SUPPLIED_CREDS |
-            ISC_REQ_CONFIDENTIALITY |
-            ISC_REQ_REPLAY_DETECT |
-            ISC_REQ_SEQUENCE_DETECT |
-            ISC_REQ_STREAM;
-    }
+    u_long req_flags = handshake_req_flags(engine);
     u_long ret_flags = 0;
 
     // the output token is appended to engine->outbound, after any application data still
@@ -910,9 +921,9 @@ static int process_post_handshake(struct win32crypto_engine_s *engine) {
     }
 
     if (inbuf[1].BufferType == SECBUFFER_EXTRA) {
-        size_t consumed = engine->inbound_len - inbuf[1].cbBuffer;
-        memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
-        engine->inbound_len -= consumed;
+        if (inbound_keep_tail(engine, inbuf[1].cbBuffer) != 0) {
+            return TLS_ERR;
+        }
     } else {
         engine->inbound_len = 0;
     }
@@ -1020,19 +1031,15 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
             memcpy(engine->decoded, (char *) bufs[1].pvBuffer + len, bufs[1].cbBuffer - len);
             engine->decoded_len = bufs[1].cbBuffer - len;
 
-            size_t consumed = engine->inbound_len -
-                (bufs[3].BufferType == SECBUFFER_EXTRA ? bufs[3].cbBuffer : 0);
-            assert(consumed <= engine->inbound_len);
-            memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
-            engine->inbound_len -= consumed;
+            if (inbound_keep_tail(engine, bufs[3].BufferType == SECBUFFER_EXTRA ? bufs[3].cbBuffer : 0) != 0) {
+                return TLS_ERR;
+            }
         } else if (rc == SEC_E_INCOMPLETE_MESSAGE) {
             break;
         } else if (rc == SEC_I_CONTEXT_EXPIRED) {
-            size_t consumed = engine->inbound_len -
-                (bufs[3].BufferType == SECBUFFER_EXTRA ? bufs[3].cbBuffer : 0);
-            assert(consumed <= engine->inbound_len);
-            memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
-            engine->inbound_len -= consumed;
+            if (inbound_keep_tail(engine, bufs[3].BufferType == SECBUFFER_EXTRA ? bufs[3].cbBuffer : 0) != 0) {
+                return TLS_ERR;
+            }
             eof = true;
         } else if (rc == SEC_I_RENEGOTIATE && negotiated_tls13(engine)) {
             // TLS 1.3 has no renegotiation: this is a post-handshake message (NewSessionTicket,
@@ -1053,12 +1060,12 @@ static int engine_read(tlsuv_engine_t self, char *data, size_t *out, size_t max)
                 UM_LOG(ERR, "post-handshake message without the data to process it");
                 return TLS_ERR;
             }
-            size_t consumed = engine->inbound_len - extra->cbBuffer;
-            assert(consumed <= engine->inbound_len);
-            memmove(engine->inbound, engine->inbound + consumed, engine->inbound_len - consumed);
-            engine->inbound_len -= consumed;
+            if (inbound_keep_tail(engine, extra->cbBuffer) != 0) {
+                return TLS_ERR;
+            }
             engine->post_handshake = true;
         } else {
+            engine->status = rc;
             LOG_ERROR(ERR, rc, "failed to decrypt message");
             return TLS_ERR;
         }
@@ -1156,8 +1163,13 @@ static void cert_subject(PCCERT_CONTEXT cert, char* subj, size_t len) {
 //
 // SCH_CREDENTIALS (Windows 10 1809 / Server 2019 and later) is used first: Schannel only supports
 // TLS 1.3 through it, and it takes the protocols to disable (TLS_PARAMETERS), not the ones to enable.
-// Older systems reject the structure; they have no TLS 1.3 either, so unless TLS 1.3 is required
-// the legacy SCHANNEL_CRED is tried with TLS 1.2 only.
+// Older systems reject the structure with SEC_E_UNKNOWN_CREDENTIALS; they have no TLS 1.3
+// either, so unless TLS 1.3 is required the legacy SCHANNEL_CRED is tried with TLS 1.2 only.
+// Any other failure is not about the structure and must not downgrade to TLS 1.2.
+
+// logs the fallback warning once per process
+static volatile LONG sch_credentials_warned;
+
 static SECURITY_STATUS acquire_credentials(PCredHandle handle, ULONG direction, bool server,
                                            DWORD flags, PCCERT_CONTEXT *certs, DWORD ncerts,
                                            enum tls_version min_version) {
@@ -1182,11 +1194,10 @@ static SECURITY_STATUS acquire_credentials(PCredHandle handle, ULONG direction, 
                               &credentials, NULL, NULL,
                               handle,
                               NULL);
-    if (rc == SEC_E_OK || min_version == TLSUV_TLS13) {
+    if (rc != SEC_E_UNKNOWN_CREDENTIALS || min_version == TLSUV_TLS13) {
         return rc;
     }
 
-    LOG_ERROR(WARN, rc, "AcquireCredentialsHandleA(SCH_CREDENTIALS) result, trying SCHANNEL_CRED with TLS 1.2");
     SCHANNEL_CRED legacy = {
         .dwVersion = SCHANNEL_CRED_VERSION,
         .dwFlags = flags,
@@ -1194,12 +1205,17 @@ static SECURITY_STATUS acquire_credentials(PCredHandle handle, ULONG direction, 
         .cCreds = ncerts,
         .paCred = certs,
     };
-    return AcquireCredentialsHandleA(NULL,
+    SECURITY_STATUS legacy_rc = AcquireCredentialsHandleA(NULL,
                               (TCHAR *)(UNISP_NAME),
                               direction, NULL,
                               &legacy, NULL, NULL,
                               handle,
                               NULL);
+    // only blame the structure when the legacy one works with the same credentials
+    if (legacy_rc == SEC_E_OK && InterlockedExchange(&sch_credentials_warned, 1) == 0) {
+        LOG_ERROR(WARN, rc, "SCH_CREDENTIALS rejected, using SCHANNEL_CRED (TLS 1.2 only)");
+    }
+    return legacy_rc;
 }
 
 struct win32crypto_engine_s* new_win32engine(

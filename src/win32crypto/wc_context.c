@@ -303,6 +303,7 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
         DWORD kid_len = sizeof(kid);
         if (!CertGetCertificateContextProperty(pcc, CERT_KEY_IDENTIFIER_PROP_ID, kid, &kid_len)) {
             LOG_LAST_ERROR(ERR, "failed to get key id from the certificate");
+            CertFreeCertificateContext(pcc);
             return -1;
         }
 
@@ -310,6 +311,9 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
         key_name = tlsuv__calloc(len + 1, sizeof(*key_name));
         if (!CryptBinaryToStringW(kid, kid_len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, key_name, &len)) {
             LOG_LAST_ERROR(ERR,"key name error");
+            tlsuv__free(key_name);
+            CertFreeCertificateContext(pcc);
+            return -1;
         }
 
         // step 2: export
@@ -319,10 +323,21 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
         if (rc != 0) {
             LOG_ERROR(ERR, rc, "failed to export the key");
             tlsuv__free(key_name);
+            CertFreeCertificateContext(pcc);
             return -1;
         }
-        BYTE *key_blob = tlsuv__malloc(key_blob_len);
-        NCryptExportKey(pk->key, 0, exp_type, NULL, key_blob, key_blob_len, &key_blob_len, 0);
+        // plaintext private key: wiped before every free below
+        DWORD key_blob_size = key_blob_len;
+        BYTE *key_blob = tlsuv__malloc(key_blob_size);
+        rc = NCryptExportKey(pk->key, 0, exp_type, NULL, key_blob, key_blob_size, &key_blob_len, 0);
+        if (rc != ERROR_SUCCESS) {
+            LOG_ERROR(ERR, rc, "failed to export the key");
+            SecureZeroMemory(key_blob, key_blob_size);
+            tlsuv__free(key_blob);
+            tlsuv__free(key_name);
+            CertFreeCertificateContext(pcc);
+            return -1;
+        }
 
         // step 3: import the key with the name to make it persistent
         NCRYPT_KEY_HANDLE imported = 0;
@@ -339,14 +354,24 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
                              &name_desc,
                              &imported,
                              key_blob, key_blob_len, 0);
+        SecureZeroMemory(key_blob, key_blob_size);
         tlsuv__free(key_blob);
         if (rc != ERROR_SUCCESS) {
-            LOG_ERROR(ERR, rc, "import key error");
+            // Schannel only uses persisted keys, so there is no fallback. The user key store
+            // is not reachable when the process runs without its user profile loaded
+            // (e.g. LogonUser without LoadUserProfile), which fails with file not found
+            UM_LOG(ERR, "failed to persist key[%ls] to provider[%ls]: 0x%lX/%s%s",
+                   key_name, prov_name, (unsigned long)rc, win32_error(rc),
+                   rc == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) ? " (is the user profile loaded?)" : "");
+            tlsuv__free(key_name);
+            CertFreeCertificateContext(pcc);
             return -1;
         }
+        NCryptFreeObject(imported);
 
     } else {
         LOG_ERROR(ERR, rc, "unexpected key error");
+        CertFreeCertificateContext(pcc);
         return -1;
     }
 
@@ -361,6 +386,7 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
         LOG_LAST_ERROR(ERR, "failed to set cert key");
     }
     tlsuv__free(key_name);
+    CertFreeCertificateContext(pcc);
 
     pcc = CertEnumCertificatesInStore(crt->store, NULL);
     while (pcc) {
