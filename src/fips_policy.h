@@ -16,7 +16,7 @@
 #define TLSUV_FIPS_POLICY_H
 
 // Algorithms a context may use after tls_context::require_fips().
-// OpenSSL configuration-string syntax; see docs/superpowers/specs/2026-10-01-require-fips-design.md
+// OpenSSL configuration-string syntax.
 
 // TLS 1.3 cipher suites (SSL_CTX_set_ciphersuites)
 #define TLSUV_FIPS_TLS13_SUITES "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256"

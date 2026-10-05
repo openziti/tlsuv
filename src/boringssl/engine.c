@@ -50,7 +50,8 @@ struct openssl_ctx {
     int (*cert_verify_f)(const struct tlsuv_certificate_s* cert, void* v_ctx);
     void* verify_ctx;
 
-    // require_fips() was applied; BoringSSL refuses to set a compliance policy twice
+    // require_fips() was applied. Makes require_fips() idempotent and avoids re-applying the
+    // compliance policy, which also resets the min/max protocol versions (see require_fips())
     bool fips_policy;
 };
 
