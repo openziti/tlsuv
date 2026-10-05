@@ -730,7 +730,9 @@ static int engine_flush(struct win32crypto_engine_s *engine) {
             continue;
         }
 
-        err = WSAGetLastError();
+        // TLS_AGAIN is the io contract for a blocked write; the socket error is only set by
+        // the socket io, not by one that does not go through Winsock
+        err = rc == TLS_AGAIN ? WSAEWOULDBLOCK : WSAGetLastError();
         break;
     }
 
