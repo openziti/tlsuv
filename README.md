@@ -10,14 +10,6 @@ This is done by combinining [libuv](https://github.com/libuv/libuv) with one of 
 [mbedTLS](https://github.com/mbedtls/mbedtls)
 (see [TLS backends](#tls-backends) for what each of them supports, and below for using other TLS implementations)
 
-## Features
-* async TLS over TCP
-* flexible TLS engine support
-* HTTP and websocket clients
-* [pkcs#11](https://en.wikipedia.org/wiki/PKCS_11) support with default(OpenSSL) engine
-* keys stored in the platform keychain (see [TLS backends](#tls-backends))
-
-## API
 API is attempted to be consistent with [libuv API](http://docs.libuv.org/en/v1.x/api.html)
 
 ## Supported Platforms
@@ -40,8 +32,88 @@ with [`FetchContent`](https://cmake.org/cmake/help/latest/module/FetchContent.ht
 ```
 
 ## Selectable Features
+The TLS implementation is selected with `-DTLSUV_TLSLIB=<backend>` during the CMake configuration step: `openssl`
+(the default, except on Windows), `boringssl`, `mbedtls`, `applesec` (macOS and iOS only), or `win32crypto`
+(the default on Windows). See [TLS backends](#tls-backends) for what each of them supports and
+[Dependencies](#dependencies) for what they require.
+
 HTTP support is a selectable feature (ON by default) and can be disabled by adding `-DTLSUV_HTTP=OFF` during CMake 
 configuration step. This will also reduce dependencies list.
+
+## Dependencies
+TLSUV depends on the following libraries:
+
+| Library                                                                         | Notes                                                            |
+|---------------------------------------------------------------------------------|------------------------------------------------------------------|
+| [libuv](https://github.com/libuv/libuv)                                         |                                                                  | 
+| TLS - the following are supported                                               | Some features are only available with some of them, see [TLS backends](#tls-backends) |
+| - [OpenSSL](https://github.com/openssl/openssl)                                 | default TLS implementation except for Windows                    |
+| - [BoringSSL](https://boringssl.googlesource.com/boringssl/)                    | use `TLSUV_TLSLIB=boringssl`                                     |
+| - [Windows crypto](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/) | default TLS implementation on Windows                            | 
+| - [Apple Network.framework](https://developer.apple.com/documentation/network)  | use `TLSUV_TLSLIB=applesec`, macOS and iOS only                  |
+| - [mbedTLS](https://github.com/mbedtls/mbedtls)                                 | use `TLSUV_TLSLIB=mbedtls` does not support PKCS#11 or keychains |
+| [llhttp](https://github.com/nodejs/llhttp)                                      | only with HTTP enabled                                           |
+| [zlib](https://github.com/madler/zlib)                                          | only with HTTP enabled                                           |
+
+
+CMake configuration process will attempt to resolve the above dependencies via `find_package()` it is up to consuming project
+to provide them.
+ 
+
+## Features
+* client TLS: asynchronous TLS streams over TCP
+* server TLS: accept TLS connections with `tlsuv_listener_t`
+* HTTP and websocket clients
+* flexible TLS engine support
+* [pkcs#11](https://en.wikipedia.org/wiki/PKCS_11) support with default(OpenSSL) engine
+* keys stored in the platform keychain (see [TLS backends](#tls-backends))
+
+### Client TLS
+`tlsuv_stream_t` is a `uv_stream_t`-like handle: initialize it, connect (the TLS handshake completes before the
+connect callback), then read and write as with any libuv stream. A `NULL` TLS context selects the default one, which
+trusts the system CA store. See [`sample/sample.c`](sample/sample.c).
+
+```c
+tlsuv_stream_t clt;
+tlsuv_stream_init(loop, &clt, NULL);
+tlsuv_stream_connect(&req, &clt, "example.com", 443, on_connect); // uv_connect_cb
+// in on_connect: tlsuv_stream_read_start(&clt, alloc_cb, read_cb); tlsuv_stream_write(&wr, &clt, &buf, write_cb);
+```
+
+### Server TLS
+`tlsuv_listener_t` ([`tlsuv/listener.h`](include/tlsuv/listener.h)) provides libuv-style listen/accept: it accepts TCP
+connections, completes the TLS handshake on each, and hands the application a `tlsuv_stream_t`.
+See [`sample/echo-server.c`](sample/echo-server.c) for a complete example.
+
+```c
+static tlsuv_stream_t *on_accept(tlsuv_listener_t *l, const struct sockaddr *peer, int status) {
+    if (status != 0) return NULL; // accepting failed, see below
+    return tlsuv_stream_new();    // NULL refuses the connection
+}
+
+static void on_handshake(tlsuv_stream_t *clt, int status) {
+    if (status != 0) { tlsuv_stream_close(clt, on_closed); return; } // a failed stream stays open
+    tlsuv_stream_read_start(clt, alloc_cb, read_cb);
+}
+
+tlsuv_listener_t *l = tlsuv_listener_new();
+tlsuv_listener_init(loop, l, tls); // tls: set_own_cert() already called
+tlsuv_listener_bind(l, (const struct sockaddr *) &addr, 0);
+tlsuv_listener_start_listen(l, 128, on_accept, on_handshake);
+```
+
+`on_accept` is also called with a non-zero `status` (and `peer == NULL`) when accepting fails. `UV_EMFILE`/`UV_ENFILE`
+means the process is out of descriptors: the listener has shed the connections that were waiting, using a spare descriptor,
+and keeps listening. For any other error the listener has stopped and can be resumed with `tlsuv_listener_start_listen()`.
+If `on_accept` returns a stream for a failure, it is initialised and `on_handshake` is called with the same error code
+(close the stream there as for any failed handshake).
+
+Requires a backend with `new_server_engine` (not mbedtls); `tlsuv_listener_init()` returns `UV_ENOTSUP` otherwise.
+
+### HTTP and websocket clients
+[`tlsuv/http.h`](include/tlsuv/http.h) and [`tlsuv/websocket.h`](include/tlsuv/websocket.h) provide HTTP(S) and
+websocket clients on top of the same streams (enabled by default, see [Selectable Features](#selectable-features)).
+See the [`um-curl`](sample/um-curl.c), [`http-ping`](sample/http-ping.c) and [`ws-client`](sample/ws-client.c) samples.
 
 ## TLS backends
 The TLS implementation is chosen when configuring the build with `-DTLSUV_TLSLIB=<backend>`.
@@ -110,25 +182,6 @@ signatures, key sizes). The approved set is described in the `require_fips` docu
 Every member of the [TLS engine interfaces](include/tlsuv/tls_engine.h) that a backend does not provide is `NULL`,
 so check before calling.
 
-## Dependencies
-TLSUV depends on the following libraries:
-
-| Library                                                                         | Notes                                                            |
-|---------------------------------------------------------------------------------|------------------------------------------------------------------|
-| [libuv](https://github.com/libuv/libuv)                                         |                                                                  | 
-| TLS - the following are supported                                               | Some features are only available with some of them, see [TLS backends](#tls-backends) |
-| - [OpenSSL](https://github.com/openssl/openssl)                                 | default TLS implementation except for Windows                    |
-| - [BoringSSL](https://boringssl.googlesource.com/boringssl/)                    | use `TLSUV_TLSLIB=boringssl`                                     |
-| - [Windows crypto](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/) | default TLS implementation on Windows                            | 
-| - [Apple Network.framework](https://developer.apple.com/documentation/network)  | use `TLSUV_TLSLIB=applesec`, macOS and iOS only                  |
-| - [mbedTLS](https://github.com/mbedtls/mbedtls)                                 | use `TLSUV_TLSLIB=mbedtls` does not support PKCS#11 or keychains |
-| [llhttp](https://github.com/nodejs/llhttp)                                      | only with HTTP enabled                                           |
-| [zlib](https://github.com/madler/zlib)                                          | only with HTTP enabled                                           |
-
-
-CMake configuration process will attempt to resolve the above dependencies via `find_package()` it is up to consuming project
-to provide them.
- 
 ## TLS engine support (BYFE - Bring Your Favorite Engine)
 If either of two TLS library options are not working for, there is a mechanism to dynamically provide TLS implementation.
 
@@ -142,34 +195,9 @@ Similar in purpose to `mbedtls_ssl_ctx` or `SSL` in OpenSSL
 
 Both interfaces carry optional members that may be `NULL` when an implementation does not provide them,
 so always check before calling; the [TLS backends](#tls-backends) table shows which backend provides what.
-Server support is available at two levels: `new_server_engine()` on the context for applications that own
-the listening socket and accept loop, and [`tlsuv_listener_t`](include/tlsuv/listener.h) for libuv-style
-listen/accept that hands out `tlsuv_stream_t`s with the TLS handshake already completed:
-
-```c
-static tlsuv_stream_t *on_accept(tlsuv_listener_t *l, const struct sockaddr *peer, int status) {
-    if (status != 0) return NULL; // accepting failed, see below
-    return tlsuv_stream_new();    // NULL refuses the connection
-}
-
-static void on_handshake(tlsuv_stream_t *clt, int status) {
-    if (status != 0) { tlsuv_stream_close(clt, on_closed); return; } // a failed stream stays open
-    tlsuv_stream_read_start(clt, alloc_cb, read_cb);
-}
-
-tlsuv_listener_t *l = tlsuv_listener_new();
-tlsuv_listener_init(loop, l, tls); // tls: set_own_cert() already called
-tlsuv_listener_bind(l, (const struct sockaddr *) &addr, 0);
-tlsuv_listener_start_listen(l, 128, on_accept, on_handshake);
-```
-
-`on_accept` is also called with a non-zero `status` (and `peer == NULL`) when accepting fails. `UV_EMFILE`/`UV_ENFILE`
-means the process is out of descriptors: the listener has shed the connections that were waiting, using a spare descriptor,
-and keeps listening. For any other error the listener has stopped and can be resumed with `tlsuv_listener_start_listen()`.
-If `on_accept` returns a stream for a failure, it is initialised and `on_handshake` is called with the same error code
-(close the stream there as for any failed handshake).
-
-Requires a backend with `new_server_engine` (not mbedtls); `tlsuv_listener_init()` returns `UV_ENOTSUP` otherwise.
+Server support is engine-level here: a context may provide `new_server_engine()`, which the application can use with
+its own listening socket and accept loop. For a ready-made accept loop see
+[Server TLS](#server-tls).
 
 ## Building standalone 
 See [development](HACKING.md) instruction for building this project standalone 
