@@ -65,6 +65,10 @@
         }
       ]
     },
+    "peer-tests": {
+      "description": "OpenSSL as the in-process TLS peer of the engine tests",
+      "dependencies": [ "openssl" ]
+    },
     "samples": {
       "description": "Dependencies for samples",
       "dependencies": [

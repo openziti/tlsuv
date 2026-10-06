@@ -203,6 +203,14 @@ static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size
     return TLS_FIPS_ENABLED;
 }
 
+static enum tls_fips_status tls_require_fips(tls_context* ctx) {
+    // applied to each engine's sec_protocol_options at engine creation. Network.framework
+    // exposes no public control for key-agreement groups or signature algorithms, so only
+    // the cipher suites are restricted (see src/applesec/README.md)
+    ((struct applesec_ctx*)ctx)->fips_required = true;
+    return tls_fips_status(ctx, NULL, 0);
+}
+
 static const char* tls_lib_version(void) {
     static char version[64] = {0};
     if (*version == 0) {
@@ -1887,6 +1895,7 @@ static tls_context ctx_api = {
     .load_cert = load_cert,
     .fips_status = tls_fips_status,
     .set_min_version = tls_set_min_version,
+    .require_fips = tls_require_fips,
     .generate_csr_to_pem = generate_csr,
     // .generate_keychain_key, .load_keychain_key, .remove_keychain_key: set by
     // new_applesec_ctx() when the platform keychain is in use

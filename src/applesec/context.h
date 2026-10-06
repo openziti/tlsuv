@@ -63,6 +63,9 @@ struct applesec_ctx {
 
     // minimum TLS protocol version of new engines
     enum tls_version min_version;
+
+    // require_fips() was called: engines restrict their cipher suites
+    bool fips_required;
 };
 
 struct applesec_priv_key {

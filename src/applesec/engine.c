@@ -109,6 +109,8 @@ enum session_state {
 struct applesec_engine_s {
     struct tlsuv_engine_s api;
     bool server;
+    // the context had require_fips() called: restrict the cipher suites
+    bool fips_required;
     _Atomic(enum session_state) session;
     // guards async_cb/async_ctx: lets close/free/setup_async swap them without the queue
     pthread_mutex_t async_mutex;
@@ -1522,6 +1524,21 @@ static sec_identity_t new_client_identity(struct applesec_ctx *ctx) {
     return identity;
 }
 
+// TLS 1.3 AES-GCM plus TLS 1.2 ECDHE AES-GCM. Appending any suite replaces the default set.
+static void apply_fips_suites(sec_protocol_options_t opts) {
+    static const tls_ciphersuite_t suites[] = {
+        tls_ciphersuite_AES_256_GCM_SHA384,
+        tls_ciphersuite_AES_128_GCM_SHA256,
+        tls_ciphersuite_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+        tls_ciphersuite_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+        tls_ciphersuite_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+        tls_ciphersuite_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+    };
+    for (size_t i = 0; i < sizeof(suites) / sizeof(suites[0]); i++) {
+        sec_protocol_options_append_tls_ciphersuite(opts, suites[i]);
+    }
+}
+
 // state shared by client and server engines
 static struct applesec_engine_s *engine_alloc(struct applesec_ctx *sec_ctx) {
     struct applesec_engine_s *e = tlsuv__calloc(1, sizeof(*e));
@@ -1531,6 +1548,7 @@ static struct applesec_engine_s *engine_alloc(struct applesec_ctx *sec_ctx) {
     e->ca = sec_ctx->ca_bundle ? CFRetain(sec_ctx->ca_bundle) : NULL;
     e->identity = new_client_identity(sec_ctx);
     e->sock = -1;
+    e->fips_required = sec_ctx->fips_required;
     e->cert_verify_f = sec_ctx->cert_verify_f;
     e->verify_ctx = sec_ctx->verify_ctx;
     e->outbound_buf = dispatch_data_empty;
@@ -1577,6 +1595,10 @@ tlsuv_engine_t applesec_new_engine(tls_context *ctx, const char *host) {
         ^(nw_protocol_options_t opts){
             sec_protocol_options_t sec_options = nw_tls_copy_sec_protocol_options(opts);
             sec_protocol_options_set_min_tls_protocol_version(sec_options, min_tls_version(sec_ctx));
+            sec_protocol_options_set_max_tls_protocol_version(sec_options, tls_protocol_version_TLSv13);
+            if (e->fips_required) {
+                apply_fips_suites(sec_options);
+            }
             sec_protocol_options_set_tls_server_name(sec_options, host);
             if (e->identity) {
                 sec_protocol_options_set_local_identity(sec_options, e->identity);
@@ -1630,6 +1652,10 @@ tlsuv_engine_t applesec_new_server_engine(tls_context *ctx) {
         ^(nw_protocol_options_t opts){
             sec_protocol_options_t sec_options = nw_tls_copy_sec_protocol_options(opts);
             sec_protocol_options_set_min_tls_protocol_version(sec_options, min_tls_version(sec_ctx));
+            sec_protocol_options_set_max_tls_protocol_version(sec_options, tls_protocol_version_TLSv13);
+            if (e->fips_required) {
+                apply_fips_suites(sec_options);
+            }
             sec_protocol_options_set_local_identity(sec_options, e->identity);
             if (client_auth) {
                 sec_protocol_options_set_peer_authentication_required(sec_options, true);

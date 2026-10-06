@@ -55,6 +55,7 @@ and is listed last as the least preferred choice.
 | Platforms | Linux, macOS, Windows, Android | Linux, macOS, Android | Windows | macOS, iOS (opt-in) | Linux, macOS, Windows |
 | ALPN | ✅ | ✅ | ✅ | ✅ | ✅ |
 | FIPS status reporting | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Restrict to FIPS-approved algorithms (`require_fips`) | ✅ | ✅ [^8] | ✅ [^9] | ✅ [^10] | ✅ [^11] |
 | Custom certificate verification callback | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Replace the CA bundle (`set_ca_bundle`) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Accept partial certificate chains | ✅ | ✅ | ❌ | ❌ | ❌ |
@@ -71,6 +72,7 @@ and is listed last as the least preferred choice.
 | Server sends the acceptable client CAs hint | ✅ [^4] | ✅ [^4] | ❌ [^5] | ❌ [^6] | ❌ |
 | **Protocol** | | | | | |
 | TLS 1.3 | ✅ | ✅ | ✅ [^7] | ✅ | ✅ |
+| TLS 1.2 and 1.3 only (no older protocol versions) | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 [^1]: Only when the context has an explicit CA bundle (`set_ca_bundle`) or a verification callback
 (`set_cert_verify`). The system CA store is never used for client certificates, and a client that presents none
@@ -87,6 +89,23 @@ verification callback alone). It is a hint: validation never depends on it.
 off by default since Windows Server 2012), not controlled by the bundle.
 [^6]: Network.framework has no public API for it.
 [^7]: Windows 11 and Windows Server 2022 or later. Older Windows versions negotiate TLS 1.2.
+[^8]: Applied through BoringSSL's own FIPS compliance policy, which also allows `rsa_pkcs1_sha512`. Keychain keys sign
+only with signature algorithms from that policy.
+[^9]: Partial. Schannel can only disable algorithms. Protocols below TLS 1.2 are always disabled. With `require_fips`,
+AES-CBC, ChaCha20-Poly1305, SHA-1 digests and finite-field DH are also disabled, and the restricted credentials also set
+`SCH_USE_STRONG_CRYPTO` (Schannel drops known-weak algorithms; this is not FIPS enforcement). Curves, signature
+algorithms and static-RSA key exchange are not enforced and follow the operating system policy. If Schannel rejects the
+restricted credentials (for example `SCH_CREDENTIALS` itself, which needs Windows 10 1809 / Server 2019 or later), there
+is no fallback to unrestricted credentials: server engines are not created and client engines fail the handshake.
+[^10]: Partial. Network.framework only allows choosing cipher suites: TLS 1.3 AES-GCM and TLS 1.2 ECDHE AES-GCM suites
+are selected, while key-agreement groups and signature algorithms stay at the system defaults.
+[^11]: Policy only, full approved set (RSA-PSS signatures only take effect in TLS 1.3, mbedTLS 3.6 does not support them
+in TLS 1.2): mbedTLS has no FIPS-validated mode, so the status stays `TLS_FIPS_UNSUPPORTED`.
+
+`require_fips` limits the algorithms negotiated in the handshake (cipher suites, key-agreement groups and signature
+algorithms, as far as the backend allows). It does not constrain X.509 certificate chain validation (certificate
+signatures, key sizes). The approved set is described in the `require_fips` documentation in
+[tls_engine.h](include/tlsuv/tls_engine.h).
 
 Every member of the [TLS engine interfaces](include/tlsuv/tls_engine.h) that a backend does not provide is `NULL`,
 so check before calling.

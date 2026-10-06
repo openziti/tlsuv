@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 
 #include "../alloc.h"
+#include "../fips_policy.h"
 #include "../um_debug.h"
 
 #include <openssl/err.h>
@@ -118,6 +119,7 @@ static int tls_reset(tlsuv_engine_t self);
 
 static const char* tls_lib_version();
 static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size_t modulelen);
+static enum tls_fips_status tls_require_fips(tls_context* ctx);
 static const char *tls_eng_error(tlsuv_engine_t self);
 
 static void tls_free(tlsuv_engine_t self);
@@ -153,6 +155,7 @@ static tls_context openssl_context_api = {
         .version = tls_lib_version,
         .fips_status = tls_fips_status,
         .set_min_version = tls_set_min_version,
+        .require_fips = tls_require_fips,
         .strerror = (const char *(*)(long)) tls_error,
         .new_engine = new_openssl_engine,
         .new_server_engine = new_openssl_server_engine,
@@ -267,6 +270,25 @@ static enum tls_fips_status tls_fips_status(tls_context* ctx, char* module, size
     }
 
     return TLS_FIPS_ENABLED;
+}
+
+static enum tls_fips_status tls_require_fips(tls_context* tls) {
+    struct openssl_ctx *c = (struct openssl_ctx *) tls;
+    SSL_CTX *ctx = c->ctx;
+
+    if (SSL_CTX_set_ciphersuites(ctx, TLSUV_FIPS_TLS13_SUITES) != 1 ||
+        SSL_CTX_set_cipher_list(ctx, TLSUV_FIPS_TLS12_CIPHERS) != 1 ||
+        SSL_CTX_set1_groups_list(ctx, TLSUV_FIPS_GROUPS) != 1 ||
+        SSL_CTX_set1_sigalgs_list(ctx, TLSUV_FIPS_SIGALGS) != 1) {
+        UM_LOG(ERR, "failed to restrict TLS context to FIPS algorithms: %s",
+               ERR_error_string(ERR_get_error(), NULL));
+        // a failed setter leaves the previous (wider) setting in place: make sure
+        // nothing can be negotiated at all instead of silently running unrestricted
+        SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+        SSL_CTX_set_max_proto_version(ctx, TLS1_2_VERSION);
+    }
+
+    return tls_fips_status(tls, NULL, 0);
 }
 
 const char *tls_error(unsigned long code) {

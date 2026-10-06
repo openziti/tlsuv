@@ -462,6 +462,32 @@ struct tls_context_s {
      * by the backend, in which case the current minimum is left in place
      */
     int (*set_min_version)(tls_context *ctx, enum tls_version min);
+
+    /**
+     * Restricts the context to FIPS-approved algorithms.
+     *
+     * Engines created from this context afterwards only negotiate TLS 1.2/1.3 with
+     * AES-GCM suites (ECDHE key exchange for TLS 1.2), P-256/P-384 key agreement and
+     * these signature algorithms: ECDSA P-256/SHA-256 and P-384/SHA-384, RSA-PSS (rsae)
+     * with SHA-256/384/512, and RSA-PKCS1 with SHA-256/384. (BoringSSL's own policy
+     * additionally allows RSA-PKCS1 with SHA-512.) Backends that cannot express part of
+     * that set (see the README backend matrix) restrict what they can.
+     *
+     * The restriction is applied whether or not the library is actually running in
+     * FIPS mode; compare the result with TLS_FIPS_ENABLED to find out.
+     *
+     * It does not lower a minimum version raised with set_min_version() (e.g. to
+     * TLSUV_TLS13), before or after this call.
+     *
+     * Never NULL in the in-tree backends; contexts created by a factory installed with
+     * set_default_tls_impl() may leave it NULL, so check before calling. Call it before
+     * creating any engine from the context: engines created earlier are not affected.
+     * Idempotent. There is no way to undo it.
+     *
+     * @param ctx TLS context
+     * @return the same value fips_status() reports for this context
+     */
+    enum tls_fips_status (*require_fips)(tls_context *ctx);
 };
 
 typedef tls_context *(*tls_context_factory)(void);
