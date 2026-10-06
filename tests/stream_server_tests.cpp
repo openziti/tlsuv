@@ -568,7 +568,9 @@ TEST_CASE("listener: stop_listen from accept_cb", "[listener][server]") {
     c1.connect(f.port);
     c2.connect(f.port);
 
-    f.t.run(1);
+    // wait for the first connection's handshake instead of for a fixed time (slow under valgrind). If the
+    // listener had not stopped, the second connection would have been accepted in the same wake as the first.
+    f.t.run(WHILE(f.hs_ok < 1 || !(c1.connected || c2.connected)));
     CHECK(f.accepted_cnt == 1); // the second stays in the kernel backlog
     CHECK(f.hs_ok == 1);        // the stream accepted before the stop still completes
     CHECK(c1.connected != c2.connected);
