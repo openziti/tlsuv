@@ -188,6 +188,9 @@ static int err_to_uv(int err) {
         case ECONNRESET:
         case WSAECONNRESET:
             return UV_ECONNRESET;
+        case EAFNOSUPPORT:
+        case WSAEAFNOSUPPORT:
+            return UV_EAFNOSUPPORT;
         default: return -err;
     }
 #else
