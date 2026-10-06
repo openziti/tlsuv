@@ -110,3 +110,30 @@ TEST_CASE("https over custom src", "[http]") {
     CHECK(bytes_resp.resp_body_end_called);
     CHECK(bytes_resp.body.size() == 100000);
 }
+
+TEST_CASE("close http over custom src after a failed connect", "[http]") {
+    UvLoopTest test;
+
+    tcp_src src{};
+    src.loop = test.loop;
+    src.connect = tcp_src_connect;
+    src.release = tcp_src_release;
+    src.cancel = [](tlsuv_src_t *) {};
+
+    // nothing listens on port 1: the src connect fails, so the http links are never made
+    tlsuv_http_t clt{};
+    tlsuv_http_init_with_src(test.loop, &clt, "https://127.0.0.1:1", (tlsuv_src_t *) &src);
+    tlsuv_http_set_ssl(&clt, testServerTLS());
+
+    resp_capture resp(resp_body_cb);
+    DEFER {
+        tlsuv_http_close(&clt, nullptr);
+        // the client releases a src only after closing its links, so close the failed one here
+        tcp_src_release((tlsuv_src_t *) &src);
+        test.drain();
+    };
+    tlsuv_http_req(&clt, "GET", "/json", resp_capture_cb, &resp);
+
+    test.run(UNTIL(resp.code != -666));
+    CHECK(resp.code == UV_ECONNREFUSED);
+}

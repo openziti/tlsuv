@@ -644,7 +644,9 @@ static void close_connection1(tlsuv_http_t *c, const char *src_fn, int src_line)
         c->tr_close(tr, (uv_close_cb) tlsuv__free);
     }
 
-    if (c->src) {
+    // the links exist only between make_links() and their close: closing before the src
+    // connected (or twice) would close a link that was never initialized
+    if (c->src && c->http_link.parent != NULL) {
         uv_link_close((uv_link_t *) &c->http_link, link_close_cb);
     }
     c->connected = Disconnected;
