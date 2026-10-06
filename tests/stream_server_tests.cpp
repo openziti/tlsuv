@@ -254,6 +254,7 @@ struct client {
     bool connected = false;
     bool closing = false, closed = false;
     std::string received;
+    std::string alpn; // negotiated protocol, captured when the connect completes
 
     client(uv_loop_t *loop, tls_context *tls) {
         tlsuv_stream_init(loop, &s, tls);
@@ -277,7 +278,11 @@ struct client {
             auto *c = (client *) r->handle->data;
             c->conn_status = st;
             c->connected = st == 0;
-            if (st == 0) c->read(); // read_start needs an established stream
+            if (st == 0) {
+                const char *p = tlsuv_stream_get_protocol(&c->s);
+                if (p) c->alpn = p;
+                c->read(); // read_start needs an established stream
+            }
         }) == 0);
     }
     void read() {
@@ -340,9 +345,7 @@ TEST_CASE("listener negotiates ALPN", "[listener][server]") {
     f.t.run(WHILE(!c.connected || f.handshakes == 0));
     REQUIRE(c.connected);
     CHECK(srv_proto == "http/1.1");
-    const char *cp = tlsuv_stream_get_protocol(&c.s);
-    REQUIRE(cp != nullptr);
-    CHECK(std::string(cp) == "http/1.1");
+    CHECK(c.alpn == "http/1.1");
 }
 
 TEST_CASE("listener: accept_cb refuses", "[listener][server]") {
@@ -389,7 +392,8 @@ TEST_CASE("listener: handshake failure leaves stream closable", "[listener][serv
     c.connect(f.port);
     f.t.run(WHILE(f.handshakes == 0 || c.conn_status == 1000));
     CHECK(c.conn_status != 0);
-    CHECK(f.last_hs_status != 0);
+    // the server may report success or failure here: a TLS 1.3 server can complete its side before it learns
+    // that the client rejected its certificate. Either way it is called once and the stream is closable.
     f.t.run(WHILE(f.closed < 1));
     CHECK(f.handshakes == 1); // still exactly once after close
 }
@@ -514,7 +518,7 @@ TEST_CASE("listener: stop_listen queues, start_listen resumes", "[listener][serv
     CHECK(f.accepted_cnt == 0);
 
     REQUIRE(tlsuv_listener_start_listen(&f.l, 16, srv_fixture::accept_cb, srv_fixture::hs_cb) == 0);
-    f.t.run(WHILE(!c.connected));
+    f.t.run(WHILE(!c.connected || f.hs_ok < 1));
     CHECK(c.connected);
     CHECK(f.accepted_cnt == 1);
     CHECK(f.hs_ok == 1);
@@ -565,7 +569,7 @@ TEST_CASE("listener: stop_listen from accept_cb", "[listener][server]") {
 
     f.on_accept = nullptr;
     REQUIRE(tlsuv_listener_start_listen(&f.l, 16, srv_fixture::accept_cb, srv_fixture::hs_cb) == 0);
-    f.t.run(WHILE(!c1.connected || !c2.connected));
+    f.t.run(WHILE(!c1.connected || !c2.connected || f.hs_ok < 2));
     CHECK(f.accepted_cnt == 2);
     CHECK(f.hs_ok == 2);
 }
