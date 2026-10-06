@@ -351,18 +351,24 @@ TEST_CASE("listener negotiates ALPN", "[listener][server]") {
 TEST_CASE("listener: accept_cb refuses", "[listener][server]") {
     srv_fixture f;
     SKIP_UNLESS_SERVER(f.srv_ctx);
-    ctx_holder cc(l_ca, false);
-    client c(f.t.loop, cc.tls);
-    DEFER { c.close(); f.shutdown(); };
+    // a raw TCP client: what is checked is that the listener closes the connection, not how a TLS client
+    // engine reacts to it (some backends take long to report it)
+    uv_os_sock_t raw = socket(AF_INET, SOCK_STREAM, 0);
+    DEFER { close_socket(raw); f.shutdown(); };
 
     f.refuse = true;
     f.bind_listen();
-    c.connect(f.port);
-    f.t.run(WHILE(c.conn_status == 1000));
-    CHECK(c.conn_status != 0);
+    sockaddr_in a = f.addr;
+    a.sin_port = htons(f.port);
+    REQUIRE(connect(raw, (sockaddr *) &a, sizeof(a)) == 0);
+
+    f.t.run(WHILE(f.accepted_cnt == 0));
     CHECK(f.accepted_cnt == 1);
     CHECK(f.handshakes == 0);
     CHECK(f.streams.empty());
+
+    char b;
+    CHECK(recv(raw, &b, 1, 0) == 0); // the server closed it: EOF
 }
 
 TEST_CASE("listener: no server certificate", "[listener][server]") {
