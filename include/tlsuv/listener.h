@@ -37,6 +37,16 @@ typedef void (*tlsuv_handshake_cb)(tlsuv_stream_t *clt, int status);
  * Requires a [tls_context] with a server engine (`new_server_engine != NULL`, i.e. not mbedtls)
  * that has an own certificate set via `set_own_cert()`. The context must be fully configured
  * before [tlsuv_listener_start_listen()].
+ *
+ * Once bound, a listener is also a libuv handle: a `tlsuv_listener_t *` can be cast to `uv_handle_t *` to read its
+ * state (`uv_handle_get_type()`, `uv_is_active()`, `uv_is_closing()`, `uv_walk()`) and to `uv_ref()`/`uv_unref()` it,
+ * e.g. to let the loop exit while the listener is still listening. `uv_handle_t *` is the only handle type to use:
+ * underneath it is a `UV_POLL` handle (what `uv_handle_get_type()` reports), but it is not a `uv_stream_t` or
+ * `uv_tcp_t`, so `uv_listen()`, `uv_accept()` and the other `uv_stream_*` calls do not apply; accepting is done by
+ * the listener and reported through [tlsuv_accept_cb].
+ * `data` and `loop` are valid from [tlsuv_listener_init()] on; everything else only after [tlsuv_listener_bind()].
+ * Do not change the handle itself (`uv_close()`, `uv_poll_start()`, `uv_poll_stop()`): use
+ * [tlsuv_listener_close()], [tlsuv_listener_start_listen()] and [tlsuv_listener_stop_listen()].
  */
 typedef struct tlsuv_listener_s tlsuv_listener_t;
 
@@ -67,14 +77,16 @@ typedef tlsuv_stream_t *(*tlsuv_accept_cb)(tlsuv_listener_t *l, const struct soc
 #define TLSUV_LISTENER_IPV6ONLY 1u
 
 struct tlsuv_listener_s {
-    // make it (somewhat) compatible with uv_handle_t: data, loop, close_cb
-    UV_HANDLE_FIELDS
+    // Must stay the first member: a tlsuv_listener_t* is also a pointer to this poll handle, which is how the
+    // listener doubles as a uv_handle_t (see above). Its `data` and `loop` are the listener's; the handle itself
+    // is initialised by tlsuv_listener_bind().
+    uv_poll_t watcher;
 
     tls_context *tls;
     uv_os_sock_t sock;
-    uv_poll_t watcher;
     tlsuv_accept_cb accept_cb;
     tlsuv_handshake_cb handshake_cb;
+    uv_close_cb close_cb; // the application's: uv_close() sets the handle's own close_cb to an internal one
     int spare_fd; // POSIX: a duplicate of `sock`, kept to be able to shed the backlog when out of descriptors
     char **alpn;
     int alpn_count;
@@ -85,8 +97,9 @@ struct tlsuv_listener_s {
 };
 
 /**
- * \brief initialize the listener. Like libuv's init functions it leaves the `data` field untouched, so
- * [l] must have `data` initialised (zeroed memory, or set it before this call) or it is read as garbage.
+ * \brief initialize the listener. Like libuv's init functions it leaves the handle's `data` field untouched, so
+ * [l] must have `data` initialised (zeroed memory, or [tlsuv_listener_set_data()] before this call) or it is read
+ * as garbage.
  *
  * @param tls server TLS context (own certificate set before the first connection arrives); not owned by the
  *        listener, must outlive it.
@@ -116,7 +129,12 @@ int tlsuv_listener_stop_listen(tlsuv_listener_t *l);
 
 int tlsuv_listener_getsockname(const tlsuv_listener_t *l, struct sockaddr *name, int *namelen);
 
-/** close the listener. Accepted streams are independent and unaffected. [close_cb] gets the listener cast to uv_handle_t*. */
+/**
+ * close the listener; use this instead of `uv_close()`. Accepted streams are independent and unaffected.
+ * [close_cb] gets the listener as a `uv_handle_t *` (the same address as the `tlsuv_listener_t *`, so cast it back
+ * to reach the listener). The socket is already closed when it runs. It is deferred to the loop in every state,
+ * including a listener that was never bound.
+ */
 int tlsuv_listener_close(tlsuv_listener_t *l, uv_close_cb close_cb);
 
 size_t tlsuv_listener_size(void);

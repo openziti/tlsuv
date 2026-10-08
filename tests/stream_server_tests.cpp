@@ -164,7 +164,7 @@ struct srv_fixture {
         g_fixture = this;
         // fails without a server engine (e.g. mbedtls); tests then skip before using the listener
         inited = tlsuv_listener_init(t.loop, &l, srv_ctx.tls) == 0;
-        l.data = this;
+        tlsuv_listener_set_data(&l, this);
         addr.sin_family = AF_INET;
         inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
     }
@@ -188,7 +188,7 @@ struct srv_fixture {
     }
 
     static tlsuv_stream_t *accept_cb(tlsuv_listener_t *lst, const sockaddr *peer, int status) {
-        auto *f = (srv_fixture *) lst->data;
+        auto *f = (srv_fixture *) tlsuv_listener_get_data(lst);
         if (status != 0) {
             f->errors++;
             f->last_error = status;
@@ -663,9 +663,91 @@ TEST_CASE("listener: init preserves data", "[listener]") {
     UvLoopTest t;
     int marker = 0;
     tlsuv_listener_t l;
-    l.data = &marker; // like libuv, init leaves `data` as the caller set it
+    uv_handle_set_data((uv_handle_t *) &l, &marker); // like libuv, init leaves `data` as the caller set it
     REQUIRE(tlsuv_listener_init(t.loop, &l, h.tls) == 0);
     CHECK(tlsuv_listener_get_data(&l) == &marker);
+    CHECK(uv_handle_get_data((uv_handle_t *) &l) == &marker);
+    CHECK(uv_handle_get_loop((uv_handle_t *) &l) == t.loop);
     tlsuv_listener_close(&l, nullptr);
     t.drain();
+}
+
+TEST_CASE("listener: is a uv handle once bound", "[listener][server]") {
+    srv_fixture f;
+    SKIP_UNLESS_SERVER(f.srv_ctx);
+    auto *h = (uv_handle_t *) &f.l;
+
+    // the poll handle is only set up by bind(); before that only data and loop are valid
+    CHECK(uv_handle_get_data(h) == &f);
+    CHECK(uv_handle_get_loop(h) == f.t.loop);
+
+    REQUIRE(tlsuv_listener_bind(&f.l, (sockaddr *) &f.addr, 0) == 0);
+    CHECK(uv_handle_get_data(h) == &f); // the handle init must leave it alone
+    CHECK(uv_handle_get_loop(h) == f.t.loop);
+    CHECK(uv_handle_get_type(h) == UV_POLL);
+    CHECK(!uv_is_active(h));
+    CHECK(!uv_is_closing(h));
+
+    bool seen = false;
+    auto find = [&] {
+        struct arg_s { uv_handle_t *h; bool *seen; } arg{h, &seen};
+        uv_walk(f.t.loop, [](uv_handle_t *w, void *a) {
+            auto *p = (arg_s *) a;
+            if (w == p->h) *p->seen = true;
+        }, &arg);
+    };
+    find();
+    CHECK(seen);
+
+    sockaddr_in got{};
+    int len = sizeof(got);
+    REQUIRE(tlsuv_listener_getsockname(&f.l, (sockaddr *) &got, &len) == 0);
+    f.port = ntohs(got.sin_port);
+    REQUIRE(tlsuv_listener_start_listen(&f.l, 16, srv_fixture::accept_cb, srv_fixture::hs_cb) == 0);
+    CHECK(uv_is_active(h));
+    REQUIRE(tlsuv_listener_stop_listen(&f.l) == 0);
+    CHECK(!uv_is_active(h));
+    REQUIRE(tlsuv_listener_start_listen(&f.l, 16, srv_fixture::accept_cb, srv_fixture::hs_cb) == 0);
+    CHECK(uv_is_active(h));
+
+    // a listening, referenced listener keeps the loop alive; an unreferenced one does not
+    CHECK(uv_loop_alive(f.t.loop));
+    uv_unref(h);
+    CHECK(!uv_has_ref(h));
+    CHECK(!uv_loop_alive(f.t.loop));
+    uv_ref(h);
+    CHECK(uv_loop_alive(f.t.loop));
+
+    // the close callback gets the same handle
+    static uv_handle_t *closed_h;
+    closed_h = nullptr;
+    REQUIRE(tlsuv_listener_close(&f.l, [](uv_handle_t *c) { closed_h = c; }) == 0);
+    CHECK(uv_is_closing(h));
+    f.t.drain();
+    CHECK(closed_h == h);
+}
+
+TEST_CASE("listener: close while bound but not listening", "[listener][server]") {
+    srv_fixture f;
+    SKIP_UNLESS_SERVER(f.srv_ctx);
+    REQUIRE(tlsuv_listener_bind(&f.l, (sockaddr *) &f.addr, 0) == 0);
+
+    static int closed;
+    closed = 0;
+    REQUIRE(tlsuv_listener_close(&f.l, [](uv_handle_t *) { closed++; }) == 0);
+    CHECK(closed == 0); // deferred to the loop
+    f.t.drain();
+    CHECK(closed == 1);
+}
+
+TEST_CASE("listener: close before bind", "[listener][server]") {
+    srv_fixture f;
+    SKIP_UNLESS_SERVER(f.srv_ctx);
+
+    static int closed;
+    closed = 0;
+    REQUIRE(tlsuv_listener_close(&f.l, [](uv_handle_t *) { closed++; }) == 0);
+    CHECK(closed == 0);
+    f.t.drain();
+    CHECK(closed == 1);
 }

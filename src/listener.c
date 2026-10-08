@@ -132,10 +132,11 @@ int tlsuv_listener_init(uv_loop_t *loop, tlsuv_listener_t *l, tls_context *tls) 
     if (tls->new_server_engine == NULL) {
         return UV_ENOTSUP;
     }
-    void *data = l->data; // callers may set it before init, as libuv allows
+    void *data = l->watcher.data; // callers may set it before init, as libuv allows
     *l = (tlsuv_listener_t){0};
-    l->data = data;
-    l->loop = loop;
+    l->watcher.data = data;
+    // the poll handle is initialised by bind(), when there is a socket; until then only data and loop are valid
+    l->watcher.loop = loop;
     l->tls = tls;
     l->sock = INVALID_SOCKET;
     l->spare_fd = -1;
@@ -199,6 +200,12 @@ int tlsuv_listener_bind(tlsuv_listener_t *l, const struct sockaddr *addr, unsign
         closesock(s);
         return rc;
     }
+    // from here the listener is a registered (inactive) uv handle
+    int rc = uv_poll_init_socket(l->watcher.loop, &l->watcher, s);
+    if (rc != 0) {
+        closesock(s);
+        return rc;
+    }
     l->sock = s;
     l->bound = 1;
     return 0;
@@ -216,10 +223,6 @@ int tlsuv_listener_start_listen(tlsuv_listener_t *l, int backlog, tlsuv_accept_c
     if (!l->listening) {
         if (listen(l->sock, backlog > 0 ? backlog : SOMAXCONN) != 0) {
             return last_socket_error();
-        }
-        int rc = uv_poll_init_socket(l->loop, &l->watcher, l->sock);
-        if (rc != 0) {
-            return rc;
         }
 #if !_WIN32
         l->spare_fd = open_spare_fd(l->sock);
@@ -266,7 +269,7 @@ int tlsuv_listener_getsockname(const tlsuv_listener_t *l, struct sockaddr *name,
 static void report_error(tlsuv_listener_t *l, int err) {
     tlsuv_stream_t *s = l->accept_cb(l, NULL, err);
     if (s != NULL) {
-        tlsuv_stream_init(l->loop, s, l->tls);
+        tlsuv_stream_init(l->watcher.loop, s, l->tls);
         l->handshake_cb(s, err);
     }
 }
@@ -288,7 +291,7 @@ static void accept_one(tlsuv_listener_t *l, uv_os_sock_t fd, const struct sockad
         return;
     }
 
-    tlsuv_stream_init(l->loop, s, l->tls);
+    tlsuv_stream_init(l->watcher.loop, s, l->tls);
     int rc = tlsuv__stream_accept(s, fd, l->alpn_count, (const char **) l->alpn, l->handshake_cb);
     if (rc != 0) {
         LST_LOG(WARN, "failed to start handshake: %s", uv_strerror(rc));
@@ -360,10 +363,10 @@ int tlsuv_listener_close(tlsuv_listener_t *l, uv_close_cb close_cb) {
     l->started = 0;
     l->close_cb = close_cb;
 
-    // if the poll handle was never set up (not listening yet), borrow its memory for an idle handle
+    // if the poll handle was never set up (not bound yet), borrow its memory for an idle handle
     // so that close_cb is still deferred to the loop, as tlsuv_stream_close() does
-    if (!l->listening) {
-        uv_idle_init(l->loop, (uv_idle_t *) &l->watcher);
+    if (!l->bound) {
+        uv_idle_init(l->watcher.loop, (uv_idle_t *) &l->watcher);
     }
     uv_close((uv_handle_t *) &l->watcher, on_watcher_closed);
     return 0;
@@ -375,6 +378,6 @@ tlsuv_listener_t *tlsuv_listener_new(void) { return tlsuv__calloc(1, sizeof(tlsu
 
 void tlsuv_listener_delete(tlsuv_listener_t *l) { tlsuv__free(l); }
 
-void tlsuv_listener_set_data(tlsuv_listener_t *l, void *data) { l->data = data; }
+void tlsuv_listener_set_data(tlsuv_listener_t *l, void *data) { l->watcher.data = data; }
 
-void *tlsuv_listener_get_data(const tlsuv_listener_t *l) { return l->data; }
+void *tlsuv_listener_get_data(const tlsuv_listener_t *l) { return l->watcher.data; }

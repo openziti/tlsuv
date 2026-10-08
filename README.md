@@ -108,6 +108,11 @@ and keeps listening. For any other error the listener has stopped and can be res
 If `on_accept` returns a stream for a failure, it is initialised and `on_handshake` is called with the same error code
 (close the stream there as for any failed handshake).
 
+Once bound, the listener is also a libuv handle: cast it to `uv_handle_t *` to use `uv_unref()`, `uv_is_active()`,
+`uv_walk()` and the other read-only calls. Underneath it is a `UV_POLL` handle, not a `uv_stream_t`, so `uv_listen()`
+and `uv_accept()` do not apply. Close it with `tlsuv_listener_close()`, not `uv_close()`; its `close_cb` receives the
+listener as a `uv_handle_t *` (same address, cast it back), after the socket has been closed.
+
 Requires a backend with `new_server_engine` (not mbedtls); `tlsuv_listener_init()` returns `UV_ENOTSUP` otherwise.
 
 ### HTTP and websocket clients
