@@ -14,6 +14,7 @@ set(samples
         sample
         engine_test
         sample-cf
+        echo-server
 )
 if (TLSUV_HTTP)
     list(APPEND samples

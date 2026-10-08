@@ -43,6 +43,7 @@ set(test_srcs
         server_tests.cpp
         fips_tests.cpp
         stream_tests.cpp
+        stream_server_tests.cpp
         key_tests.cpp
         connector_tests.cpp
 )
@@ -165,6 +166,7 @@ mk_test(key)
 mk_test(engine)
 mk_test(server)
 mk_test(stream)
+mk_test(listener)
 
 if (TLSUV_TLSLIB STREQUAL "win32crypto")
     mk_test(verify)

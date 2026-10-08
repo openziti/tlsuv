@@ -19,14 +19,11 @@
 #define INVALID_SOCKET (-1)
 #endif
 
-uv_os_sock_t tlsuv_socket(const struct addrinfo *addr, bool blocking) {
-    uv_os_sock_t sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
-
-    if (sock == INVALID_SOCKET)
-        return sock;
-
+void tlsuv_socket_configure(uv_os_sock_t sock) {
     int on = 1;
     int flags;
+    (void) on;
+    (void) flags;
 
 #if defined(SO_NOSIGPIPE)
     setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
@@ -38,9 +35,16 @@ uv_os_sock_t tlsuv_socket(const struct addrinfo *addr, bool blocking) {
     flags = fcntl(sock, F_GETFD);
     fcntl(sock, F_SETFD, flags | FD_CLOEXEC);
 #endif
+}
 
+uv_os_sock_t tlsuv_socket(const struct addrinfo *addr, bool blocking) {
+    uv_os_sock_t sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+
+    if (sock == INVALID_SOCKET)
+        return sock;
+
+    tlsuv_socket_configure(sock);
     tlsuv_socket_set_blocking(sock, blocking);
 
     return sock;
 }
-

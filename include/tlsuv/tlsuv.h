@@ -52,9 +52,15 @@ void tlsuv_set_allocator(uv_malloc_func malloc_f,
 
 typedef struct tlsuv_stream_s tlsuv_stream_t;
 
+struct tlsuv_hs;
+
 typedef void(*tlsuv_log_func)(int level, const char *file, unsigned int line, const char *msg);
 void tlsuv_set_debug(int level, tlsuv_log_func output_f);
 
+/**
+ * \brief initialize the stream. Like libuv's init functions, it leaves the `data` field untouched, so
+ * [clt] must have `data` initialised (zeroed memory, or set it before this call) or it is read as garbage.
+ */
 int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls);
 void tlsuv_stream_set_connector(tlsuv_stream_t *clt, const tlsuv_connector_t *connector);
 
@@ -188,6 +194,9 @@ struct tlsuv_stream_s {
 
     TAILQ_HEAD(reqs, tlsuv_write_s) queue;
     size_t queue_len;
+
+    // server-side handshake state; non-NULL only while an accepted stream handshakes (internal)
+    struct tlsuv_hs *hs;
 };
 
 size_t tlsuv_base64url_decode(const char *in, char **out, size_t *out_len);
