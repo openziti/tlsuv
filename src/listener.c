@@ -179,13 +179,7 @@ int tlsuv_listener_bind(tlsuv_listener_t *l, const struct sockaddr *addr, unsign
 
     uv_os_sock_t s = socket(addr->sa_family, SOCK_STREAM, 0);
     if (s == INVALID_SOCKET) {
-        return uv_translate_sys_error(
-#if _WIN32
-            WSAGetLastError()
-#else
-            errno
-#endif
-        );
+        return last_socket_error();
     }
     tlsuv_socket_configure(s);
     tlsuv_socket_set_blocking(s, false);
@@ -201,13 +195,7 @@ int tlsuv_listener_bind(tlsuv_listener_t *l, const struct sockaddr *addr, unsign
 
     socklen_t len = addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
     if (bind(s, addr, len) != 0) {
-        int rc = uv_translate_sys_error(
-#if _WIN32
-            WSAGetLastError()
-#else
-            errno
-#endif
-        );
+        int rc = last_socket_error(); // before closesock() can change it
         closesock(s);
         return rc;
     }
@@ -227,13 +215,7 @@ int tlsuv_listener_start_listen(tlsuv_listener_t *l, int backlog, tlsuv_accept_c
 
     if (!l->listening) {
         if (listen(l->sock, backlog > 0 ? backlog : SOMAXCONN) != 0) {
-            return uv_translate_sys_error(
-#if _WIN32
-                WSAGetLastError()
-#else
-                errno
-#endif
-            );
+            return last_socket_error();
         }
         int rc = uv_poll_init_socket(l->loop, &l->watcher, l->sock);
         if (rc != 0) {
@@ -272,13 +254,7 @@ int tlsuv_listener_getsockname(const tlsuv_listener_t *l, struct sockaddr *name,
     }
     socklen_t len = (socklen_t) *namelen;
     if (getsockname(l->sock, name, &len) != 0) {
-        return uv_translate_sys_error(
-#if _WIN32
-            WSAGetLastError()
-#else
-            errno
-#endif
-        );
+        return last_socket_error();
     }
     *namelen = (int) len;
     return 0;
