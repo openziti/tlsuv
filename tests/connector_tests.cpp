@@ -19,10 +19,22 @@
 #include "fixtures.h"
 #include "tlsuv/tlsuv.h"
 
+#include <string>
+#include <vector>
+
 #if _WIN32
-#include <winsock.h>
+#include <winsock2.h>
 #else
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/select.h>
+#include <sys/socket.h>
 #include <unistd.h>
+
+#ifndef INVALID_SOCKET
+#define INVALID_SOCKET (-1)
+#endif
 #endif
 
 static void close_sock(uv_os_sock_t s) {
@@ -452,25 +464,91 @@ TEST_CASE("base64 encode", "[connector]") {
 
 }
 
+// A loopback listener that nothing accepts from, with its accept queue already full:
+// further SYNs are dropped, so a new connect() to it stays pending instead of failing
+// (unlike a closed port, which refuses at once, or an external host, which depends on
+// the network the test runs in).
+struct BlackHole {
+    uv_os_sock_t listener = INVALID_SOCKET;
+    std::vector<uv_os_sock_t> fillers;
+    std::string port;
+    bool ready = false;
+
+    BlackHole() {
+        listener = socket(AF_INET, SOCK_STREAM, 0);
+        if (listener == INVALID_SOCKET) return;
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        socklen_t len = sizeof(addr);
+        if (bind(listener, (sockaddr *) &addr, sizeof(addr)) != 0 ||
+            listen(listener, 0) != 0 ||
+            getsockname(listener, (sockaddr *) &addr, &len) != 0) {
+            return;
+        }
+        port = std::to_string(ntohs(addr.sin_port));
+
+        // connect until one stays pending: the accept queue is full by then
+        // (the backlog is rounded up on some systems, e.g. 128 on macOS)
+        for (int i = 0; i < 512 && !ready; i++) {
+            uv_os_sock_t s = socket(AF_INET, SOCK_STREAM, 0);
+            if (s == INVALID_SOCKET) return;
+            fillers.push_back(s);
+#if _WIN32
+            u_long nb = 1;
+            ioctlsocket(s, FIONBIO, &nb);
+#else
+            fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK);
+#endif
+            connect(s, (sockaddr *) &addr, sizeof(addr));
+
+            fd_set wfds;
+            FD_ZERO(&wfds);
+            FD_SET(s, &wfds);
+            timeval tv{0, 100 * 1000};
+            ready = select((int) s + 1, nullptr, &wfds, nullptr, &tv) == 0;
+        }
+    }
+
+    ~BlackHole() {
+        for (auto s: fillers) close_sock(s);
+        if (listener != INVALID_SOCKET) close_sock(listener);
+    }
+};
+
 // test cancellation
-// connection is targeting a black-holed port
+// connections are targeting a black-holed port, so they cannot complete or fail
+// before they are cancelled
 TEST_CASE_METHOD(UvLoopTest, "connect cancel", "[connector]") {
-    auto setup = GENERATE(
-            std::make_pair("default", tlsuv_global_connector()),
-            std::make_pair("proxy", tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", "13128")),
-            std::make_pair("unreachable proxy", tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "yahoo.com", "13128"))
-    );
+    // the test body runs once per generated value, with a new black hole each time:
+    // only the kind is generated, the connector is made from this run's address
+    auto via_proxy = GENERATE(false, true);
+
+    BlackHole hole;
+    // where a loopback listener cannot drop connections (macOS resets them), settle for
+    // a documentation-only address: it hangs if there is a network but no host to answer
+    const char *hole_host = hole.ready ? "127.0.0.1" : "192.0.2.1";
+    const char *hole_port = hole.ready ? hole.port.c_str() : "7443";
 
     struct result_s {
         bool called;
         int err;
         uv_os_sock_t sock;
-    } result = {false, 0,0};
+    } result = {false, 0, INVALID_SOCKET};
 
-    WHEN("connector = " << setup.first) {
-        auto connector = setup.second;
+    WHEN("connector = " << (via_proxy ? "proxy" : "default")) {
+        // the default connector connects to the target itself, a proxy one to the proxy
+        auto connector = via_proxy ?
+                         tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, hole_host, hole_port) :
+                         tlsuv_global_connector();
+        DEFER {
+            if (result.called && result.err == 0) close_sock(result.sock);
+            connector->free((void *) connector);
+        };
 
-        auto cr = connector->connect(loop, connector, "yahoo.com", "7443", nullptr,
+        auto cr = connector->connect(loop, connector, via_proxy ? "127.0.0.1" : hole_host,
+                                     via_proxy ? "7443" : hole_port, nullptr,
                                      [](uv_os_sock_t s, int err, void *ctx) {
                                          auto r = (result_s *) (ctx);
                                          r->called = true;
@@ -482,7 +560,11 @@ TEST_CASE_METHOD(UvLoopTest, "connect cancel", "[connector]") {
         run(1);
 
         THEN("callback should not be yet called") {
-            CHECK(!result.called);
+            // a request is released once its callback ran, cancelling it then is invalid
+            if (result.called && !hole.ready) {
+                SKIP("no connection black hole in this environment");
+            }
+            REQUIRE(!result.called);
 
             AND_THEN("cancellation caused callback") {
                 connector->cancel(cr);
@@ -492,11 +574,5 @@ TEST_CASE_METHOD(UvLoopTest, "connect cancel", "[connector]") {
                 CHECK(result.err == UV_ECANCELED);
             }
         }
-#if _WIN32
-        closesocket(result.sock);
-#else
-        close(result.sock);
-#endif
-        connector->free((void*)connector);
     }
 }
