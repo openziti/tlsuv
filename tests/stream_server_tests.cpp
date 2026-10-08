@@ -487,6 +487,41 @@ TEST_CASE("listener: argument errors", "[listener][server]") {
     CHECK(tlsuv_listener_stop_listen(&f.l) == UV_EINVAL);
 }
 
+TEST_CASE("listener: set_protocols and bind reject bad arguments", "[listener][server]") {
+    srv_fixture f;
+    SKIP_UNLESS_SERVER(f.srv_ctx);
+    DEFER { f.shutdown(); };
+
+    const char *good[] = {"h2", "http/1.1"};
+    REQUIRE(tlsuv_listener_set_protocols(&f.l, 2, good) == 0);
+    REQUIRE(f.l.alpn_count == 2);
+
+    // a rejected call leaves the current list alone
+    const char *with_null[] = {"x", nullptr};
+    CHECK(tlsuv_listener_set_protocols(&f.l, -1, good) == UV_EINVAL);
+    CHECK(tlsuv_listener_set_protocols(&f.l, 1, nullptr) == UV_EINVAL);
+    CHECK(tlsuv_listener_set_protocols(&f.l, 2, with_null) == UV_EINVAL);
+    REQUIRE(f.l.alpn_count == 2);
+    CHECK(strcmp(f.l.alpn[0], "h2") == 0);
+    CHECK(strcmp(f.l.alpn[1], "http/1.1") == 0);
+
+    CHECK(tlsuv_listener_set_protocols(&f.l, 0, nullptr) == 0); // clears
+    CHECK(f.l.alpn_count == 0);
+
+    // anything but v4/v6 is refused before a socket is created
+    sockaddr_storage other{};
+    other.ss_family = AF_UNSPEC;
+    CHECK(tlsuv_listener_bind(&f.l, (sockaddr *) &other, 0) == UV_EINVAL);
+#if !_WIN32
+    other.ss_family = AF_UNIX;
+    CHECK(tlsuv_listener_bind(&f.l, (sockaddr *) &other, 0) == UV_EINVAL);
+#endif
+    CHECK(tlsuv_listener_bind(&f.l, nullptr, 0) == UV_EINVAL);
+    CHECK(!f.l.bound);
+
+    REQUIRE(tlsuv_listener_bind(&f.l, (sockaddr *) &f.addr, 0) == 0); // still usable
+}
+
 TEST_CASE("listener: init fails without a server engine", "[listener][server]") {
     ctx_holder h(l_ca, false);
     h.tls->new_server_engine = nullptr; // simulate a backend without server support (e.g. mbedtls)
@@ -651,6 +686,25 @@ TEST_CASE("listener: fd exhaustion sheds the backlog and is reported", "[listene
     f.t.run(WHILE(f.accepted_cnt == 0));
     CHECK(f.accepted_cnt == 1);
     CHECK(f.errors == 1);
+}
+#endif
+
+#if !_WIN32
+TEST_CASE("listener: a lost spare descriptor is reopened", "[listener][server]") {
+    srv_fixture f;
+    SKIP_UNLESS_SERVER(f.srv_ctx);
+    ctx_holder cc(l_ca, false);
+    client c(f.t.loop, cc.tls);
+    DEFER { c.close(); f.shutdown(); };
+
+    f.bind_listen();
+    REQUIRE(f.l.spare_fd >= 0);
+    close(f.l.spare_fd);
+    f.l.spare_fd = -1; // as if reopening it after a shed had failed
+
+    c.connect(f.port);
+    f.t.run(WHILE(f.accepted_cnt == 0));
+    CHECK(f.l.spare_fd >= 0);
 }
 #endif
 

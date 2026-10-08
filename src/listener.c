@@ -80,6 +80,15 @@ static void on_listen_io(uv_poll_t *p, int status, int events);
 static int open_spare_fd(uv_os_sock_t sock) {
     return fcntl(sock, F_DUPFD_CLOEXEC, 0);
 }
+
+// (Re)open the spare. Without one the listener cannot recover from running out of descriptors, so a failure is
+// logged and the spare is tried again when the next connection arrives.
+static void restore_spare_fd(tlsuv_listener_t *l) {
+    l->spare_fd = open_spare_fd(l->sock);
+    if (l->spare_fd < 0) {
+        LST_LOG(WARN, "cannot open a spare descriptor: %s", uv_strerror(last_socket_error()));
+    }
+}
 #endif
 
 // Out of descriptors (EMFILE/ENFILE): accept() cannot take the connection, which stays queued, so a
@@ -109,7 +118,7 @@ static bool shed_backlog(tlsuv_listener_t *l) {
             break;
         }
     }
-    l->spare_fd = open_spare_fd(l->sock);
+    restore_spare_fd(l);
     return err == EAGAIN || err == EWOULDBLOCK;
 #endif
 }
@@ -144,8 +153,13 @@ int tlsuv_listener_init(uv_loop_t *loop, tlsuv_listener_t *l, tls_context *tls) 
 }
 
 int tlsuv_listener_set_protocols(tlsuv_listener_t *l, int count, const char *protocols[]) {
-    if (l->closing) {
+    if (l->closing || count < 0 || (count > 0 && protocols == NULL)) {
         return UV_EINVAL;
+    }
+    for (int i = 0; i < count; i++) {
+        if (protocols[i] == NULL) {
+            return UV_EINVAL;
+        }
     }
     char **copy = NULL;
     if (count > 0) {
@@ -166,7 +180,7 @@ int tlsuv_listener_set_protocols(tlsuv_listener_t *l, int count, const char *pro
     }
     free_alpn(l);
     l->alpn = copy;
-    l->alpn_count = count > 0 ? count : 0;
+    l->alpn_count = count;
     return 0;
 }
 
@@ -176,6 +190,10 @@ int tlsuv_listener_bind(tlsuv_listener_t *l, const struct sockaddr *addr, unsign
     }
     if (l->bound) {
         return UV_EALREADY;
+    }
+    // only these two are laid out below; anything else would be handed to bind() with the wrong length
+    if (addr == NULL || (addr->sa_family != AF_INET && addr->sa_family != AF_INET6)) {
+        return UV_EINVAL;
     }
 
     uv_os_sock_t s = socket(addr->sa_family, SOCK_STREAM, 0);
@@ -225,7 +243,7 @@ int tlsuv_listener_start_listen(tlsuv_listener_t *l, int backlog, tlsuv_accept_c
             return last_socket_error();
         }
 #if !_WIN32
-        l->spare_fd = open_spare_fd(l->sock);
+        restore_spare_fd(l);
 #endif
         l->listening = 1;
     }
@@ -307,6 +325,11 @@ static void on_listen_io(uv_poll_t *p, int status, int events) {
         listener_fail(l, status);
         return;
     }
+#if !_WIN32
+    if (l->spare_fd < 0) {
+        restore_spare_fd(l); // lost earlier, e.g. no descriptor was free to reopen it
+    }
+#endif
 
     // accept_cb may stop the listener, so re-check `started` every round
     for (int i = 0; i < ACCEPT_BATCH && l->started; i++) {

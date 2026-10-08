@@ -108,10 +108,21 @@ struct tlsuv_listener_s {
  */
 int tlsuv_listener_init(uv_loop_t *loop, tlsuv_listener_t *l, tls_context *tls);
 
-/** ALPN protocols offered to every accepted connection. Strings are copied. Applies to connections accepted afterwards. */
+/**
+ * ALPN protocols offered to every accepted connection. Strings are copied. Applies to connections accepted afterwards.
+ * A [count] of 0 clears the list.
+ *
+ * @return 0, UV_EINVAL (closed, negative [count], NULL [protocols] with a [count] above 0, or a NULL entry; the
+ *         current list is kept), or UV_ENOMEM
+ */
 int tlsuv_listener_set_protocols(tlsuv_listener_t *l, int count, const char *protocols[]);
 
-/** bind to [addr] (v4 or v6). [flags]: TLSUV_LISTENER_IPV6ONLY. UV_EALREADY if already bound. */
+/**
+ * bind to [addr] (v4 or v6). [flags]: TLSUV_LISTENER_IPV6ONLY.
+ *
+ * @return 0, UV_EALREADY (already bound), UV_EINVAL (closed, or [addr] is NULL or neither AF_INET nor AF_INET6),
+ *         or a socket error
+ */
 int tlsuv_listener_bind(tlsuv_listener_t *l, const struct sockaddr *addr, unsigned flags);
 
 /**
