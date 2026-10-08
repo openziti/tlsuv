@@ -56,10 +56,14 @@ typedef struct tlsuv_listener_s tlsuv_listener_t;
  * @param l listener
  * @param peer address of the remote peer (valid only during the call); NULL when [status] != 0
  * @param status 0 for a new connection, otherwise a libuv error code:
- *        - UV_EMFILE/UV_ENFILE: the process/system is out of file descriptors. The listener shed the
- *          connections that were waiting (accepted and closed them, using a spare descriptor) so that
- *          the event loop does not spin, and keeps listening. The application is under stress: it may want
- *          to stop accepting ([tlsuv_listener_stop_listen()]) or close connections.
+ *        - UV_EMFILE/UV_ENFILE: the process/system is out of file descriptors. Where it can (POSIX, with a spare
+ *          descriptor available) the listener sheds the connections that were waiting (accepts and closes them,
+ *          using the spare) so that the event loop does not spin, and keeps listening. Otherwise (Windows, no
+ *          spare descriptor, or shedding failed) it has stopped, as for any other error. The status is the
+ *          same either way: [tlsuv_listener_start_listen()] tells them apart, returning UV_EALREADY if the
+ *          listener is still listening and resuming it otherwise. The application is under stress: it may want
+ *          to stop accepting ([tlsuv_listener_stop_listen()]) or close connections, and free descriptors before
+ *          resuming.
  *        - anything else: the listener cannot continue and has stopped, as after [tlsuv_listener_stop_listen()];
  *          the application may resume it with [tlsuv_listener_start_listen()].
  * @return for [status] == 0: memory for the new stream (uninitialised, at least [tlsuv_stream_size()] bytes),

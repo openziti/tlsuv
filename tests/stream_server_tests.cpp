@@ -681,10 +681,60 @@ TEST_CASE("listener: fd exhaustion sheds the backlog and is reported", "[listene
         CHECK(handshakes == 0);
     }
 
-    // the listener never stopped, so new connections are accepted
+    // the listener never stopped, so new connections are accepted, and start_listen says it is still going
+    CHECK(tlsuv_listener_start_listen(&f.l, 16, srv_fixture::accept_cb, srv_fixture::hs_cb) == UV_EALREADY);
     REQUIRE(connect(raw2, (sockaddr *) &a, sizeof(a)) == 0);
     f.t.run(WHILE(f.accepted_cnt == 0));
     CHECK(f.accepted_cnt == 1);
+    CHECK(f.errors == 1);
+}
+
+// With no spare descriptor to shed with (here taken away by hand, in practice it could not be reopened) the
+// error is reported with the same status, but the listener has stopped
+TEST_CASE("listener: fd exhaustion without a spare stops the listener", "[listener][server]") {
+    srv_fixture f;
+    SKIP_UNLESS_SERVER(f.srv_ctx);
+    std::vector<int> hogs;
+    uv_os_sock_t raw = socket(AF_INET, SOCK_STREAM, 0);
+    DEFER {
+        for (int fd : hogs) close(fd);
+        close_socket(raw);
+        f.shutdown();
+    };
+
+    f.bind_listen();
+    sockaddr_in a = f.addr;
+    a.sin_port = htons(f.port);
+    REQUIRE(connect(raw, (sockaddr *) &a, sizeof(a)) == 0); // waits in the backlog
+
+    REQUIRE(f.l.spare_fd >= 0);
+    close(f.l.spare_fd);
+    f.l.spare_fd = -1;
+
+    // raw work only while the process has no descriptors left, see the test above
+    int fd;
+    while ((fd = open("/dev/null", O_RDONLY)) >= 0) hogs.push_back(fd);
+    const int open_errno = errno;
+
+    f.t.run(WHILE(f.errors == 0));
+    const int errors = f.errors, error_status = f.last_error, accepted = f.accepted_cnt;
+
+    for (int h : hogs) close(h);
+    hogs.clear();
+
+    REQUIRE((open_errno == EMFILE || open_errno == ENFILE));
+    CHECK((error_status == UV_EMFILE || error_status == UV_ENFILE));
+    CHECK(errors == 1);
+    CHECK(accepted == 0);
+
+    // stopped: start_listen resumes it (UV_EALREADY would mean it never stopped), and it accepts again.
+    // The connection that was waiting is not checked: whether a failed accept() leaves it queued depends on the OS.
+    REQUIRE(tlsuv_listener_start_listen(&f.l, 16, srv_fixture::accept_cb, srv_fixture::hs_cb) == 0);
+    uv_os_sock_t raw2 = socket(AF_INET, SOCK_STREAM, 0);
+    DEFER { close_socket(raw2); };
+    REQUIRE(connect(raw2, (sockaddr *) &a, sizeof(a)) == 0);
+    f.t.run(WHILE(f.accepted_cnt == 0));
+    CHECK(f.accepted_cnt >= 1);
     CHECK(f.errors == 1);
 }
 #endif

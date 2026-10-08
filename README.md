@@ -103,8 +103,10 @@ tlsuv_listener_start_listen(l, 128, on_accept, on_handshake);
 ```
 
 `on_accept` is also called with a non-zero `status` (and `peer == NULL`) when accepting fails. `UV_EMFILE`/`UV_ENFILE`
-means the process is out of descriptors: the listener has shed the connections that were waiting, using a spare descriptor,
-and keeps listening. For any other error the listener has stopped and can be resumed with `tlsuv_listener_start_listen()`.
+means the process is out of descriptors. On POSIX the listener then sheds the connections that were waiting, using a
+spare descriptor, and keeps listening; on Windows, or if it has no spare descriptor, it stops. For any other error the
+listener has stopped. Either way `tlsuv_listener_start_listen()` resumes a stopped listener, and returns `UV_EALREADY`
+if it is still listening.
 If `on_accept` returns a stream for a failure, it is initialised and `on_handshake` is called with the same error code
 (close the stream there as for any failed handshake).
 
