@@ -24,7 +24,13 @@ extern "C" {
 /**
  * Called once when the TLS handshake of a stream accepted by a [tlsuv_listener_t] finishes.
  *
- * @param clt accepted stream. On [status] != 0 the stream is still open; the application must close it.
+ * Usually this happens later, from the event loop. But when the stream cannot even start its handshake (e.g.
+ * UV_EINVAL because the TLS context has no own certificate, or UV_ENOMEM) it is called at once, from inside the
+ * listener's accept handling, before the listener has returned to the loop. Do not rely on it being deferred.
+ *
+ * @param clt accepted stream. On [status] != 0 the stream is still open; the application must close it with
+ *        [tlsuv_stream_close()], also when called at once. Release its memory only from the close callback, never
+ *        from this one.
  * @param status 0 on success, or a libuv error code.
  */
 typedef void (*tlsuv_handshake_cb)(tlsuv_stream_t *clt, int status);
