@@ -706,6 +706,28 @@ TEST_CASE("listener: a lost spare descriptor is reopened", "[listener][server]")
     f.t.run(WHILE(f.accepted_cnt == 0));
     CHECK(f.l.spare_fd >= 0);
 }
+
+TEST_CASE("listener: the spare descriptor is a kernel object of its own", "[listener][server]") {
+    srv_fixture f;
+    SKIP_UNLESS_SERVER(f.srv_ctx);
+    DEFER { f.shutdown(); };
+
+    f.bind_listen();
+    REQUIRE(f.l.spare_fd >= 0);
+
+    // A dup of the listening socket shares its open file description, so closing it would free nothing in the
+    // system-wide file table and accept() would fail again with ENFILE. Status flags live in the description:
+    // changing them through the spare must not show on the listening socket.
+    const int sock_flags = fcntl(f.l.sock, F_GETFL);
+    REQUIRE(fcntl(f.l.spare_fd, F_SETFL, fcntl(f.l.spare_fd, F_GETFL) ^ O_NONBLOCK) == 0);
+    CHECK(fcntl(f.l.sock, F_GETFL) == sock_flags);
+
+    sockaddr_storage ss{};
+    socklen_t len = sizeof(ss);
+    REQUIRE(getsockname(f.l.spare_fd, (sockaddr *) &ss, &len) == 0);
+    CHECK(ss.ss_family == AF_INET); // the listener's family
+    CHECK((fcntl(f.l.spare_fd, F_GETFD) & FD_CLOEXEC) != 0);
+}
 #endif
 
 TEST_CASE("listener: init preserves data", "[listener]") {

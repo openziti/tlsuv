@@ -75,10 +75,25 @@ static bool accept_error_transient(int err) {
 static void on_listen_io(uv_poll_t *p, int status, int events);
 
 #if !_WIN32
-// The spare is a duplicate of the listening socket: no new kernel object, no filesystem or address
-// family dependency (unlike libuv, which opens /dev/null), and closing it leaves the socket open.
+// The spare must be a kernel object of its own. Closing it has to free an entry in the system-wide file table
+// (ENFILE) as well as a slot in the process's descriptor table (EMFILE), or accept() fails again right after.
+// A dup of the listening socket frees only the slot: it shares the open file description. libuv opens /dev/null;
+// a fresh socket of the listener's family is what accept() allocates anyway and needs no filesystem.
 static int open_spare_fd(uv_os_sock_t sock) {
-    return fcntl(sock, F_DUPFD_CLOEXEC, 0);
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof(ss);
+    if (getsockname(sock, (struct sockaddr *) &ss, &len) != 0) {
+        return -1;
+    }
+#ifdef SOCK_CLOEXEC
+    return socket(ss.ss_family, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
+    int fd = socket(ss.ss_family, SOCK_STREAM, 0);
+    if (fd >= 0) {
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+    }
+    return fd;
+#endif
 }
 
 // (Re)open the spare. Without one the listener cannot recover from running out of descriptors, so a failure is

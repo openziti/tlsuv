@@ -87,7 +87,7 @@ struct tlsuv_listener_s {
     tlsuv_accept_cb accept_cb;
     tlsuv_handshake_cb handshake_cb;
     uv_close_cb close_cb; // the application's: uv_close() sets the handle's own close_cb to an internal one
-    int spare_fd; // POSIX: a duplicate of `sock`, kept to be able to shed the backlog when out of descriptors
+    int spare_fd; // POSIX: an unused socket of `sock`'s family, closed to make room to shed the backlog when out of descriptors
     char **alpn;
     int alpn_count;
     unsigned bound : 1;
