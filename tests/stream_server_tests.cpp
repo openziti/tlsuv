@@ -324,6 +324,46 @@ TEST_CASE("listener accepts and echoes", "[listener][server]") {
     CHECK(ntohl(peer->sin_addr.s_addr) == 0x7f000001);
 }
 
+TEST_CASE("stream: sockname and peername mirror each other", "[listener][server]") {
+    srv_fixture f;
+    SKIP_UNLESS_SERVER(f.srv_ctx);
+    ctx_holder cc(l_ca, false);
+    client c(f.t.loop, cc.tls);
+    DEFER { c.close(); f.shutdown(); };
+
+    f.bind_listen();
+    c.connect(f.port);
+    f.t.run(WHILE(!c.connected || f.accepted_cnt == 0));
+    REQUIRE(c.connected);
+    REQUIRE(f.streams.size() == 1);
+    tlsuv_stream_t *srv = &f.streams[0]->s;
+
+    auto name = [](auto fn, const tlsuv_stream_t *s) {
+        sockaddr_in sa{};
+        int len = sizeof(sa);
+        REQUIRE(fn(s, (sockaddr *) &sa, &len) == 0);
+        CHECK(len == sizeof(sa));
+        CHECK(sa.sin_family == AF_INET);
+        CHECK(ntohl(sa.sin_addr.s_addr) == 0x7f000001);
+        return sa;
+    };
+
+    sockaddr_in c_local = name(tlsuv_stream_sockname, &c.s);
+    sockaddr_in c_peer = name(tlsuv_stream_peername, &c.s);
+    sockaddr_in s_local = name(tlsuv_stream_sockname, srv);
+    sockaddr_in s_peer = name(tlsuv_stream_peername, srv);
+
+    // client dialed the listener's port from an ephemeral one
+    CHECK(ntohs(c_peer.sin_port) == f.port);
+    CHECK(ntohs(c_local.sin_port) != 0);
+    CHECK(ntohs(c_local.sin_port) != f.port);
+
+    // the accepted stream sees the same connection from the other end
+    CHECK(s_local.sin_port == c_peer.sin_port);
+    CHECK(s_peer.sin_port == c_local.sin_port);
+    CHECK(s_peer.sin_addr.s_addr == c_local.sin_addr.s_addr);
+}
+
 TEST_CASE("listener negotiates ALPN", "[listener][server]") {
     srv_fixture f;
     SKIP_UNLESS_SERVER(f.srv_ctx);

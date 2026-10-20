@@ -935,7 +935,7 @@ void check_read(uv_idle_t *idler) {
     on_clt_io(&clt->watcher, 0, UV_READABLE);
 }
 
-int tlsuv_stream_peername(const tlsuv_stream_t *clt, struct sockaddr *addr, int *namelen) {
+static int stream_name(const tlsuv_stream_t *clt, struct sockaddr *addr, int *namelen, bool peer) {
     uv_os_fd_t fd;
     int r = uv_fileno((const uv_handle_t *) &clt->watcher, &fd);
     if (r != 0) {
@@ -943,13 +943,21 @@ int tlsuv_stream_peername(const tlsuv_stream_t *clt, struct sockaddr *addr, int 
     }
 
     socklen_t socklen = (socklen_t)*namelen;
-    r = getpeername((uv_os_sock_t)fd, addr, &socklen);
+    r = peer ? getpeername((uv_os_sock_t)fd, addr, &socklen) : getsockname((uv_os_sock_t)fd, addr, &socklen);
     if (r != 0) {
         return r;
     }
 
     *namelen = (int)socklen;
     return 0;
+}
+
+int tlsuv_stream_peername(const tlsuv_stream_t *clt, struct sockaddr *addr, int *namelen) {
+    return stream_name(clt, addr, namelen, true);
+}
+
+int tlsuv_stream_sockname(const tlsuv_stream_t *clt, struct sockaddr *addr, int *namelen) {
+    return stream_name(clt, addr, namelen, false);
 }
 
 // FFI support functions
