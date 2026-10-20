@@ -154,6 +154,9 @@ int tlsuv_stream_free(tlsuv_stream_t *clt);
 
 int tlsuv_stream_peername(const tlsuv_stream_t *clt, struct sockaddr *addr, int *namelen);
 
+/** local address of the stream's socket; same contract as `tlsuv_stream_peername()`. */
+int tlsuv_stream_sockname(const tlsuv_stream_t *clt, struct sockaddr *addr, int *namelen);
+
 const char* tlsuv_stream_get_error(const tlsuv_stream_t *clt);
 
 size_t tlsuv_stream_size();
