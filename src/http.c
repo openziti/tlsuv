@@ -376,7 +376,13 @@ static void on_tls_connect(uv_connect_t *req, int status) {
     uv_timer_stop(c->conn_timer);
 
     if (status < 0) {
-        CLT_LOG(ERR, "handshake failed on TLS stream[%p]: %s", s, uv_strerror(status));
+        // a failed handshake is always UV_ECONNABORTED: the engine knows why (e.g. the certificate is not trusted).
+        // the stream (and its engine) is released on its close callback, after the requests are failed below
+        const char *reason = status == UV_ECONNABORTED ? tlsuv_stream_get_error(s) : NULL;
+        if (reason == NULL || *reason == '\0') {
+            reason = uv_strerror(status);
+        }
+        CLT_LOG(ERR, "handshake failed on TLS stream[%p]: %s", s, reason);
         c->connected = Disconnected;
         c->tr = NULL;
         s->data = NULL;
@@ -384,7 +390,7 @@ static void on_tls_connect(uv_connect_t *req, int status) {
         if (rc != 0) {
             CLT_LOG(WARN, "failed to close TLS stream[%p]: %s", s, uv_strerror(rc));
         }
-        fail_all_requests(c, status, uv_strerror(status));
+        fail_all_requests(c, status, reason);
         safe_continue(c);
         return;
     }
