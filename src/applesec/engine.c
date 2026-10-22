@@ -236,9 +236,8 @@ static ssize_t engine_socket_write(void *io, const char *buf, size_t len) {
         UM_LOG(TRACE, "engine_socket_write: %zd/%zd errno=%d", res, len, err);
         switch (err) {
             case EWOULDBLOCK:
-            // tlsuv_stream_connect_addr() hands over a socket whose connect() may
-            // still be in progress; retry once it is writable (same as OpenSSL's
-            // BIO_sock_non_fatal_error)
+            // the stream starts the handshake only once connect() has completed, so
+            // these are not expected; retry like OpenSSL's BIO_sock_non_fatal_error
             case ENOTCONN:
             case EINPROGRESS:
             case EALREADY:
