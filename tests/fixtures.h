@@ -25,6 +25,7 @@ struct UvLoopTest {
     uv_loop_t *loop;
     uv_timer_t timer{};
     uv_prepare_t check{};
+    bool timed_out = false; // the test timer fired: nothing else may wait on the loop
 
     UvLoopTest(): UvLoopTest(15) {}
 
@@ -45,6 +46,7 @@ struct UvLoopTest {
             INFO("starting test timer");
             REQUIRE(uv_timer_start(&timer,
                                    [](uv_timer_t *t){
+                                       ((UvLoopTest *) t->data)->timed_out = true;
                                        uv_print_active_handles(t->loop, stderr);
                                        uv_stop(t->loop);
                                        FAIL_CHECK("test exceeded allotted time");
@@ -54,11 +56,17 @@ struct UvLoopTest {
 
     // run test loop until no more active handles or test timeout
     void run() const {
+        // the timer is one-shot: once it has fired nothing would stop a loop that has handles left
+        if (timed_out) {
+            drain();
+            return;
+        }
         uv_run(loop, UV_RUN_DEFAULT);
     }
 
     // run while the condition is met or until no active handles
     void run(std::function<bool()> cond) {
+        if (timed_out) return; // the test has failed already, and there is no timer left to end this wait
         struct checker_s {
             std::function<bool()>& condition;
         } checker{cond};
@@ -75,6 +83,10 @@ struct UvLoopTest {
 
         uv_run(loop, UV_RUN_DEFAULT);
         if (check.data) {
+            // `checker` is gone after this call: a prepare handle left running would call into it
+            // the next time the loop runs (e.g. in cleanup)
+            check.data = nullptr;
+            uv_prepare_stop(&check);
             FAIL_CHECK("check condition never became false");
         }
     }
