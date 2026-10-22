@@ -300,6 +300,22 @@ static void data_notify_cb(void *ctx, size_t in, size_t out) {
     uv_async_send(&clt->data_async);
 }
 
+// connect() on the non-blocking socket has not completed yet (tlsuv_stream_connect_addr() hands such a socket
+// over). getpeername() fails with ENOTCONN until the connection is established; any other failure is left
+// for the handshake to report.
+static bool sock_connecting(uv_os_sock_t sock) {
+    struct sockaddr_storage peer;
+    socklen_t len = sizeof(peer);
+    if (getpeername(sock, (struct sockaddr *) &peer, &len) == 0) {
+        return false;
+    }
+#if _WIN32
+    return get_error() == WSAENOTCONN;
+#else
+    return get_error() == ENOTCONN;
+#endif
+}
+
 static void process_connect(tlsuv_stream_t *clt, int status) {
     assert(clt->conn_req);
     uv_connect_t *req = clt->conn_req;
@@ -308,7 +324,8 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     socklen_t l = sizeof(err);
     getsockopt(clt->sock, SOL_SOCKET, SO_ERROR, (void*)&err, &l);
 
-    if (status == 0 && err != 0) {
+    // a failed connect reaches us as a poll error (UV_EBADF on Linux): the socket knows the real one
+    if (err != 0) {
 #if _WIN32
         switch(err) {
             case WSAECONNREFUSED: status = UV_ECONNREFUSED; break;
@@ -328,6 +345,14 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
         clt->conn_req = NULL;
         uv_poll_stop(&clt->watcher);
         req->cb(req, status);
+        return;
+    }
+
+    // the handshake cannot start before the connection is established: its first write would only be refused
+    // (WANT_WRITE), and nothing retries it while we wait for the peer, who is waiting for that very message
+    if (clt->tls_engine == NULL && sock_connecting(clt->sock)) {
+        TLS_LOG(TRACE, "waiting for connect to complete");
+        uv_poll_start(&clt->watcher, UV_READABLE | UV_WRITABLE | UV_DISCONNECT, on_clt_io);
         return;
     }
 
@@ -380,7 +405,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     } else {
         TLS_LOG(TRACE, "waiting for handshake data");
         // wait for incoming handshake messages, and for writability while an async
-        // engine still has handshake output queued (e.g. socket still connecting)
+        // engine still has handshake output queued
         int events = clt->read_events;
         if (async_load(&clt->async_out) > 0) {
             events |= UV_WRITABLE;

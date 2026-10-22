@@ -177,8 +177,8 @@ listener failure) goes through `handshake_failed()`, which records the error, se
 `TLS_HS_ERROR` and wakes the owner so the connect callback reports it.
 
 `engine_socket_write()` treats `ENOTCONN`/`EINPROGRESS`/`EALREADY` as
-"try again": `tlsuv_stream_connect_addr()` hands the engine a socket whose
-non-blocking `connect()` may still be in progress.
+"try again", as OpenSSL does. The stream starts the handshake only once
+`connect()` has completed, so this is a safety net, not an expected case.
 
 ## Server certificate verification
 

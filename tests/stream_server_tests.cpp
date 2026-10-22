@@ -274,16 +274,22 @@ struct client {
         ai.ai_addr = (sockaddr *) &sa;
         // the name is used for SNI and certificate verification (the test certificate has an IP SAN)
         tlsuv_stream_set_hostname(&s, "127.0.0.1");
-        REQUIRE(tlsuv_stream_connect_addr(&cr, &s, &ai, [](uv_connect_t *r, int st) {
-            auto *c = (client *) r->handle->data;
-            c->conn_status = st;
-            c->connected = st == 0;
-            if (st == 0) {
-                const char *p = tlsuv_stream_get_protocol(&c->s);
-                if (p) c->alpn = p;
-                c->read(); // read_start needs an established stream
-            }
-        }) == 0);
+        REQUIRE(tlsuv_stream_connect_addr(&cr, &s, &ai, on_connected) == 0);
+    }
+    // hand a socket to the stream before it is connected, see tlsuv_stream_open()
+    void open(uv_os_sock_t sock) {
+        tlsuv_stream_set_hostname(&s, "127.0.0.1");
+        REQUIRE(tlsuv_stream_open(&cr, &s, sock, on_connected) == 0);
+    }
+    static void on_connected(uv_connect_t *r, int st) {
+        auto *c = (client *) r->handle->data;
+        c->conn_status = st;
+        c->connected = st == 0;
+        if (st == 0) {
+            const char *p = tlsuv_stream_get_protocol(&c->s);
+            if (p) c->alpn = p;
+            c->read(); // read_start needs an established stream
+        }
     }
     void read() {
         tlsuv_stream_read_start(&s, alloc_buf, [](uv_stream_t *st, ssize_t n, const uv_buf_t *b) {
@@ -628,6 +634,35 @@ TEST_CASE("listener: stream data set in accept_cb is preserved", "[listener][ser
     f.t.run(WHILE(f.handshakes == 0));
     CHECK(seen == &marker);
 }
+
+#if !_WIN32
+// A non-blocking connect() is still in progress when tlsuv_stream_connect_addr() hands the socket over (on
+// macOS every loopback connect is). The first handshake write then cannot go out, and a handshake that does not
+// wait for the connection to complete never retries it: both sides wait for the other forever.
+// Here the window is held open: the socket is not connected at all when the stream takes it.
+TEST_CASE("listener: client handshake waits for the connect to complete", "[listener][server]") {
+    srv_fixture f;
+    SKIP_UNLESS_SERVER(f.srv_ctx);
+    ctx_holder cc(l_ca, false);
+    client c(f.t.loop, cc.tls);
+    DEFER { c.close(); f.shutdown(); };
+    f.bind_listen();
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    REQUIRE(sock >= 0);
+    REQUIRE(fcntl(sock, F_SETFL, fcntl(sock, F_GETFL) | O_NONBLOCK) == 0);
+    c.open(sock);
+
+    sockaddr_in a = f.addr;
+    a.sin_port = htons(f.port);
+    int rc = connect(sock, (sockaddr *) &a, sizeof(a));
+    REQUIRE((rc == 0 || errno == EINPROGRESS));
+
+    f.t.run(WHILE(!c.connected || f.hs_ok < 1));
+    CHECK(c.connected);
+    CHECK(f.hs_ok == 1);
+}
+#endif
 
 TEST_CASE("listener: stop_listen from accept_cb", "[listener][server]") {
     srv_fixture f;
