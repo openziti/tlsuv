@@ -538,10 +538,13 @@ int win32crypto_load_keychain_key(tlsuv_private_key_t *pk, const char *id) {
         if (rc != ERROR_SUCCESS) continue;
 
         UM_LOG(DEBG, "loading key[%ls] provider[%ls]", name, providers[i]);
-        rc = NCryptOpenKey(ph, &kh, name, 0, 0);
+        // Look in the MACHINE container first: a service (e.g. LocalSystem) must resolve a machine-provisioned
+        // key by name and must not pick up a same-named key from a user container. Fall back to the user
+        // container so existing user-level keys keep working.
+        rc = NCryptOpenKey(ph, &kh, name, 0, NCRYPT_MACHINE_KEY_FLAG);
         if (rc != ERROR_SUCCESS) {
-            UM_LOG(DEBG, "fallback to load machine level key[%ls]", name);
-            rc = NCryptOpenKey(ph, &kh, name, 0, NCRYPT_MACHINE_KEY_FLAG);
+            UM_LOG(DEBG, "fallback to load user level key[%ls]", name);
+            rc = NCryptOpenKey(ph, &kh, name, 0, 0);
         }
         if (rc == ERROR_SUCCESS) {
           UM_LOG(DEBG, "loaded key[%ls] from provider[%ls]", name, providers[i]);
