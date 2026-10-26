@@ -618,7 +618,7 @@ static void send_body(tlsuv_http_req_t *req) {
         }
         else {
             if (b->len == 0) {
-                // nothing to put on the wire, and a zero-length TLS write never completes
+                // nothing to put on the wire, no need for a write request
                 req_write_body_cb(0, b);
             } else {
                 buf = uv_buf_init(b->chunk, (unsigned int)b->len);
