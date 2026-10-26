@@ -415,6 +415,11 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
 }
 
 static ssize_t write_req(tlsuv_stream_t *clt, uv_buf_t *buf) {
+    // nothing to encrypt, and engines do not agree on what writing zero bytes returns
+    if (buf->len == 0) {
+        return 0;
+    }
+
     int rc = clt->tls_engine->write(clt->tls_engine, buf->base, buf->len);
     if (rc > 0) {
         TLS_LOG(TRACE, "wrote %d bytes", rc);
@@ -474,9 +479,12 @@ static void process_outbound(tlsuv_stream_t *clt) {
     while (!TAILQ_EMPTY(&clt->queue)) {
         req = TAILQ_FIRST(&clt->queue);
         ret = write_req(clt, &req->buf);
-        if (ret > 0) {
-            req->buf.base += ret;
-            req->buf.len -= ret;
+        // 0 is an empty request, which only has to wait for its turn
+        if (ret >= 0) {
+            if (ret > 0) {
+                req->buf.base += ret;
+                req->buf.len -= ret;
+            }
 
             // complete
             if (req->buf.len == 0) {
@@ -890,8 +898,9 @@ int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_w
         return (int)count;
     }
 
-    // successfully wrote the whole request
-    if (count >= buf->len) {
+    // successfully wrote the whole request,
+    // an empty one has to wait for the queue to drain first
+    if (TAILQ_EMPTY(&clt->queue) && count >= buf->len) {
         cb(req, 0);
         return 0;
     }
@@ -899,7 +908,11 @@ int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_w
     // queue request or whatever left
     tlsuv_write_t *wr = tlsuv__malloc(sizeof(*wr));
     wr->wr = req;
-    wr->buf = uv_buf_init(buf->base + count, buf->len - count);
+    wr->buf = *buf;
+    if (count > 0) {
+        wr->buf.base += count;
+        wr->buf.len -= count;
+    }
     clt->queue_len += 1;
     TAILQ_INSERT_TAIL(&clt->queue, wr, _next);
 

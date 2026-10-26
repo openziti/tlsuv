@@ -585,6 +585,108 @@ TEST_CASE("large/partial writes", "[stream]") {
     CHECK(successes + cancelled == w_res.results.size());
 }
 
+// there is nothing to encrypt in a zero-length write, but like uv_write() it completes
+// with status 0, in order with the writes around it
+TEST_CASE("empty write", "[stream]") {
+    UvLoopTest test;
+    tlsuv_stream_t s;
+    tlsuv_stream_init(test.loop, &s, testServerTLS());
+
+    struct state {
+        int connect_status = 1;
+        std::vector<int> done;   // ids of the completed writes, in completion order
+        std::vector<int> status; // and their statuses
+        size_t echoed = 0;
+        int read_error = 0;
+    } st;
+    s.data = &st;
+
+    struct test_write {
+        uv_write_t req;
+        int id;
+    };
+    constexpr int N_BIG = 16;
+    constexpr int EMPTY_ID = 100;
+    std::vector<char> payload(1024 * 1024);
+    char ping[] = "ping";
+    test_write big[N_BIG] = {};
+    test_write empty = {};
+    empty.id = EMPTY_ID;
+    uv_buf_t empty_buf = uv_buf_init(nullptr, 0);
+    auto write_cb = [](uv_write_t *req, int status) {
+        auto st = (state *) req->handle->data;
+        st->done.push_back(((test_write *) req)->id);
+        st->status.push_back(status);
+    };
+
+    uv_connect_t cr;
+    // after everything the callbacks touch: closing cancels pending requests
+    DEFER {
+        tlsuv_stream_close(&s, (uv_close_cb) tlsuv_stream_free);
+        test.drain();
+    };
+    cr.data = &st;
+    tlsuv_stream_connect(&cr, &s, TEST_SERVER, 7443, [](uv_connect_t *r, int status) {
+        ((state *) r->data)->connect_status = status;
+    });
+    test.run(UNTIL(st.connect_status != 1));
+    REQUIRE(st.connect_status == 0);
+
+    auto start_reading = [&]() {
+        tlsuv_stream_read_start(&s,
+            [](uv_handle_t *, size_t suggested, uv_buf_t *b) {
+                *b = uv_buf_init((char *) malloc(suggested), (unsigned int) suggested);
+            },
+            [](uv_stream_t *h, ssize_t n, const uv_buf_t *b) {
+                auto st = (state *) h->data;
+                if (n > 0) {
+                    st->echoed += n;
+                } else if (n < 0) {
+                    st->read_error = (int) n;
+                }
+                free(b->base);
+            });
+    };
+
+    SECTION("nothing pending") {
+        REQUIRE(tlsuv_stream_write(&empty.req, &s, &empty_buf, write_cb) == 0);
+        test.run(UNTIL(!st.done.empty()));
+        CHECK(st.done == std::vector<int>{EMPTY_ID});
+        CHECK(st.status == std::vector<int>{0});
+
+        // the stream is still good
+        start_reading();
+        big[0].id = 1;
+        uv_buf_t buf = uv_buf_init(ping, 4);
+        REQUIRE(tlsuv_stream_write(&big[0].req, &s, &buf, write_cb) == 0);
+        test.run(UNTIL(st.echoed >= 4 || st.read_error != 0));
+        CHECK(st.read_error == 0);
+        CHECK(st.echoed == 4);
+        CHECK(st.done == std::vector<int>{EMPTY_ID, 1});
+    }
+
+    SECTION("behind queued writes") {
+        for (int i = 0; i < N_BIG; i++) {
+            big[i].id = i;
+            uv_buf_t buf = uv_buf_init(payload.data(), (unsigned int) payload.size());
+            REQUIRE(tlsuv_stream_write(&big[i].req, &s, &buf, write_cb) == 0);
+        }
+        // nobody reads the echo yet, so the wire fills up and the rest of the writes queue
+        REQUIRE(s.queue_len > 0);
+
+        REQUIRE(tlsuv_stream_write(&empty.req, &s, &empty_buf, write_cb) == 0);
+        // must not complete ahead of the writes in front of it
+        CHECK(std::find(st.done.begin(), st.done.end(), EMPTY_ID) == st.done.end());
+
+        start_reading();
+        test.run(UNTIL(st.done.size() == N_BIG + 1 || st.read_error != 0));
+        CHECK(st.read_error == 0);
+        REQUIRE(st.done.size() == N_BIG + 1);
+        CHECK(st.done.back() == EMPTY_ID);
+        CHECK(std::count(st.status.begin(), st.status.end(), 0) == N_BIG + 1);
+    }
+}
+
 // the app reads into buffers much smaller than what the engine decrypts at once:
 // process_inbound() stops after MAX_INBOUND_ITERATIONS reads per wakeup, with the
 // rest still inside the engine and nothing left on the socket to signal it
