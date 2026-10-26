@@ -283,6 +283,20 @@ TEST_CASE("http_tests", "[http]") {
         free(req64);
     }
 
+    WHEN(testType << " POST empty body") {
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+        // there is nothing to write for an empty chunk, but its callback has to run
+        tlsuv_http_req_data(req, "", 0, req_body_cb);
+
+        test.run();
+
+        REQUIRE(resp.code == HTTP_STATUS_OK);
+        REQUIRE(resp.resp_body_end_called);
+        REQUIRE(resp.req_body_cb_called);
+    }
+
 
     WHEN(testType << " posting chunked") {
         tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
