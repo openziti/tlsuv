@@ -358,11 +358,19 @@ int tlsuv_http_req_timeout(tlsuv_http_req_t* req, long millis);
 
 /**
  * Write request body. Could be called multiple times.
+ *
+ * `body` is not copied, it has to stay valid until `cb` is called. `cb` is called when the chunk
+ * has been written, or with an error status if the request fails first.
+ *
+ * An empty chunk (`bodylen` of 0) is allowed: nothing is written for it, and with
+ * `Transfer-Encoding: chunked` it does not end the body (use `tlsuv_http_req_end()`), but `cb` is still called.
+ *
  * @param req
  * @param body
  * @param bodylen
  * @param cb
- * @return
+ * @return 0 for success, or `UV_EINVAL` if the request method does not take a body,
+ *         or its body was already sent or ended
  * @see tlsuv_http_req_end
  */
 int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen, tlsuv_http_body_cb cb);
@@ -397,6 +405,9 @@ int tlsuv_http_req_query(tlsuv_http_req_t *req, size_t count, const tlsuv_http_p
 
 /**
  * Indicate the end of the request body. Only needed if `Transfer-Encoding` header was set to `chunked`
+ *
+ * The body ends once: calling it again, or after the body was sent, has no effect.
+ * No more data can be added with `tlsuv_http_req_data()` after it.
  * @param req
  */
 void tlsuv_http_req_end(tlsuv_http_req_t *req);

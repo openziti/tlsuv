@@ -18,6 +18,9 @@
 #include "fixtures.h"
 #include "http_capture.h"
 
+#include <string>
+#include <vector>
+
 #include <tlsuv/http.h>
 #include <tlsuv/src_t.h>
 #include <uv.h>
@@ -109,6 +112,49 @@ TEST_CASE("https over custom src", "[http]") {
     REQUIRE(bytes_resp.code == HTTP_STATUS_OK);
     CHECK(bytes_resp.resp_body_end_called);
     CHECK(bytes_resp.body.size() == 100000);
+}
+
+// request body callbacks in the order they ran, an empty chunk shows as "<empty>"
+static std::vector<std::string> chunk_cb_order;
+static void ordered_chunk_cb(tlsuv_http_req_t *, char *chunk, ssize_t status) {
+    chunk_cb_order.push_back(status != 0 ? "<error>" : (chunk && *chunk ? chunk : "<empty>"));
+}
+
+// an empty chunk has nothing to write, its callback still has to run after those of the chunks before it,
+// which are only done once the source link has written them
+TEST_CASE("empty body chunk over custom src", "[http]") {
+    auto scheme = GENERATE(as<std::string>{}, "http", "https");
+    INFO("scheme: " << scheme);
+    UvLoopTest test;
+
+    tcp_src src{};
+    src.loop = test.loop;
+    src.connect = tcp_src_connect;
+    src.release = tcp_src_release;
+    src.cancel = [](tlsuv_src_t *) {};
+
+    tlsuv_http_t clt{};
+    tlsuv_http_init_with_src(test.loop, &clt, testServerURL(scheme).c_str(), (tlsuv_src_t *) &src);
+    tlsuv_http_set_ssl(&clt, testServerTLS());
+
+    resp_capture resp(resp_body_cb);
+    DEFER {
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+    };
+    tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+    tlsuv_http_req_header(req, "Transfer-Encoding", "chunked");
+
+    chunk_cb_order.clear();
+    tlsuv_http_req_data(req, "abc", 3, ordered_chunk_cb);
+    tlsuv_http_req_data(req, "", 0, ordered_chunk_cb);
+    tlsuv_http_req_data(req, "def", 3, ordered_chunk_cb);
+    tlsuv_http_req_end(req);
+
+    test.run(UNTIL(resp.resp_body_end_called));
+
+    REQUIRE(resp.code == HTTP_STATUS_OK);
+    CHECK(chunk_cb_order == std::vector<std::string>{"abc", "<empty>", "def"});
 }
 
 TEST_CASE("close http over custom src after a failed connect", "[http]") {

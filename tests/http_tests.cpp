@@ -22,6 +22,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <vector>
 #include <tlsuv/http.h>
 #include <tlsuv/tls_engine.h>
 #include <tlsuv/tlsuv.h>
@@ -103,6 +104,20 @@ void send_part2(uv_timer_t *t) {
     tlsuv_http_req_end(req);
 
     uv_close((uv_handle_t *) (t), nullptr);
+}
+
+// request body callbacks in the order they ran, an empty chunk shows as "<empty>"
+static std::vector<std::string> body_cb_order;
+static void ordered_req_body_cb(tlsuv_http_req_t *req, char *chunk, ssize_t status) {
+    body_cb_order.push_back(status != 0 ? "<error>" : (chunk && *chunk ? chunk : "<empty>"));
+}
+
+// ends the request again while it is in flight, long after its body was ended
+static void end_again_body_cb(tlsuv_http_req_t *req, char *chunk, ssize_t len) {
+    resp_body_cb(req, chunk, len);
+    if (len > 0) {
+        tlsuv_http_req_end(req);
+    }
 }
 
 TEST_CASE("failed init", "[http]") {
@@ -297,6 +312,81 @@ TEST_CASE("http_tests", "[http]") {
         REQUIRE(resp.req_body_cb_called);
     }
 
+
+    WHEN(testType << " chunked with an empty chunk") {
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+        tlsuv_http_req_header(req, "Transfer-Encoding", "chunked");
+
+        body_cb_order.clear();
+        tlsuv_http_req_data(req, "abc", 3, ordered_req_body_cb);
+        // a chunk like any other: not the end of the body, nothing to put on the wire, its callback keeps its place
+        tlsuv_http_req_data(req, "", 0, ordered_req_body_cb);
+        tlsuv_http_req_data(req, "def", 3, ordered_req_body_cb);
+        tlsuv_http_req_end(req);
+
+        test.run();
+
+        REQUIRE(resp.code == HTTP_STATUS_OK);
+        REQUIRE(resp.resp_body_end_called);
+        // what the server received: httpbin reports a binary body as base64, "abcdef" here
+        CHECK_THAT(resp.body, ContainsSubstring("base64,YWJjZGVm\""));
+        CHECK(body_cb_order == std::vector<std::string>{"abc", "<empty>", "def"});
+    }
+
+    WHEN(testType << " ending a chunked request twice") {
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+        tlsuv_http_req_header(req, "Transfer-Encoding", "chunked");
+
+        tlsuv_http_req_data(req, "abc", 3, req_body_cb);
+        tlsuv_http_req_end(req);
+        tlsuv_http_req_end(req); // the body ends once, a second terminator would be read as the next request
+
+        test.run();
+
+        REQUIRE(resp.code == HTTP_STATUS_OK);
+        REQUIRE(resp.resp_body_end_called);
+        CHECK_THAT(resp.body, ContainsSubstring("base64,YWJj\"")); // "abc"
+    }
+
+    WHEN(testType << " ending a chunked request while it is in flight") {
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
+        resp.body_cb = end_again_body_cb;
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+        tlsuv_http_req_header(req, "Transfer-Encoding", "chunked");
+
+        tlsuv_http_req_data(req, "abc", 3, req_body_cb);
+        tlsuv_http_req_end(req);
+
+        test.run();
+
+        // the late end has to be dropped: a chunk queued behind the sent body is never freed (LeakSanitizer)
+        REQUIRE(resp.code == HTTP_STATUS_OK);
+        REQUIRE(resp.resp_body_end_called);
+    }
+
+    WHEN(testType << " body data after the end of a chunked request") {
+        tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
+        tlsuv_http_set_ssl(&clt, testServerTLS());
+        tlsuv_http_req_t *req = tlsuv_http_req(&clt, "POST", "/post", resp_capture_cb, &resp);
+        tlsuv_http_req_header(req, "Transfer-Encoding", "chunked");
+
+        body_cb_order.clear();
+        tlsuv_http_req_data(req, "abc", 3, ordered_req_body_cb);
+        tlsuv_http_req_end(req);
+        CHECK(tlsuv_http_req_data(req, "def", 3, ordered_req_body_cb) == UV_EINVAL);
+
+        test.run();
+
+        REQUIRE(resp.code == HTTP_STATUS_OK);
+        REQUIRE(resp.resp_body_end_called);
+        CHECK_THAT(resp.body, ContainsSubstring("base64,YWJj\"")); // "abc"
+        CHECK(body_cb_order == std::vector<std::string>{"abc"});
+    }
 
     WHEN(testType << " posting chunked") {
         tlsuv_http_init(test.loop, &clt, testServerURL(scheme).c_str());
