@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"flag"
 	"fmt"
+	"github.com/coder/websocket"
 	"github.com/elazarl/goproxy"
 	"github.com/mccutchen/go-httpbin/v2/httpbin"
 	"log"
@@ -21,6 +23,46 @@ import (
 	"syscall"
 	"time"
 )
+
+const wsEchoPath = "/ws/echo"
+
+// wsEcho upgrades the request to a websocket and echoes every message back
+// with the type (text/binary) it arrived with.
+func wsEcho(w http.ResponseWriter, r *http.Request) {
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
+	if err != nil {
+		log.Printf("websocket accept: %v", err)
+		return
+	}
+	defer func() { _ = c.CloseNow() }()
+	c.SetReadLimit(1 << 20)
+
+	for {
+		typ, msg, err := c.Read(r.Context())
+		if err != nil {
+			if websocket.CloseStatus(err) == -1 {
+				log.Printf("websocket read: %v", err)
+			}
+			return
+		}
+		if err = c.Write(r.Context(), typ, msg); err != nil {
+			log.Printf("websocket write: %v", err)
+			return
+		}
+	}
+}
+
+// withWebsocket serves the websocket echo endpoint and passes everything
+// else to next untouched.
+func withWebsocket(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == wsEchoPath {
+			wsEcho(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func runHTTP(port int, handler http.Handler) chan error {
 	done := make(chan error)
@@ -181,15 +223,17 @@ func main() {
 
 	httpb := httpbin.New(
 		func(httpBin *httpbin.HTTPBin) {
-			httpBin.Observer = func(result httpbin.Result) {
+			httpBin.Observer = func(_ context.Context, result httpbin.Result) {
 				log.Print(result)
 			}
 		})
 
+	handler := withWebsocket(httpb)
+
 	var err any
 	select {
-	case err = <-runHTTP(8080, httpb):
-	case err = <-runHTTPS(8443, httpb):
+	case err = <-runHTTP(8080, handler):
+	case err = <-runHTTPS(8443, handler):
 	case err = <-runClientAuth(9443):
 	case err = <-runEchoServer(7443):
 	case err = <-runProxy(13128):
