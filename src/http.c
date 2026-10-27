@@ -608,12 +608,17 @@ static void send_body(tlsuv_http_req_t *req) {
                 buf.base = "\r\n";
                 buf.len = 2;
                 clt_write(c, &buf, NULL, NULL);
-            } else { // last chunk
+            } else if (b->end) { // last chunk
                 buf.base = "0\r\n\r\n";
                 buf.len = 5;
                 clt_write(c, &buf, NULL, NULL);
                 tlsuv__free(b);
                 req->state = body_sent;
+            } else {
+                // an empty chunk is not the end of the body and puts nothing on the wire,
+                // writing no bytes only keeps its callback in order
+                buf = uv_buf_init(b->chunk, 0);
+                clt_write(c, &buf, req_write_body_cb, b);
             }
         }
         else {
@@ -1036,11 +1041,26 @@ int tlsuv_http_req_header(tlsuv_http_req_t *req, const char *name, const char *v
     return 0;
 }
 
+// the end marker is always the last chunk, nothing is queued behind it
+static bool end_queued(const tlsuv_http_req_t *req) {
+    const struct body_chunk_s *last = req->req_body;
+    while (last != NULL && last->next != NULL) {
+        last = last->next;
+    }
+    return last != NULL && last->end;
+}
+
 void tlsuv_http_req_end(tlsuv_http_req_t *req) {
     if (req->req_chunked) {
+        // the body ends once: ignore a repeated call, and one that comes after the body was sent
+        if (req->state > headers_sent || end_queued(req)) {
+            return;
+        }
+
         struct body_chunk_s *chunk = tlsuv__calloc(1, sizeof(struct body_chunk_s));
 
         chunk->len = 0;
+        chunk->end = true;
         chunk->next = NULL;
         chunk->req = req;
 
@@ -1068,7 +1088,7 @@ int tlsuv_http_req_data(tlsuv_http_req_t *req, const char *body, size_t bodylen,
         return UV_EINVAL;
     }
 
-    if (req->state > headers_sent) {
+    if (req->state > headers_sent || end_queued(req)) {
         return UV_EINVAL;
     }
 

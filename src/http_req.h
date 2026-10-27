@@ -44,6 +44,8 @@ struct body_chunk_s {
     tlsuv_http_body_cb cb;
 
     tlsuv_http_req_t* req;
+    // marks the end of a chunked body, as opposed to an empty chunk supplied by the app
+    bool end;
 
     struct body_chunk_s* next;
 };
