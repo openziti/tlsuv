@@ -254,7 +254,9 @@ static void tls_link_io_write_cb(uv_link_t *l, int status, void *data) {
     if (req->cb) {
         req->cb(l, status, req->ctx);
     }
-    tlsuv__free(req->b);
+    if (req->b) {
+        tlsuv__free(req->b);
+    }
     tlsuv__free(req);
 }
 
@@ -274,17 +276,17 @@ static void tls_link_flush_io(tls_link_t *tls, uv_link_write_cb cb, void *ctx) {
         WAB_UPDATE_GET(*tls->ssl_out, len);
         WAB_GET_SPACE(*tls->ssl_out, p, len);
     }
+    if (req == NULL && cb != NULL) {
+        // nothing to flush (an empty write): still go through the parent link,
+        // completing here would run cb ahead of earlier writes that are still in flight
+        req = tlsuv__calloc(1, sizeof(struct flush_req));
+    }
     if (req) {
         UM_LOG(TRACE, "flushing %zd bytes", total);
         uv_buf_t b = uv_buf_init(req->b, total);
         req->cb = cb;
         req->ctx = ctx;
         uv_link_propagate_write(tls->parent, (uv_link_t *) tls, &b, 1, NULL, tls_link_io_write_cb, req);
-    } else {
-        // this should not happen but just in case
-        if (cb) {
-            cb((uv_link_t *) tls, 0, ctx);
-        }
     }
     // ssl_out get caught up to put, just reset it
     WAB_INIT(*tls->ssl_out);
