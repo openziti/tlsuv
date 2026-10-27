@@ -617,13 +617,8 @@ static void send_body(tlsuv_http_req_t *req) {
             }
         }
         else {
-            if (b->len == 0) {
-                // nothing to put on the wire, no need for a write request
-                req_write_body_cb(0, b);
-            } else {
-                buf = uv_buf_init(b->chunk, (unsigned int)b->len);
-                clt_write(c, &buf, req_write_body_cb, b);
-            }
+            buf = uv_buf_init(b->chunk, (unsigned int)b->len);
+            clt_write(c, &buf, req_write_body_cb, b);
             if (req->body_sent_size > req->req_body_size) {
                 CLT_LOG(WARN, "Supplied data[%zd] is larger than provided Content-Length[%zd]",
                         req->body_sent_size, req->req_body_size);
