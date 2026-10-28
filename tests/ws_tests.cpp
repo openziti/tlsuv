@@ -121,13 +121,15 @@ TEST_CASE("websocket fail tests", "[websocket]") {
     }
 }
 
-#define WS_TEST_HOST "echo.websocket.org"
+// websocket echo endpoint of the local test server (tests/test_server)
+#define WS_TEST_URL "ws://localhost:8080/ws/echo"
+#define WSS_TEST_URL "wss://localhost:8443/ws/echo"
 
 TEST_CASE("websocket echo tests", "[websocket]") {
     UvLoopTest lt;
 
     auto clt = (tlsuv_websocket_t *)malloc(sizeof (tlsuv_websocket_t));
-    websocket_test test(2);
+    websocket_test test(1);
 
     tlsuv_websocket_init(lt.loop, clt);
     test.ws = clt;
@@ -136,28 +138,41 @@ TEST_CASE("websocket echo tests", "[websocket]") {
     uv_connect_t r;
     r.data = &test;
 
-    WHEN("wss echo test") {
-        int rc = tlsuv_websocket_connect(&r, clt, "wss://" WS_TEST_HOST, on_connect, on_ws_data);
+    WHEN("ws echo test") {
+        int rc = tlsuv_websocket_connect(&r, clt, WS_TEST_URL, on_connect, on_ws_data);
         lt.run();
         CHECK(rc == 0);
         CHECK(test.conn_status == 0);
         CHECK(test.write_status == 0);
         CHECK(test.close_cb_called);
-        REQUIRE(test.resp.size() == 2);
-        CHECK_THAT(test.resp[1],Catch::Matchers::Matches("this is a test"));
+        REQUIRE(test.resp.size() == 1);
+        CHECK_THAT(test.resp[0],Catch::Matchers::Matches("this is a test"));
+    }
+
+    WHEN("wss echo test") {
+        tlsuv_websocket_set_tls(clt, testServerTLS());
+        int rc = tlsuv_websocket_connect(&r, clt, WSS_TEST_URL, on_connect, on_ws_data);
+        lt.run();
+        CHECK(rc == 0);
+        CHECK(test.conn_status == 0);
+        CHECK(test.write_status == 0);
+        CHECK(test.close_cb_called);
+        REQUIRE(test.resp.size() == 1);
+        CHECK_THAT(test.resp[0],Catch::Matchers::Matches("this is a test"));
     }
 
     WHEN("wss echo test with proxy") {
         auto proxy = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", "13128");
         tlsuv_websocket_set_connector(clt, proxy);
-        int rc = tlsuv_websocket_connect(&r, clt, "wss://" WS_TEST_HOST, on_connect, on_ws_data);
+        tlsuv_websocket_set_tls(clt, testServerTLS());
+        int rc = tlsuv_websocket_connect(&r, clt, WSS_TEST_URL, on_connect, on_ws_data);
         lt.run();
         CHECK(rc == 0);
         CHECK(test.conn_status == 0);
         CHECK(test.write_status == 0);
         CHECK(test.close_cb_called);
-        REQUIRE(test.resp.size() == 2);
-        CHECK_THAT(test.resp[1],Catch::Matchers::Matches("this is a test"));
+        REQUIRE(test.resp.size() == 1);
+        CHECK_THAT(test.resp[0],Catch::Matchers::Matches("this is a test"));
         proxy->free((void*)proxy);
     }
 }
