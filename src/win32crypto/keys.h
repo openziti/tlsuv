@@ -26,6 +26,8 @@ struct win32crypto_private_key_s {
     struct tlsuv_private_key_s api;
     NCRYPT_PROV_HANDLE provider;
     NCRYPT_KEY_HANDLE key;
+    // 1 when the key was opened from the MACHINE container (NCRYPT_MACHINE_KEY_FLAG), see set_own_cert
+    int machine_key;
 };
 
 struct win32crypto_public_key_s {
