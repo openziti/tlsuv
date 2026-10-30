@@ -76,6 +76,11 @@ int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_
     ws->loop = loop;
     ws->type = UV_IDLE;
     ws->src = src;
+    if (src != NULL) {
+        // tlsuv_websocket_close() closes the link whether or not the source ever connected
+        uv_link_init(&ws->ws_link, &ws_methods);
+        ws->ws_link.data = ws;
+    }
     ws->req = tlsuv__calloc(1, sizeof(tlsuv_http_req_t));
 
     char randbuf[24];
@@ -272,7 +277,10 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
     UM_LOG(DEBG, "connecting to '%s:%d'", host, port);
 
     if (ws->src) {
-        tlsuv_tls_link_init(&ws->tls_link, ws->loop, ws->tls->new_engine(ws->tls, host), tls_hs_cb);
+        // ws:// has no TLS context, and no TLS link
+        if (ws->tls != NULL) {
+            tlsuv_tls_link_init(&ws->tls_link, ws->loop, ws->tls->new_engine(ws->tls, host), tls_hs_cb);
+        }
         return ws->src->connect(ws->src, host, portstr, src_connect_cb, req);
     }
 
@@ -351,8 +359,6 @@ static void src_connect_cb(tlsuv_src_t *sl, int status, void *connect_ctx) {
     }
 
     ws->conn_req = req;
-    uv_link_init(&ws->ws_link, &ws_methods);
-    ws->ws_link.data = ws;
 
     if (ws->tls != NULL) {
         ws->tls_link.data = ws;
@@ -428,9 +434,12 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
         ws->closed = true;
         // still connecting
         if (ws->conn_req != NULL) {
-            ws->conn_req->cb(ws->conn_req, (int)nread);
+            uv_connect_t *req = ws->conn_req;
             ws->conn_req = NULL;
-        } else {
+            req->cb(req, (int)nread);
+        } else if (ws->req == NULL) {
+            // the upgrade request is kept until it is answered: if it is still here,
+            // the connect callback has already reported the failure
             ws->read_cb((uv_stream_t *) ws, nread, buf);
         }
         return;
@@ -684,7 +693,10 @@ static void tls_hs_cb(tls_link_t *tls, int status) {
     UM_LOG(DEBG, "tls HS complete %d", status);
     if (status == TLS_HS_COMPLETE) {
         uv_link_read_start(&ws->ws_link);
-    } else {
-        ws->conn_req->cb(ws->conn_req, UV_ECONNABORTED);
+    } else if (ws->conn_req != NULL) {
+        // a failed handshake is reported more than once (the link has no failed state): tell the app once
+        uv_connect_t *req = ws->conn_req;
+        ws->conn_req = NULL;
+        req->cb(req, UV_ECONNABORTED);
     }
 }
