@@ -199,6 +199,7 @@ struct ws_src_run {
     std::vector<int> connect_status; // one entry per call of the connect callback
     std::vector<std::string> received;
     std::vector<ssize_t> read_errors;
+    int write_after_failure = 0; // what a write from the failed connect callback returned
     bool close_on_connect_error = true;
     bool closing = false;
     bool closed = false;
@@ -235,14 +236,14 @@ struct ws_src_run {
     static void on_connect(uv_connect_t *req, int status) {
         auto run = (ws_src_run *) req->data;
         run->connect_status.push_back(status);
-        if (status != 0) {
-            if (run->close_on_connect_error) run->close();
-            return;
-        }
         static char msg[] = "hello over src";
         uv_buf_t buf = uv_buf_init(msg, sizeof(msg) - 1);
         auto wr = new uv_write_t;
-        tlsuv_websocket_write(wr, &run->ws, &buf, [](uv_write_t *w, int) { delete w; });
+        int rc = tlsuv_websocket_write(wr, &run->ws, &buf, [](uv_write_t *w, int) { delete w; });
+        if (status != 0) {
+            run->write_after_failure = rc;
+            if (run->close_on_connect_error) run->close();
+        }
     }
 
     static void on_data(uv_stream_t *s, ssize_t nread, const uv_buf_t *buf) {
@@ -290,7 +291,11 @@ TEST_CASE("wss over custom src with an untrusted certificate", "[websocket]") {
     run.close();
     run.wait_closed();
 
-    CHECK(run.connect_status == std::vector<int>{UV_ECONNABORTED});
+    // the status depends on the engine: a failed handshake, or the connection closing under it
+    REQUIRE(run.connect_status.size() == 1);
+    CHECK(run.connect_status[0] < 0);
+    // the websocket is closed by the time the app hears about it
+    CHECK(run.write_after_failure == UV_ECONNRESET);
     CHECK(run.read_errors.empty());
 }
 
@@ -302,6 +307,131 @@ TEST_CASE("close websocket over custom src after a failed connect", "[websocket]
     run.wait_closed();
 
     CHECK(run.connect_status == std::vector<int>{UV_ECONNREFUSED});
+    CHECK(run.write_after_failure == UV_ECONNRESET);
+}
+
+// a server that answers the first request it reads with `reply`, sends `trailer` a moment later,
+// and closes the connection
+struct canned_server {
+    struct conn {
+        canned_server *srv;
+        uv_tcp_t tcp{};
+        uv_timer_t timer{};
+        uv_write_t wr{};
+        char request[4096];
+        int open_handles = 2;
+
+        void send(const std::string &data, uv_write_cb cb) {
+            uv_buf_t buf = uv_buf_init(const_cast<char *>(data.data()), (unsigned) data.size());
+            if (uv_write(&wr, (uv_stream_t *) &tcp, &buf, 1, cb) != 0) finish();
+        }
+
+        void finish() {
+            if (uv_is_closing((uv_handle_t *) &tcp)) return;
+            srv->done = true;
+            for (auto h: {(uv_handle_t *) &tcp, (uv_handle_t *) &timer}) {
+                uv_close(h, [](uv_handle_t *h) {
+                    auto c = (conn *) h->data;
+                    if (--c->open_handles == 0) delete c;
+                });
+            }
+        }
+    };
+
+    uv_tcp_t listener{};
+    std::string reply;
+    std::string trailer;
+    bool done = false; // the connection has been closed by the server
+
+    canned_server(uv_loop_t *loop, std::string reply, std::string trailer) :
+            reply(std::move(reply)), trailer(std::move(trailer)) {
+        sockaddr_in addr{};
+        uv_ip4_addr("127.0.0.1", 0, &addr);
+        uv_tcp_init(loop, &listener);
+        listener.data = this;
+        REQUIRE(uv_tcp_bind(&listener, (const sockaddr *) &addr, 0) == 0);
+        REQUIRE(uv_listen((uv_stream_t *) &listener, 1, on_accept) == 0);
+    }
+
+    std::string url() {
+        sockaddr_storage bound{};
+        int len = sizeof(bound);
+        uv_tcp_getsockname(&listener, (sockaddr *) &bound, &len);
+        return "ws://127.0.0.1:" + std::to_string(ntohs(((sockaddr_in *) &bound)->sin_port)) + "/";
+    }
+
+    void close() {
+        if (!uv_is_closing((uv_handle_t *) &listener)) uv_close((uv_handle_t *) &listener, nullptr);
+    }
+
+    static void on_accept(uv_stream_t *l, int status) {
+        auto c = new conn{};
+        c->srv = (canned_server *) l->data;
+        uv_tcp_init(l->loop, &c->tcp);
+        uv_timer_init(l->loop, &c->timer);
+        c->tcp.data = c->timer.data = c;
+        if (status != 0 || uv_accept(l, (uv_stream_t *) &c->tcp) != 0) {
+            c->finish();
+            return;
+        }
+        uv_read_start((uv_stream_t *) &c->tcp,
+                      [](uv_handle_t *h, size_t, uv_buf_t *buf) {
+                          auto c = (conn *) h->data;
+                          *buf = uv_buf_init(c->request, sizeof(c->request));
+                      },
+                      [](uv_stream_t *s, ssize_t nread, const uv_buf_t *) {
+                          auto c = (conn *) s->data;
+                          if (nread <= 0) {
+                              if (nread < 0) c->finish();
+                              return;
+                          }
+                          uv_read_stop(s);
+                          c->send(c->srv->reply, [](uv_write_t *w, int) {
+                              auto c = (conn *) w->handle->data;
+                              if (c->srv->trailer.empty()) {
+                                  c->finish();
+                                  return;
+                              }
+                              uv_timer_start(&c->timer, [](uv_timer_t *t) {
+                                  auto c = (conn *) t->data;
+                                  c->send(c->srv->trailer, [](uv_write_t *w, int) {
+                                      ((conn *) w->handle->data)->finish();
+                                  });
+                              }, 50, 0);
+                          });
+                      });
+    }
+};
+
+// an upgrade the server does not accept is reported to the app once, and then nothing is passed on
+// for a websocket that never connected, whatever the server still sends
+static void check_failed_upgrade(const char *reply) {
+    ws_src_run run;
+    // a frame, in case the client takes what follows for websocket data
+    canned_server server(run.test.loop, reply, std::string("\x81\x03" "abc"));
+    DEFER { server.close(); run.test.drain(); };
+    run.close_on_connect_error = false;
+
+    REQUIRE(run.connect(server.url().c_str()) == 0);
+    run.test.run(UNTIL(server.done));
+    // the client reads until the server's close, which ends its reading
+    run.test.run(UNTIL(!uv_is_active((uv_handle_t *) &run.src.tcp)));
+    run.close();
+    run.wait_closed();
+
+    REQUIRE(run.connect_status.size() == 1);
+    CHECK(run.connect_status[0] < 0);
+    CHECK(run.write_after_failure == UV_ECONNRESET);
+    CHECK(run.read_errors.empty());
+    CHECK(run.received.empty());
+}
+
+TEST_CASE("websocket over custom src with a refused upgrade", "[websocket]") {
+    check_failed_upgrade("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+}
+
+TEST_CASE("websocket over custom src with a reply that is not HTTP", "[websocket]") {
+    check_failed_upgrade("this is not an HTTP reply\r\n\r\n");
 }
 
 // closes the client from the final body callback of its request, as tlsuv_http_close() documents

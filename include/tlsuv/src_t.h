@@ -64,7 +64,8 @@ typedef void (*tlsuv_src_release_t)(tlsuv_src_t *sl);
  *   Alternatively connect() may fail by returning non-zero, without calling cb: the HTTP client then fails its
  *   requests with that code, the websocket client returns it from tlsuv_websocket_connect() and does not call
  *   its connect callback.
- *   tlsuv does not call cancel or release for a failed connect; the source cleans up after itself.
+ *   A failed connect is not by itself a reason for tlsuv to call cancel or release: the source cleans up after
+ *   itself. (The websocket client still calls cancel when it is closed, whether or not its connect failed.)
  *
  * link
  *   The client closes its connection with uv_link_close() on the last link of its chain, which closes `link` too

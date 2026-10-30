@@ -428,20 +428,35 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
     ws_process_read(ws, nread, buf);
 }
 
+// A failed connect is reported to the app once, and the websocket is closed from then on.
+// The failure can be seen more than once: a failed handshake, then the connection closing under it.
+static void ws_connect_failed(tlsuv_websocket_t *ws, int status) {
+    uv_connect_t *req = ws->conn_req;
+    if (req == NULL) {
+        return;
+    }
+    ws->conn_req = NULL;
+    ws->closed = true;
+    req->cb(req, status);
+}
+
 void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) {
     UM_LOG(VERB, "ws_read_cb nread = %zd", nread);
     if (nread < 0) {
         ws->closed = true;
-        // still connecting
         if (ws->conn_req != NULL) {
-            uv_connect_t *req = ws->conn_req;
-            ws->conn_req = NULL;
-            req->cb(req, (int)nread);
-        } else if (ws->req == NULL) {
-            // the upgrade request is kept until it is answered: if it is still here,
-            // the connect callback has already reported the failure
+            // still connecting
+            ws_connect_failed(ws, (int)nread);
+        } else if (ws->connected) {
+            // a websocket that never connected has been reported to the app already
             ws->read_cb((uv_stream_t *) ws, nread, buf);
         }
+        return;
+    }
+
+    if (ws->conn_req == NULL && !ws->connected) {
+        // the connect has failed and the app knows: nothing to parse, nothing to pass on
+        tlsuv__free(buf->base);
         return;
     }
 
@@ -451,7 +466,7 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
         processed = http_req_process(ws->req, buf->base, nread);
         if (processed < 0) {
             UM_LOG(ERR, "failed to parse connect/upgrade response");
-            ws->conn_req->cb(ws->conn_req, -1);
+            ws_connect_failed(ws, -1);
             http_req_free(ws->req);
             tlsuv__free(ws->req);
             ws->req = NULL;
@@ -461,10 +476,11 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
             if (ws->req->state == completed) {
                 if (ws->req->resp.code == 101) {
                     UM_LOG(VERB, "websocket connected");
+                    ws->connected = true;
                     ws->conn_req->cb(ws->conn_req, 0);
                 } else {
                     UM_LOG(ERR, "failed to connect to websocket: %s(%d)", ws->req->resp.status, ws->req->resp.code);
-                    ws->conn_req->cb(ws->conn_req, -1);
+                    ws_connect_failed(ws, -1);
                     failed = true;
                 }
                 ws->conn_req = NULL;
@@ -693,10 +709,8 @@ static void tls_hs_cb(tls_link_t *tls, int status) {
     UM_LOG(DEBG, "tls HS complete %d", status);
     if (status == TLS_HS_COMPLETE) {
         uv_link_read_start(&ws->ws_link);
-    } else if (ws->conn_req != NULL) {
-        // a failed handshake is reported more than once (the link has no failed state): tell the app once
-        uv_connect_t *req = ws->conn_req;
-        ws->conn_req = NULL;
-        req->cb(req, UV_ECONNABORTED);
+    } else {
+        // a failed handshake is reported more than once (the link has no failed state)
+        ws_connect_failed(ws, UV_ECONNABORTED);
     }
 }
