@@ -49,6 +49,7 @@ struct tlsuv_websocket_s {
     tls_link_t tls_link;
 
     bool closed;
+    bool connected; // the server accepted the upgrade
 };
 
 /**

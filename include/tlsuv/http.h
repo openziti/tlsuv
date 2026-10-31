@@ -318,6 +318,9 @@ void tlsuv_http_header(tlsuv_http_t *clt, const char *name, const char *value);
 
 /**
  * close client and release all resources associate with it
+ *
+ * Can be called from the final body callback of a request (`len == UV_EOF`). It must not be called from the
+ * response callback or from a body callback that delivers data: the request being processed is released.
  * @param clt
  * @param close_cb callback called after client is closed and all resources released. May be NULL.
  * @return 0 or error code
