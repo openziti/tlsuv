@@ -486,6 +486,11 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
                     ws->connected = true;
                     ws_free_req(ws);
                     req->cb(req, 0);
+                    if (ws->closed) {
+                        // the app closed the websocket from the callback
+                        tlsuv__free(buf->base);
+                        return;
+                    }
                 } else {
                     UM_LOG(ERR, "failed to connect to websocket: %s(%d)", ws->req->resp.status, ws->req->resp.code);
                     ws_free_req(ws);
@@ -668,7 +673,14 @@ static void ws_close_cb(uv_link_t *l) {
     on_ws_close(ws);
 }
 
+static void ws_tr_closed(uv_handle_t *h) {
+    tlsuv_websocket_t *ws = h->data;
+    tlsuv__free(h);
+    on_ws_close(ws);
+}
+
 int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
+    ws->closed = true;
     ws->close_cb = cb;
 
     if (ws->connect_req) {
@@ -688,8 +700,11 @@ int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
 
     if (ws->tr != NULL) {
         UM_LOG(TRACE, "closing ws transport");
-        ws->tr_close(ws->tr, (uv_close_cb)free);
+        // the close callback comes with the transport's: the websocket may be in use further up the stack
+        void *tr = ws->tr;
         ws->tr = NULL;
+        ws->tr_close(tr, ws_tr_closed);
+        return 0;
     }
     on_ws_close(ws);
     return 0;
