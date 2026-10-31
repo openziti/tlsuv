@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 #include <catch2/catch_all.hpp>
+#include "canned_server.h"
 #include "fixtures.h"
 #include <cstring>
 #include <tlsuv/tlsuv.h>
@@ -124,6 +125,57 @@ TEST_CASE("websocket fail tests", "[websocket]") {
 // websocket echo endpoint of the local test server (tests/test_server)
 #define WS_TEST_URL "ws://localhost:8080/ws/echo"
 #define WSS_TEST_URL "wss://localhost:8443/ws/echo"
+
+// tlsuv_websocket_close() runs the close callback right away on this path, and the application may free
+// the websocket in it: nothing may touch the websocket after the connect callback returns
+static void start_freeing_websocket(UvLoopTest &lt, websocket_test &test, uv_connect_t &r) {
+    auto clt = (tlsuv_websocket_t *) malloc(sizeof(tlsuv_websocket_t));
+    tlsuv_websocket_init(lt.loop, clt);
+    test.ws = clt;
+    test.conn_status = 1; // neither a success nor a failure
+    clt->data = &test;
+    r.data = &test;
+}
+
+static void check_freed_from_failed_connect(const char *reply) {
+    UvLoopTest lt;
+    canned_server server(lt.loop, reply, "");
+    DEFER { server.close(); lt.drain(); };
+
+    websocket_test test(0);
+    uv_connect_t r;
+    start_freeing_websocket(lt, test, r);
+
+    // on_connect closes the websocket on a failure, and its close callback frees it
+    REQUIRE(tlsuv_websocket_connect(&r, test.ws, server.url().c_str(), on_connect, on_ws_data) == 0);
+    lt.run(UNTIL(test.close_cb_called));
+
+    CHECK(test.conn_status < 0);
+}
+
+TEST_CASE("free websocket from the connect callback after a refused upgrade", "[websocket]") {
+    check_freed_from_failed_connect("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+}
+
+TEST_CASE("free websocket from the connect callback after a reply that is not HTTP", "[websocket]") {
+    check_freed_from_failed_connect("this is not an HTTP reply\r\n\r\n");
+}
+
+TEST_CASE("free websocket from the connect callback after a successful connect", "[websocket]") {
+    UvLoopTest lt;
+    websocket_test test(0);
+    uv_connect_t r;
+    start_freeing_websocket(lt, test, r);
+
+    REQUIRE(tlsuv_websocket_connect(&r, test.ws, WS_TEST_URL, [](uv_connect_t *req, int status) {
+        auto t = static_cast<websocket_test *>(req->data);
+        t->conn_status = status;
+        tlsuv_websocket_close(t->ws, on_close_cb);
+    }, on_ws_data) == 0);
+    lt.run(UNTIL(test.close_cb_called));
+
+    CHECK(test.conn_status == 0);
+}
 
 TEST_CASE("websocket echo tests", "[websocket]") {
     UvLoopTest lt;

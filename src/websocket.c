@@ -428,8 +428,15 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
     ws_process_read(ws, nread, buf);
 }
 
+static void ws_free_req(tlsuv_websocket_t *ws) {
+    http_req_free(ws->req);
+    tlsuv__free(ws->req);
+    ws->req = NULL;
+}
+
 // A failed connect is reported to the app once, and the websocket is closed from then on.
 // The failure can be seen more than once: a failed handshake, then the connection closing under it.
+// The app may free the websocket in the callback: it is the last thing done with the websocket.
 static void ws_connect_failed(tlsuv_websocket_t *ws, int status) {
     uv_connect_t *req = ws->conn_req;
     if (req == NULL) {
@@ -466,27 +473,25 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
         processed = http_req_process(ws->req, buf->base, nread);
         if (processed < 0) {
             UM_LOG(ERR, "failed to parse connect/upgrade response");
+            ws_free_req(ws);
             ws_connect_failed(ws, -1);
-            http_req_free(ws->req);
-            tlsuv__free(ws->req);
-            ws->req = NULL;
             failed = true;
         } else {
             UM_LOG(VERB, "processed %zd out of %zd", processed, nread);
             if (ws->req->state == completed) {
                 if (ws->req->resp.code == 101) {
                     UM_LOG(VERB, "websocket connected");
+                    uv_connect_t *req = ws->conn_req;
+                    ws->conn_req = NULL;
                     ws->connected = true;
-                    ws->conn_req->cb(ws->conn_req, 0);
+                    ws_free_req(ws);
+                    req->cb(req, 0);
                 } else {
                     UM_LOG(ERR, "failed to connect to websocket: %s(%d)", ws->req->resp.status, ws->req->resp.code);
+                    ws_free_req(ws);
                     ws_connect_failed(ws, -1);
                     failed = true;
                 }
-                ws->conn_req = NULL;
-                http_req_free(ws->req);
-                tlsuv__free(ws->req);
-                ws->req = NULL;
             }
         }
     }
