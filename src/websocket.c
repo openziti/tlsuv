@@ -76,6 +76,11 @@ int tlsuv_websocket_init_with_src(uv_loop_t *loop, tlsuv_websocket_t *ws, tlsuv_
     ws->loop = loop;
     ws->type = UV_IDLE;
     ws->src = src;
+    if (src != NULL) {
+        // tlsuv_websocket_close() closes the link whether or not the source ever connected
+        uv_link_init(&ws->ws_link, &ws_methods);
+        ws->ws_link.data = ws;
+    }
     ws->req = tlsuv__calloc(1, sizeof(tlsuv_http_req_t));
 
     char randbuf[24];
@@ -272,7 +277,10 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
     UM_LOG(DEBG, "connecting to '%s:%d'", host, port);
 
     if (ws->src) {
-        tlsuv_tls_link_init(&ws->tls_link, ws->loop, ws->tls->new_engine(ws->tls, host), tls_hs_cb);
+        // ws:// has no TLS context, and no TLS link
+        if (ws->tls != NULL) {
+            tlsuv_tls_link_init(&ws->tls_link, ws->loop, ws->tls->new_engine(ws->tls, host), tls_hs_cb);
+        }
         return ws->src->connect(ws->src, host, portstr, src_connect_cb, req);
     }
 
@@ -351,8 +359,6 @@ static void src_connect_cb(tlsuv_src_t *sl, int status, void *connect_ctx) {
     }
 
     ws->conn_req = req;
-    uv_link_init(&ws->ws_link, &ws_methods);
-    ws->ws_link.data = ws;
 
     if (ws->tls != NULL) {
         ws->tls_link.data = ws;
@@ -422,17 +428,42 @@ void ws_read_cb(uv_link_t *l, ssize_t nread, const uv_buf_t *buf) {
     ws_process_read(ws, nread, buf);
 }
 
+static void ws_free_req(tlsuv_websocket_t *ws) {
+    http_req_free(ws->req);
+    tlsuv__free(ws->req);
+    ws->req = NULL;
+}
+
+// A failed connect is reported to the app once, and the websocket is closed from then on.
+// The failure can be seen more than once: a failed handshake, then the connection closing under it.
+// The app may free the websocket in the callback: it is the last thing done with the websocket.
+static void ws_connect_failed(tlsuv_websocket_t *ws, int status) {
+    uv_connect_t *req = ws->conn_req;
+    if (req == NULL) {
+        return;
+    }
+    ws->conn_req = NULL;
+    ws->closed = true;
+    req->cb(req, status);
+}
+
 void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) {
     UM_LOG(VERB, "ws_read_cb nread = %zd", nread);
     if (nread < 0) {
         ws->closed = true;
-        // still connecting
         if (ws->conn_req != NULL) {
-            ws->conn_req->cb(ws->conn_req, (int)nread);
-            ws->conn_req = NULL;
-        } else {
+            // still connecting
+            ws_connect_failed(ws, (int)nread);
+        } else if (ws->connected) {
+            // a websocket that never connected has been reported to the app already
             ws->read_cb((uv_stream_t *) ws, nread, buf);
         }
+        return;
+    }
+
+    if (ws->conn_req == NULL && !ws->connected) {
+        // the connect has failed and the app knows: nothing to parse, nothing to pass on
+        tlsuv__free(buf->base);
         return;
     }
 
@@ -442,26 +473,30 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
         processed = http_req_process(ws->req, buf->base, nread);
         if (processed < 0) {
             UM_LOG(ERR, "failed to parse connect/upgrade response");
-            ws->conn_req->cb(ws->conn_req, -1);
-            http_req_free(ws->req);
-            tlsuv__free(ws->req);
-            ws->req = NULL;
+            ws_free_req(ws);
+            ws_connect_failed(ws, -1);
             failed = true;
         } else {
             UM_LOG(VERB, "processed %zd out of %zd", processed, nread);
             if (ws->req->state == completed) {
                 if (ws->req->resp.code == 101) {
                     UM_LOG(VERB, "websocket connected");
-                    ws->conn_req->cb(ws->conn_req, 0);
+                    uv_connect_t *req = ws->conn_req;
+                    ws->conn_req = NULL;
+                    ws->connected = true;
+                    ws_free_req(ws);
+                    req->cb(req, 0);
+                    if (ws->closed) {
+                        // the app closed the websocket from the callback
+                        tlsuv__free(buf->base);
+                        return;
+                    }
                 } else {
                     UM_LOG(ERR, "failed to connect to websocket: %s(%d)", ws->req->resp.status, ws->req->resp.code);
-                    ws->conn_req->cb(ws->conn_req, -1);
+                    ws_free_req(ws);
+                    ws_connect_failed(ws, -1);
                     failed = true;
                 }
-                ws->conn_req = NULL;
-                http_req_free(ws->req);
-                tlsuv__free(ws->req);
-                ws->req = NULL;
             }
         }
     }
@@ -638,7 +673,14 @@ static void ws_close_cb(uv_link_t *l) {
     on_ws_close(ws);
 }
 
+static void ws_tr_closed(uv_handle_t *h) {
+    tlsuv_websocket_t *ws = h->data;
+    tlsuv__free(h);
+    on_ws_close(ws);
+}
+
 int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
+    ws->closed = true;
     ws->close_cb = cb;
 
     if (ws->connect_req) {
@@ -658,8 +700,11 @@ int tlsuv_websocket_close(tlsuv_websocket_t *ws, uv_close_cb cb) {
 
     if (ws->tr != NULL) {
         UM_LOG(TRACE, "closing ws transport");
-        ws->tr_close(ws->tr, (uv_close_cb)free);
+        // the close callback comes with the transport's: the websocket may be in use further up the stack
+        void *tr = ws->tr;
         ws->tr = NULL;
+        ws->tr_close(tr, ws_tr_closed);
+        return 0;
     }
     on_ws_close(ws);
     return 0;
@@ -685,6 +730,7 @@ static void tls_hs_cb(tls_link_t *tls, int status) {
     if (status == TLS_HS_COMPLETE) {
         uv_link_read_start(&ws->ws_link);
     } else {
-        ws->conn_req->cb(ws->conn_req, UV_ECONNABORTED);
+        // a failed handshake is reported more than once (the link has no failed state)
+        ws_connect_failed(ws, UV_ECONNABORTED);
     }
 }

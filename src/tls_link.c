@@ -65,7 +65,11 @@ static int tls_read_start(uv_link_t *l) {
 
     uv_link_default_read_start(l);
 
-    tls->hs_reported = false;
+    // a read start after the handshake completed (a child starting its reads from hs_cb) must not
+    // report the completion again: that child would start again, and each inbound record would repeat it
+    if (st != TLS_HS_COMPLETE) {
+        tls->hs_reported = false;
+    }
     st = tls->engine->handshake(tls->engine);
     UM_LOG(TRACE, "TLS(%p) started handshake(st = %d)", tls, st);
     tls_link_flush_io(tls, NULL, NULL);
