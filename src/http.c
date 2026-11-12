@@ -218,13 +218,14 @@ static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
     stop_req_timer(c);
     c->active = NULL;
 
-    if (req->resp_cb != NULL) {
+    if (req->state < headers_received && req->resp_cb != NULL) { // resp_cb has not been called yet
         req->resp.code = code;
         http_resp_set_status(&req->resp, msg, msg ? strlen(msg) : 0);
         req->resp_cb(&req->resp, req->data);
         req->resp_cb = NULL;
     } else if (req->resp.body_cb != NULL) {
-        req->resp.body_cb(req, NULL, code);
+        // UV_EOF would read as the end of a complete body
+        req->resp.body_cb(req, NULL, code == UV_EOF ? UV_ECONNRESET : code);
     }
 
     clear_req_body(req, code);
