@@ -178,7 +178,8 @@ static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
             tlsuv__free(ar);
         } else {
             DUMP_REQ(ERR, ar, "EOF before request could complete");
-            fail_active_request(c, UV_EOF, uv_strerror(UV_EOF));
+            // the server cut the response short; UV_EOF would read as the end of a complete body
+            fail_active_request(c, UV_ECONNRESET, uv_strerror(UV_ECONNRESET));
         }
     } else if (nread < 0) {
         const char *err = uv_strerror((int)nread);
@@ -224,8 +225,7 @@ static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
         req->resp_cb(&req->resp, req->data);
         req->resp_cb = NULL;
     } else if (req->resp.body_cb != NULL) {
-        // UV_EOF would read as the end of a complete body
-        req->resp.body_cb(req, NULL, code == UV_EOF ? UV_ECONNRESET : code);
+        req->resp.body_cb(req, NULL, code);
     }
 
     clear_req_body(req, code);

@@ -103,7 +103,8 @@ struct tlsuv_http_resp_s {
      * @brief callback called with response body data. May be called multiple times.
      *
      * The last call has `len` of `UV_EOF` when the body is complete, or an error code if the request failed after
-     * the response headers were received (a response cut short by the server is reported as `UV_ECONNRESET`).
+     * the response headers were received (a response cut short by the server is reported as `UV_ECONNRESET`,
+     * as it is by #resp_cb).
      */
     tlsuv_http_body_cb body_cb;
     size_t body_bytes;
@@ -134,7 +135,8 @@ struct tlsuv_http_req_s {
      * @brief callback called after server has sent response headers. Called before #body_cb.
      *
      * Called once per request. If the request fails before the headers are received, it is called with
-     * the error code in `resp->code`; a failure after that is reported to #body_cb.
+     * the error code in `resp->code` (`UV_ECONNRESET` if the server closed the connection before the response was
+     * complete); a failure after that is reported to #body_cb.
      */
     tlsuv_http_resp_cb resp_cb;
     tlsuv_http_inflater_t *inflater;

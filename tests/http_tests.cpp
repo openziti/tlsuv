@@ -1817,6 +1817,33 @@ TEST_CASE("failure after the response headers", "[http]") {
     CHECK(ctx.body_ends == std::vector<ssize_t>{expected});
 }
 
+// a server closing the connection is the same failure for the response callback as for the body callback
+TEST_CASE("server closes before the response headers", "[http]") {
+    UvLoopTest lt;
+    canned_server server(lt.loop, "HTTP/1.1 200 OK\r\nContent-Le", "");
+    failed_body_ctx ctx;
+    DEFER {
+        server.close();
+        tlsuv_http_close(&ctx.clt, nullptr);
+        lt.drain();
+    };
+
+    REQUIRE(tlsuv_http_init(lt.loop, &ctx.clt, server.url("http").c_str()) == 0);
+    tlsuv_http_req(&ctx.clt, "GET", "/", [](tlsuv_http_resp_t *resp, void *data) {
+        auto c = static_cast<failed_body_ctx *>(data);
+        c->resp_codes.push_back(resp->code);
+        resp->body_cb = [](tlsuv_http_req_t *req, char *, ssize_t len) {
+            auto c = static_cast<failed_body_ctx *>(req->data);
+            if (len <= 0) c->body_ends.push_back(len);
+        };
+    }, &ctx);
+
+    lt.run(UNTIL(!ctx.resp_codes.empty()));
+
+    CHECK(ctx.resp_codes == std::vector<int>{UV_ECONNRESET});
+    CHECK(ctx.body_ends.empty());
+}
+
 TEST_CASE("http_proxy_connector", "[http]") {
     UvLoopTest test;
 
