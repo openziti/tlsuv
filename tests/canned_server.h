@@ -71,11 +71,11 @@ struct canned_server {
         REQUIRE(uv_listen((uv_stream_t *) &listener, 1, on_accept) == 0);
     }
 
-    std::string url() {
+    std::string url(const std::string &scheme = "ws") {
         sockaddr_storage bound{};
         int len = sizeof(bound);
         uv_tcp_getsockname(&listener, (sockaddr *) &bound, &len);
-        return "ws://127.0.0.1:" + std::to_string(ntohs(((sockaddr_in *) &bound)->sin_port)) + "/";
+        return scheme + "://127.0.0.1:" + std::to_string(ntohs(((sockaddr_in *) &bound)->sin_port)) + "/";
     }
 
     void close() {

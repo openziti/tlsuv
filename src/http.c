@@ -178,7 +178,8 @@ static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
             tlsuv__free(ar);
         } else {
             DUMP_REQ(ERR, ar, "EOF before request could complete");
-            fail_active_request(c, UV_EOF, uv_strerror(UV_EOF));
+            // the server cut the response short; UV_EOF would read as the end of a complete body
+            fail_active_request(c, UV_ECONNRESET, uv_strerror(UV_ECONNRESET));
         }
     } else if (nread < 0) {
         const char *err = uv_strerror((int)nread);
@@ -218,7 +219,7 @@ static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
     stop_req_timer(c);
     c->active = NULL;
 
-    if (req->resp_cb != NULL) {
+    if (req->state < headers_received && req->resp_cb != NULL) { // resp_cb has not been called yet
         req->resp.code = code;
         http_resp_set_status(&req->resp, msg, msg ? strlen(msg) : 0);
         req->resp_cb(&req->resp, req->data);
@@ -991,16 +992,19 @@ int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, con
             STAILQ_REMOVE(&clt->requests, req, tlsuv_http_req_s, _next);
         }
 
-        req->resp.code = error;
-        const char *status = msg ? msg : uv_strerror(error);
-        http_resp_set_status(&req->resp, status, strlen(status));
-        clear_req_body(req, req->resp.code);
+        // once the headers are received the response keeps its status, the error goes to the body callback
+        if (req->state < headers_received) {
+            req->resp.code = error;
+            const char *status = msg ? msg : uv_strerror(error);
+            http_resp_set_status(&req->resp, status, strlen(status));
+        }
+        clear_req_body(req, error);
 
         if (req->state < headers_received && req->resp_cb) { // resp_cb has not been called yet
             req->resp_cb(&req->resp, req->data);
             req->resp_cb = NULL;
         } else if (req->resp.body_cb) {
-            req->resp.body_cb(req, NULL, req->resp.code);
+            req->resp.body_cb(req, NULL, error);
         }
 
         http_req_free(req);

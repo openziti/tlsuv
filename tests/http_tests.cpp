@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <catch2/catch_all.hpp>
+#include "canned_server.h"
 #include "fixtures.h"
 #include "http_capture.h"
 #include "mock_keychain.h"
@@ -1746,6 +1747,119 @@ TEST_CASE("failed active request", "[http]") {
         CHECK(resp.status == UV_EAI_NONAME);
         CHECK(resp.called == 1);
     }
+}
+
+struct failed_body_ctx {
+    enum class stop { none, cancel_all, close, cancel_req, timeout };
+
+    tlsuv_http_t clt{};
+    tlsuv_http_req_t *req = nullptr;
+    uv_timer_t timer{};
+    stop how = stop::none; // how the application ends the request, 10ms after the response headers
+    bool closed = false;
+    std::vector<int> resp_codes;    // the code of every response callback call
+    std::vector<ssize_t> body_ends; // every body callback call that is not data
+    std::vector<int> end_codes;     // resp.code as seen by each of those body callback calls
+};
+
+// the response callback runs once per request: a failure after the response headers is reported
+// to the body callback, as its last call
+TEST_CASE("failure after the response headers", "[http]") {
+    using stop = failed_body_ctx::stop;
+    const std::string partial = "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nshort";
+
+    // UV_EOF would read as the end of a complete body, so a truncated one is not reported with it
+    auto [name, reply, trailer, how, expected] = GENERATE_COPY(table<std::string, std::string, std::string, stop, int>({
+        {"server closes before the body is complete", partial, "", stop::none, UV_ECONNRESET},
+        {"body can not be parsed", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n", "", stop::none, UV_EINVAL},
+        {"all requests are cancelled", partial, "x", stop::cancel_all, UV_ECANCELED},
+        {"client is closed", partial, "x", stop::close, UV_ECANCELED},
+        {"request is cancelled", partial, "x", stop::cancel_req, UV_ECANCELED},
+        {"request times out", partial, "x", stop::timeout, UV_ETIMEDOUT},
+    }));
+    INFO(name);
+
+    UvLoopTest lt;
+    canned_server server(lt.loop, reply, trailer);
+    failed_body_ctx ctx;
+    ctx.how = how;
+    uv_timer_init(lt.loop, &ctx.timer);
+    ctx.timer.data = &ctx;
+    DEFER {
+        server.close();
+        uv_close((uv_handle_t *) &ctx.timer, nullptr);
+        if (!ctx.closed) tlsuv_http_close(&ctx.clt, nullptr);
+        lt.drain();
+    };
+
+    REQUIRE(tlsuv_http_init(lt.loop, &ctx.clt, server.url("http").c_str()) == 0);
+    ctx.req = tlsuv_http_req(&ctx.clt, "GET", "/", [](tlsuv_http_resp_t *resp, void *data) {
+        auto c = static_cast<failed_body_ctx *>(data);
+        c->resp_codes.push_back(resp->code);
+        if (c->resp_codes.size() > 1) return;
+
+        resp->body_cb = [](tlsuv_http_req_t *req, char *, ssize_t len) {
+            auto c = static_cast<failed_body_ctx *>(req->data);
+            if (len <= 0) {
+                c->body_ends.push_back(len);
+                c->end_codes.push_back(req->resp.code);
+            }
+        };
+        if (c->how == stop::none) return;
+        if (c->how == stop::timeout) {
+            // the timeout runs from now, well before the server sends the rest of the response
+            tlsuv_http_req_timeout(c->req, 20);
+            return;
+        }
+        // the client must not be stopped from within a callback
+        uv_timer_start(&c->timer, [](uv_timer_t *t) {
+            auto c = static_cast<failed_body_ctx *>(t->data);
+            if (c->how == stop::cancel_all) {
+                tlsuv_http_cancel_all(&c->clt);
+            } else if (c->how == stop::cancel_req) {
+                tlsuv_http_req_cancel(&c->clt, c->req);
+            } else {
+                c->closed = true;
+                tlsuv_http_close(&c->clt, nullptr);
+            }
+        }, 10, 0);
+    }, &ctx);
+    // only a running request timer is re-armed by the shorter timeout set after the response headers
+    if (how == stop::timeout) tlsuv_http_req_timeout(ctx.req, 5000);
+
+    lt.run(UNTIL(ctx.resp_codes.size() > 1 || !ctx.body_ends.empty()));
+
+    CHECK(ctx.resp_codes == std::vector<int>{HTTP_STATUS_OK});
+    CHECK(ctx.body_ends == std::vector<ssize_t>{expected});
+    // the failure is in the body callback's `len`; the response keeps the status it was sent with
+    CHECK(ctx.end_codes == std::vector<int>{HTTP_STATUS_OK});
+}
+
+// a server closing the connection is the same failure for the response callback as for the body callback
+TEST_CASE("server closes before the response headers", "[http]") {
+    UvLoopTest lt;
+    canned_server server(lt.loop, "HTTP/1.1 200 OK\r\nContent-Le", "");
+    failed_body_ctx ctx;
+    DEFER {
+        server.close();
+        tlsuv_http_close(&ctx.clt, nullptr);
+        lt.drain();
+    };
+
+    REQUIRE(tlsuv_http_init(lt.loop, &ctx.clt, server.url("http").c_str()) == 0);
+    tlsuv_http_req(&ctx.clt, "GET", "/", [](tlsuv_http_resp_t *resp, void *data) {
+        auto c = static_cast<failed_body_ctx *>(data);
+        c->resp_codes.push_back(resp->code);
+        resp->body_cb = [](tlsuv_http_req_t *req, char *, ssize_t len) {
+            auto c = static_cast<failed_body_ctx *>(req->data);
+            if (len <= 0) c->body_ends.push_back(len);
+        };
+    }, &ctx);
+
+    lt.run(UNTIL(!ctx.resp_codes.empty()));
+
+    CHECK(ctx.resp_codes == std::vector<int>{UV_ECONNRESET});
+    CHECK(ctx.body_ends.empty());
 }
 
 TEST_CASE("http_proxy_connector", "[http]") {
