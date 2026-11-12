@@ -104,7 +104,8 @@ struct tlsuv_http_resp_s {
      *
      * The last call has `len` of `UV_EOF` when the body is complete, or an error code if the request failed after
      * the response headers were received (a response cut short by the server is reported as `UV_ECONNRESET`,
-     * as it is by #resp_cb).
+     * as it is by #resp_cb). Then the response keeps the `code` and status it was received with: the error
+     * is only in `len`, whether the request failed, timed out or was cancelled.
      */
     tlsuv_http_body_cb body_cb;
     size_t body_bytes;

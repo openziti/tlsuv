@@ -992,16 +992,19 @@ int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, con
             STAILQ_REMOVE(&clt->requests, req, tlsuv_http_req_s, _next);
         }
 
-        req->resp.code = error;
-        const char *status = msg ? msg : uv_strerror(error);
-        http_resp_set_status(&req->resp, status, strlen(status));
-        clear_req_body(req, req->resp.code);
+        // once the headers are received the response keeps its status, the error goes to the body callback
+        if (req->state < headers_received) {
+            req->resp.code = error;
+            const char *status = msg ? msg : uv_strerror(error);
+            http_resp_set_status(&req->resp, status, strlen(status));
+        }
+        clear_req_body(req, error);
 
         if (req->state < headers_received && req->resp_cb) { // resp_cb has not been called yet
             req->resp_cb(&req->resp, req->data);
             req->resp_cb = NULL;
         } else if (req->resp.body_cb) {
-            req->resp.body_cb(req, NULL, req->resp.code);
+            req->resp.body_cb(req, NULL, error);
         }
 
         http_req_free(req);
