@@ -307,3 +307,192 @@ TEST_CASE("websocket echo tests", "[websocket]") {
         proxy->free((void*)proxy);
     }
 }
+
+// Frames straight off the wire.
+// The tests hand ws_process_read() what a transport read, so they need no server, and see
+// exactly what the websocket passes to the application and what it sends back to the peer.
+extern "C" {
+#include "alloc.h"
+void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf);
+}
+
+static std::string bytes(std::initializer_list<int> l) {
+    std::string s;
+    for (int b: l) s.push_back((char) b);
+    return s;
+}
+
+struct frame_peer {
+    tlsuv_websocket_t ws{};
+    std::vector<std::string> sent; // what the websocket wrote to the transport
+    std::vector<std::pair<ssize_t, std::string>> got; // what the read callback of the application saw
+
+    frame_peer() {
+        ws.connected = true; // past the upgrade
+        ws.data = this;
+        ws.tr = this;
+        ws.read_cb = [](uv_stream_t *s, ssize_t nread, const uv_buf_t *buf) {
+            auto p = static_cast<frame_peer *>(s->data);
+            p->got.emplace_back(nread, nread > 0 ? std::string(buf->base, nread) : std::string());
+        };
+        ws.tr_write = [](uv_write_t *req, void *tr, uv_buf_t *bufs, int n, uv_write_cb) -> int {
+            auto p = static_cast<frame_peer *>(tr);
+            for (int i = 0; i < n; i++) p->sent.emplace_back(bufs[i].base, bufs[i].len);
+            // as the transport's write callback does for a write that the application did not ask for
+            tlsuv__free(req->data);
+            tlsuv__free(req);
+            return 0;
+        };
+    }
+
+    // `frame` is all that the read brought, in a read buffer of `buf_len` bytes.
+    // The rest of the buffer holds what an earlier read left in it.
+    void feed(const std::string &frame, size_t buf_len = 256) {
+        REQUIRE(buf_len >= frame.size());
+        auto base = static_cast<char *>(tlsuv__malloc(buf_len));
+        memset(base, 'S', buf_len);
+        memcpy(base, frame.data(), frame.size());
+        uv_buf_t buf = uv_buf_init(base, (unsigned) buf_len);
+        ws_process_read(&ws, (ssize_t) frame.size(), &buf); // takes the buffer
+    }
+
+    // the payload of the pong that the websocket sent: it masks what it sends
+    static std::string pong_payload(const std::string &frame) {
+        REQUIRE(frame.size() >= 6);
+        CHECK((uint8_t) frame[0] == 0x8a);
+        CHECK(((uint8_t) frame[1] & 0x80) != 0);
+        size_t len = (uint8_t) frame[1] & 0x7f;
+        REQUIRE(frame.size() == 6 + len);
+        std::string out(len, 0);
+        for (size_t i = 0; i < len; i++) out[i] = (char) (frame[6 + i] ^ frame[2 + i % 4]);
+        return out;
+    }
+};
+
+TEST_CASE("websocket frame: a complete frame is delivered", "[websocket][frame]") {
+    frame_peer p;
+
+    WHEN("text frame") {
+        p.feed(bytes({0x81, 3, 'a', 'b', 'c'}));
+        REQUIRE(p.got.size() == 1);
+        CHECK(p.got[0].first == 3);
+        CHECK(p.got[0].second == "abc");
+    }
+
+    WHEN("frame ends where the read ends") {
+        // the buffer is not any bigger than the frame
+        p.feed(bytes({0x82, 3, 'a', 'b', 'c'}), 5);
+        REQUIRE(p.got.size() == 1);
+        CHECK(p.got[0].second == "abc");
+    }
+
+    WHEN("binary frame with a 16 bit length") {
+        std::string payload(300, 'x');
+        for (size_t i = 0; i < payload.size(); i++) payload[i] = (char) ('a' + i % 26);
+        std::string frame = bytes({0x82, 126, 0x01, 0x2c}) + payload;
+        p.feed(frame, frame.size());
+        REQUIRE(p.got.size() == 1);
+        CHECK(p.got[0].first == 300);
+        CHECK(p.got[0].second == payload);
+    }
+
+    WHEN("frame with a 64 bit length") {
+        p.feed(bytes({0x82, 127, 0, 0, 0, 0, 0, 0, 0, 4, 'w', 'x', 'y', 'z'}));
+        REQUIRE(p.got.size() == 1);
+        CHECK(p.got[0].second == "wxyz");
+    }
+
+    WHEN("masked frame") {
+        p.feed(bytes({0x81, 0x83, 1, 2, 3, 4, 'a' ^ 1, 'b' ^ 2, 'c' ^ 3}));
+        REQUIRE(p.got.size() == 1);
+        CHECK(p.got[0].first == 3);
+        CHECK(p.got[0].second == "abc");
+    }
+
+    WHEN("close frame") {
+        p.feed(bytes({0x88, 0}));
+        REQUIRE(p.got.size() == 1);
+        CHECK(p.got[0].first == UV_EOF);
+    }
+
+    CHECK(p.sent.empty());
+    CHECK_FALSE(p.ws.closed);
+}
+
+TEST_CASE("websocket frame: a ping is answered with its own payload", "[websocket][frame]") {
+    frame_peer p;
+    std::string payload;
+
+    WHEN("no payload") {
+    }
+    WHEN("some payload") {
+        payload = "hello";
+    }
+    WHEN("the largest payload") {
+        payload = std::string(125, 'p');
+    }
+
+    p.feed(bytes({0x89, (int) payload.size()}) + payload, 2 + payload.size());
+
+    CHECK(p.got.empty());
+    REQUIRE(p.sent.size() == 1);
+    CHECK(frame_peer::pong_payload(p.sent[0]) == payload);
+}
+
+// The lengths in a frame are the peer's word. A frame whose header promises more than the read
+// brought, or whose header the read did not bring in full, is a protocol error: nothing of it
+// reaches the application, and nothing goes back to the peer.
+TEST_CASE("websocket frame: a frame that is not all there is rejected", "[websocket][frame]") {
+    frame_peer p;
+    size_t buf_len = 256;
+    std::string frame;
+
+    WHEN("ping declares a payload that did not come") {
+        // what is in the buffer after the frame must not come back in a pong
+        frame = bytes({0x89, 125});
+    }
+    WHEN("ping declares a payload past the end of the buffer") {
+        // nothing after the frame in the buffer: the payload is not in the buffer at all
+        frame = bytes({0x89, 125});
+        buf_len = frame.size();
+    }
+    WHEN("ping declares more payload than came") {
+        frame = bytes({0x89, 100, 'a', 'b'});
+    }
+    WHEN("masked ping declares more payload than came") {
+        frame = bytes({0x89, 0x85, 1, 2, 3, 4, 'a', 'b'});
+    }
+    WHEN("text frame declares more than came, 7 bit length") {
+        frame = bytes({0x81, 100, 'a'});
+    }
+    WHEN("text frame declares more than came, 16 bit length") {
+        buf_len = 8192;
+        frame = bytes({0x81, 126, 0x10, 0x00, 'a', 'b', 'c', 'd'});
+    }
+    WHEN("text frame declares more than came, 64 bit length") {
+        frame = bytes({0x81, 127, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 'a'});
+    }
+    WHEN("64 bit length that is only right in its low 32 bits") {
+        frame = bytes({0x81, 127, 0, 0, 0, 1, 0, 0, 0, 2, 'a', 'b'});
+    }
+    WHEN("read ends in the first byte of the header") {
+        frame = bytes({0x81});
+    }
+    WHEN("read ends in the 16 bit length") {
+        frame = bytes({0x81, 126, 0x00});
+    }
+    WHEN("read ends in the 64 bit length") {
+        frame = bytes({0x81, 127, 0, 0, 0});
+    }
+    WHEN("read ends in the mask") {
+        frame = bytes({0x81, 0x83, 1, 2});
+    }
+
+    p.feed(frame, buf_len);
+
+    REQUIRE(p.got.size() == 1);
+    CHECK(p.got[0].first == UV_EPROTO);
+    CHECK(p.got[0].second.empty());
+    CHECK(p.sent.empty());
+    CHECK(p.ws.closed);
+}
