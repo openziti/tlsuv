@@ -218,3 +218,27 @@ TEST_CASE("gzip invalid", "[http]") {
     CHECK(um_inflate_state(inflater) == -1);
     um_free_inflater(inflater);
 }
+
+
+TEST_CASE("deflate stream that asks for a preset dictionary", "[http]") {
+    // a zlib header with FDICT set, then the dictionary id and some data: inflate() stops with
+    // Z_NEED_DICT and consumes nothing more, there is no dictionary to give it
+    unsigned char packet_bytes[] = {0x78, 0x20, 0x11, 0x22, 0x33, 0x44, 0x01, 0x02, 0x03};
+
+    std::string out;
+    auto cb = [](void *ctx, const char *b, ssize_t len) {
+        if (len > 0)
+            static_cast<std::string *>(ctx)->append(b, len);
+    };
+
+    auto inflater = um_get_inflater("deflate", cb, &out);
+
+    // fails, instead of spinning on the same input
+    CHECK(um_inflate(inflater, (const char *) packet_bytes, sizeof(packet_bytes)) == -1);
+    CHECK(um_inflate_state(inflater) != 1);
+    CHECK(out.empty());
+
+    // and keeps failing for the rest of the body
+    CHECK(um_inflate(inflater, (const char *) packet_bytes, sizeof(packet_bytes)) == -1);
+    um_free_inflater(inflater);
+}
