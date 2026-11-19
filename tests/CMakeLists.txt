@@ -153,12 +153,15 @@ include(CTest)
 # applies CMAKE_CROSSCOMPILING_EMULATOR; with a multi-config generator it also
 # needs `ctest -C <config>`, so other builds keep the plain form. The report path
 # is absolute because an emulated test does not run in this directory.
+#
+# mk_test(tag [extra]): runs the tests tagged [tag], `extra` is appended to the Catch2
+# tag expression, e.g. "~[internet]" to leave out tests that need the internet.
 macro(mk_test tag)
     if (CMAKE_CROSSCOMPILING_EMULATOR)
-        add_test(NAME ${tag}_tests COMMAND all_tests [${tag}]
+        add_test(NAME ${tag}_tests COMMAND all_tests [${tag}]${ARGN}
                 -r junit::out=${CMAKE_CURRENT_BINARY_DIR}/TEST-${tag}.xml -r console)
     else ()
-        add_test(${tag}_tests all_tests [${tag}] -r junit::out=TEST-${tag}.xml -r console)
+        add_test(${tag}_tests all_tests [${tag}]${ARGN} -r junit::out=TEST-${tag}.xml -r console)
     endif ()
 endmacro()
 
@@ -167,6 +170,8 @@ mk_test(engine)
 mk_test(server)
 mk_test(stream)
 mk_test(listener)
+# needs the test server and its proxy, not the internet
+mk_test(connector "~[internet]")
 
 if (TLSUV_TLSLIB STREQUAL "win32crypto")
     mk_test(verify)

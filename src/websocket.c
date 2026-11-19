@@ -270,7 +270,8 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
     if (path != DEFAULT_PATH) {
         tlsuv__free((char*)path);
     }
-    char *host_hdr = http_host_header(host, 0);
+    // like the HTTP client, the port goes into the header only if the URL has one
+    char *host_hdr = http_host_header(host, u.port);
     set_http_header(&ws->req->req_headers, "host", host_hdr);
     tlsuv__free(host_hdr);
 
