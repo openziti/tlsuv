@@ -22,6 +22,7 @@
 
 static void free_hdr(tlsuv_http_hdr * hdr);
 
+static int http_message_begin_cb(llhttp_t * parser);
 static int http_headers_complete_cb(llhttp_t * p);
 static int http_header_field_cb(llhttp_t* parser, const char* f, size_t len);
 static int http_header_value_cb(llhttp_t* parser, const char* v, size_t len);
@@ -30,6 +31,7 @@ static int http_message_cb(llhttp_t * parser);
 static int http_body_cb(llhttp_t* parser, const char* body, size_t len);
 
 static llhttp_settings_t HTTP_PROC = {
+    .on_message_begin = http_message_begin_cb,
     .on_header_field = http_header_field_cb,
     .on_header_value = http_header_value_cb,
     .on_headers_complete = http_headers_complete_cb,
@@ -109,6 +111,10 @@ ssize_t http_req_process(tlsuv_http_req_t* req, const char* buf, ssize_t len) {
         processed = llhttp_get_error_pos(&req->parser) - buf;
         UM_LOG(VERB, "websocket upgrade: processed %zd out of %zd", processed, len);
         llhttp_resume_after_upgrade(&req->parser);
+    } else if (req->state == completed) {
+        // the response was complete: an error now is about what follows it, not about this request.
+        // The caller reports that, an ERR here would make a successful request look like a failure
+        UM_LOG(VERB, "stopped at data after the response[%s %s]: %s", req->method, req->path, llhttp_errno_name(err));
     } else {
         UM_LOG(ERR, "failed to process[%s %s]: %s", req->method, req->path, llhttp_errno_name(err));
     }
@@ -369,6 +375,13 @@ static void inflator_cb(void* ctx, const char* chunk, ssize_t len) {
         req->resp.body_bytes += len;
         req->resp.body_cb(req, (char*)chunk, len);
     }
+}
+
+// a request gets one response: whatever starts another message after it was not asked for.
+// Stop parsing before any callback of that message runs; the caller closes the connection.
+static int http_message_begin_cb(llhttp_t* parser) {
+    tlsuv_http_req_t* req = parser->data;
+    return req->state == completed ? HPE_USER : 0;
 }
 
 static int http_headers_complete_cb(llhttp_t* p) {
