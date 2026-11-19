@@ -1589,6 +1589,40 @@ TEST_CASE("url parse auth", "[http]") {
     CHECK(strncmp("host", url.hostname, url.hostname_len) == 0);
 }
 
+// userinfo is only in the authority: an '@' after it belongs to the path or the query
+TEST_CASE("url parse with @ in the path or the query", "[http]") {
+    struct {
+        const char *str;
+        const char *user;
+        const char *pass;
+        const char *host;
+        int port;
+        const char *path;
+        const char *query;
+    } cases[] = {
+            {"http://host/p@th",                   nullptr, nullptr, "host", 0,    "/p@th",        nullptr},
+            {"http://host:8080/a/b@c",             nullptr, nullptr, "host", 8080, "/a/b@c",       nullptr},
+            {"http://host/?mail=me@example.com",   nullptr, nullptr, "host", 0,    "/",            "mail=me@example.com"},
+            {"host/p@th",                          nullptr, nullptr, "host", 0,    "/p@th",        nullptr},
+            {"/path/only@x",                       nullptr, nullptr, nullptr, 0,   "/path/only@x", nullptr},
+            // userinfo in front of the host is still found
+            {"https://user:pw@host/p@th",          "user",  "pw",    "host", 0,    "/p@th",        nullptr},
+            {"https://user@host:3128/?q=a@b",      "user",  nullptr, "host", 3128, "/",            "q=a@b"},
+    };
+
+    for (auto &c: cases) {
+        INFO("url: " << c.str);
+        tlsuv_url_s url{};
+        REQUIRE(tlsuv_parse_url(&url, c.str) == 0);
+        TEST_FIELD(username, c.user);
+        TEST_FIELD(password, c.pass);
+        TEST_FIELD(hostname, c.host);
+        TEST_FIELD(path, c.path);
+        TEST_FIELD(query, c.query);
+        CHECK(url.port == c.port);
+    }
+}
+
 // intermediate certs are changed frequently, so this test is not stable
 TEST_CASE("partial bundle", "[.]") {
 
