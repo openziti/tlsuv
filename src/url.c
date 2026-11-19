@@ -82,7 +82,17 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
     }
 
     count = 0;
-    if (sscanf(p, "%*[^:/]%n", &count) == 0 && count > 0) {
+    if (*p == '[') {
+        // bracketed IPv6 literal: the hostname is what is inside the brackets
+        size_t len = strcspn(p + 1, "]/");
+        if (len == 0 || p[1 + len] != ']')
+            return -1;
+        url->hostname = p + 1;
+        url->hostname_len = len;
+        p += len + 2;
+        if (*p != '\0' && *p != ':' && *p != '/')
+            return -1;
+    } else if (sscanf(p, "%*[^:/]%n", &count) == 0 && count > 0) {
         url->hostname = p;
         url->hostname_len = count;
         p += count;

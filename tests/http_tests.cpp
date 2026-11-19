@@ -1456,6 +1456,53 @@ TEST_CASE("url parse", "[http]") {
     URL_TEST("websocket.org:443443/echo", -1, nullptr, "websocket.org", 443, "/echo", nullptr);
 }
 
+// IPv6 literals are bracketed in a URL; the parsed hostname excludes the brackets
+TEST_CASE("url parse ipv6", "[http]") {
+    URL_TEST("http://[::1]", 0, "http", "::1", 0, nullptr, nullptr);
+    URL_TEST("http://[::1]:8080", 0, "http", "::1", 8080, nullptr, nullptr);
+    URL_TEST("http://[::1]/echo", 0, "http", "::1", 0, "/echo", nullptr);
+    URL_TEST("https://[::1]:8443/echo?foo=bar", 0, "https", "::1", 8443, "/echo", "foo=bar");
+    URL_TEST("wss://[2001:db8::1]:443/ws", 0, "wss", "2001:db8::1", 443, "/ws", nullptr);
+    URL_TEST("wss://[2001:db8:85a3:0:0:8a2e:370:7334]/ws", 0, "wss", "2001:db8:85a3:0:0:8a2e:370:7334", 0, "/ws", nullptr);
+    URL_TEST("http://[::ffff:192.0.2.1]:80/", 0, "http", "::ffff:192.0.2.1", 80, "/", nullptr);
+    URL_TEST("[::1]:80/echo", 0, nullptr, "::1", 80, "/echo", nullptr);
+    // zone id is passed through as written
+    URL_TEST("http://[fe80::1%25eth0]:80/", 0, "http", "fe80::1%25eth0", 80, "/", nullptr);
+
+    // malformed
+    URL_TEST("http://[::1/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[::1", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[::1]x/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[::1]:/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[::1]:99999/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://::1/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+
+    // plain hosts are unaffected
+    URL_TEST("http://127.0.0.1:8080/echo", 0, "http", "127.0.0.1", 8080, "/echo", nullptr);
+}
+
+TEST_CASE("url parse ipv6 auth", "[http]") {
+    tlsuv_url_s url{};
+
+    CHECK(tlsuv_parse_url(&url, "https://foo:passwd@[::1]:3128/path") == 0);
+    CHECK(url.username_len == strlen("foo"));
+    CHECK(strncmp("foo", url.username, url.username_len) == 0);
+    CHECK(url.password_len == strlen("passwd"));
+    CHECK(strncmp("passwd", url.password, url.password_len) == 0);
+    CHECK(url.hostname_len == strlen("::1"));
+    CHECK(strncmp("::1", url.hostname, url.hostname_len) == 0);
+    CHECK(url.port == 3128);
+    CHECK(url.path_len == strlen("/path"));
+
+    CHECK(tlsuv_parse_url(&url, "https://bar@[2001:db8::1]") == 0);
+    CHECK(url.username_len == strlen("bar"));
+    CHECK(url.password == nullptr);
+    CHECK(url.hostname_len == strlen("2001:db8::1"));
+    CHECK(strncmp("2001:db8::1", url.hostname, url.hostname_len) == 0);
+    CHECK(url.port == 0);
+}
+
 TEST_CASE("url parse auth", "[http]") {
     tlsuv_url_s url{};
 
