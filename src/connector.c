@@ -419,6 +419,30 @@ struct proxy_connect_req {
     int err;
 };
 
+// formats the request that asks `proxy` to connect to host:port into `buf` (NULL and 0 to only measure it),
+// returns the length of the request, not counting the terminating '\0'
+static size_t format_connect_request(char *buf, size_t buflen, const char *host, const char *port,
+                                     const struct tlsuv_proxy_connector_s *proxy) {
+    // an IPv6 literal is bracketed in an authority, to tell it from the port
+    bool ipv6 = strchr(host, ':') != NULL;
+    const char *lb = ipv6 ? "[" : "";
+    const char *rb = ipv6 ? "]" : "";
+
+    int len = snprintf(buf, buflen,
+                       "CONNECT %s%s%s:%s HTTP/1.1\r\n"
+                       "Host: %s%s%s:%s\r\n"
+                       "Proxy-Connection: keep-alive\r\n"
+                       "%s%s%s%s"
+                       "\r\n",
+                       lb, host, rb, port, lb, host, rb, port,
+                       proxy->auth_header ? proxy->auth_header : "",
+                       proxy->auth_header ? ": " : "",
+                       proxy->auth_header ? proxy->auth_value : "",
+                       proxy->auth_header ? "\r\n" : ""
+    );
+    return len > 0 ? (size_t) len : 0;
+}
+
 static void proxy_work(uv_work_t *wr) {
     volatile struct proxy_connect_req *r = container_of(wr, struct proxy_connect_req, work);
 
@@ -428,25 +452,11 @@ static void proxy_work(uv_work_t *wr) {
         return;
     }
 
-    // an IPv6 literal is bracketed in an authority, to tell it from the port
-    bool ipv6 = strchr(r->host, ':') != NULL;
-    const char *lb = ipv6 ? "[" : "";
-    const char *rb = ipv6 ? "]" : "";
-
-    char req[1024];
-    size_t reqlen = snprintf(req, sizeof(req),
-                             "CONNECT %s%s%s:%s HTTP/1.1\r\n"
-                             "Host: %s%s%s:%s\r\n"
-                             "Proxy-Connection: keep-alive\r\n"
-                             "%s%s%s%s"
-                             "\r\n",
-                             lb, r->host, rb, r->port, lb, r->host, rb, r->port,
-                             proxy->auth_header ? proxy->auth_header : "",
-                             proxy->auth_header ? ": " : "",
-                             proxy->auth_header ? proxy->auth_value : "",
-                             proxy->auth_header ? "\r\n" : ""
-    );
+    size_t reqlen = format_connect_request(NULL, 0, r->host, r->port, proxy);
+    char *req = tlsuv__malloc(reqlen + 1);
+    format_connect_request(req, reqlen + 1, r->host, r->port, proxy);
     ssize_t res = write(r->sock, req, reqlen);
+    tlsuv__free(req);
     if (res < 0) {
         r->err = err_to_uv((int)get_error());
         closesocket(r->sock);
@@ -472,17 +482,18 @@ static void proxy_work(uv_work_t *wr) {
         return;
     }
 
-    res = read(r->sock, req, sizeof(req)-1);
+    char resp[1024];
+    res = read(r->sock, resp, sizeof(resp)-1);
     if (res < 0) {
         r->err = err_to_uv((int)get_error());
         closesocket(r->sock);
         r->sock = -1;
         return;
     }
-    req[res] = 0;
+    resp[res] = 0;
 
     int code = 0;
-    res = sscanf(req, "HTTP/1.%*c %d ", &code);
+    res = sscanf(resp, "HTTP/1.%*c %d ", &code);
     if (res != 1 || code != 200) {
         r->err = UV_ECONNREFUSED;
         closesocket(r->sock);
@@ -556,17 +567,29 @@ int proxy_set_auth(tlsuv_connector_t *self, tlsuv_auth_t auth, const char *usern
     if (auth == tlsuv_PROXY_BASIC) {
         if (!username || !password)
             return UV_EINVAL;
-        c->auth_header = "Proxy-Authorization";
+
+        // "username:password", of any length
+        size_t cred_len = strlen(username) + 1 + strlen(password);
+        char *cred = tlsuv__malloc(cred_len + 1);
+        snprintf(cred, cred_len + 1, "%s:%s", username, password);
+
+        char *b64 = NULL;
+        size_t b64_len = 0;
+        int rc = tlsuv_base64_encode((uint8_t *)cred, cred_len, &b64, &b64_len);
+        tlsuv__free(cred);
+        if (rc != 0)
+            return rc;
+
+        const char *scheme = "Basic ";
+        size_t value_len = strlen(scheme) + b64_len + 1;
+        char *value = tlsuv__malloc(value_len);
+        snprintf(value, value_len, "%s%s", scheme, b64);
+        tlsuv__free(b64);
+
         tlsuv__free(c->auth_value);
-
-        char authstr[256];
-        size_t auth_len = snprintf(authstr, sizeof(authstr), "%s:%s", username, password);
-
-        c->auth_value = tlsuv__malloc(512);
-        size_t offset = snprintf(c->auth_value, 512, "Basic ");
-        char *b64 = c->auth_value + offset;
-        size_t b64max = 512 - offset;
-        return tlsuv_base64_encode((uint8_t *)authstr, auth_len, &b64, &b64max);
+        c->auth_header = "Proxy-Authorization";
+        c->auth_value = value;
+        return 0;
     }
 
     return UV_EINVAL;
