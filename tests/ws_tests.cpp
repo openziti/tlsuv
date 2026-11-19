@@ -176,13 +176,13 @@ static std::string upgrade_host_header(const char *url) {
     return host;
 }
 
-// the Host header is the host the way the URL writes it: an IPv6 literal is bracketed.
-// The header has no port; that is not what is checked here.
-TEST_CASE("websocket host header with an IPv6 literal", "[websocket]") {
-    CHECK(upgrade_host_header("ws://[::1]:1/ws") == "[::1]");
-    CHECK(upgrade_host_header("ws://[::1]:1") == "[::1]");
-    // plain hosts are unchanged
-    CHECK(upgrade_host_header("ws://127.0.0.1:1/ws") == "127.0.0.1");
+// the Host header is the host and the port the way the URL writes them: an IPv6 literal is bracketed
+TEST_CASE("websocket host header", "[websocket]") {
+    CHECK(upgrade_host_header("ws://127.0.0.1:1/ws") == "127.0.0.1:1");
+    CHECK(upgrade_host_header("ws://[::1]:1/ws") == "[::1]:1");
+    CHECK(upgrade_host_header("ws://[::1]:1") == "[::1]:1");
+    // no port in the URL, no port in the header
+    CHECK(upgrade_host_header("ws://no-such-host.invalid/ws") == "no-such-host.invalid");
 }
 
 static void close_on_connect(uv_connect_t *req, int status) {
