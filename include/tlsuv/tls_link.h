@@ -18,6 +18,10 @@
 
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct tls_link_s tls_link_t;
 typedef void (*tls_handshake_cb)(tls_link_t *l, int status);
 typedef struct ssl_buf_s ssl_buf_t;
@@ -49,4 +53,7 @@ struct tls_link_s {
 int tlsuv_tls_link_init(tls_link_t *tls, uv_loop_t *loop, tlsuv_engine_t engine, tls_handshake_cb cb);
 void tlsuv_tls_link_free(tls_link_t *tls);
 
+#ifdef __cplusplus
+}
+#endif
 #endif//TLSUV_TLS_LINK_H

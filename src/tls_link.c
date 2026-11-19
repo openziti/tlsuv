@@ -142,8 +142,18 @@ static void tls_process_handshake(tls_link_t *tls) {
     }
 }
 
+// The application can end its use of the link from a read callback (closing an HTTP client does): the engine is
+// released, with the link told to let go of it, and the child is unchained from the link. The close itself waits
+// for the read to return, so the link is still being processed after the callback. What it read from the engine
+// has been delivered by then: nothing more may be read from the engine, and there is nobody left to deliver to.
+static bool tls_app_ended(tls_link_t *tls, bool had_child) {
+    return tls->engine == NULL || (had_child && ((uv_link_t *) tls)->child == NULL);
+}
+
 static void tls_process_app_data(tls_link_t *tls) {
     uv_link_t *l = (uv_link_t *) tls;
+    // a link without a child delivers to its own read callback: having none is not the child going away
+    bool had_child = l->child != NULL;
     enum TLS_RESULT rc = TLS_MORE_AVAILABLE;
     while(rc == TLS_MORE_AVAILABLE) {
         uv_buf_t buf;
@@ -160,6 +170,7 @@ static void tls_process_app_data(tls_link_t *tls) {
 
         if (read_len > 0) {
             uv_link_propagate_read_cb(l, (ssize_t)read_len, &buf);
+            if (tls_app_ended(tls, had_child)) return;
             continue;
         }
 
@@ -174,6 +185,9 @@ static void tls_process_app_data(tls_link_t *tls) {
             uv_link_propagate_read_cb(l, UV_ECONNABORTED, &buf);
         }
     }
+
+    // the callbacks above may have ended the link: there is nowhere to write to
+    if (tls_app_ended(tls, had_child)) return;
 
     // an async engine may have flushed ciphertext into ssl_out while reading
     tls_link_flush_io(tls, NULL, NULL);

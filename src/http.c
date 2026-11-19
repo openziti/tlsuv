@@ -157,14 +157,16 @@ static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
     }
 
     bool keepalive = nread >= 0;
+    bool closed = false; // the connection was closed already, by the application from a callback
     if (nread > 0) {
         bool parsed = http_req_process(ar, buf->base, nread) >= 0;
         if (ar->stopped) {
-            // the application ended the request from a callback; it is not the active request anymore
-            // and the parser is done with it, so it can be released now
+            // the application ended the request from a callback: cancelling the request or the requests or
+            // closing the client closed the connection, and the request is not the active one anymore.
+            // The parser is done with it, so it can be released now
             http_req_free(ar);
             tlsuv__free(ar);
-            keepalive = false;
+            closed = true;
         } else if (ar->state == completed) {
             // the request is done even when what follows its response does not parse:
             // that only makes the connection unusable for the next request
@@ -200,7 +202,9 @@ static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
         DUMP_REQ(ERR, ar, "error[%zd/%s] before completion", nread, err);
         fail_active_request(c, (int)nread, err);
     }
-    if (keepalive) {
+    if (closed) {
+        // closing the connection scheduled what comes next
+    } else if (keepalive) {
         safe_continue(c);
     } else {
         close_connection(c);

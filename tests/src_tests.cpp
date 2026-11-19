@@ -116,6 +116,139 @@ TEST_CASE("https over custom src", "[http]") {
     CHECK(bytes_resp.body.size() == 100000);
 }
 
+// The application ends the client from a callback while the TLS link still has more of the response to deliver.
+// Closing the client releases its TLS engine and closes the links: the link must not read from the engine, or
+// deliver anything more, after the callback returns.
+TEST_CASE("stop the client from a callback over custom src", "[http]") {
+    enum class where { resp_cb, body_data };
+    enum class how { cancel_req, cancel_all, close };
+    auto at = GENERATE(where::resp_cb, where::body_data);
+    auto by = GENERATE(how::cancel_req, how::cancel_all, how::close);
+    INFO("stopped from the " << (at == where::resp_cb ? "response" : "body data") << " callback by "
+                             << (by == how::cancel_req ? "tlsuv_http_req_cancel" :
+                                 by == how::cancel_all ? "tlsuv_http_cancel_all" : "tlsuv_http_close"));
+
+    UvLoopTest test;
+
+    tcp_src src{};
+    src.loop = test.loop;
+    src.connect = tcp_src_connect;
+    src.release = tcp_src_release;
+    src.cancel = [](tlsuv_src_t *) {};
+
+    struct ctx_t {
+        tlsuv_http_t clt{};
+        tlsuv_http_req_t *req = nullptr;
+        where at = where::resp_cb;
+        how by = how::close;
+        bool stopped = false;
+        bool closed = false;
+        int chunks_after_stop = 0;
+        std::vector<ssize_t> body_ends; // every body callback call that is not data
+
+        void stop() {
+            stopped = true;
+            switch (by) {
+                case how::cancel_req:
+                    tlsuv_http_req_cancel(&clt, req);
+                    break;
+                case how::cancel_all:
+                    tlsuv_http_cancel_all(&clt);
+                    break;
+                case how::close:
+                    closed = true;
+                    tlsuv_http_close(&clt, nullptr);
+                    break;
+            }
+        }
+    } ctx;
+    ctx.at = at;
+    ctx.by = by;
+
+    tlsuv_http_init_with_src(test.loop, &ctx.clt, testServerURL("https").c_str(), (tlsuv_src_t *) &src);
+    tlsuv_http_set_ssl(&ctx.clt, testServerTLS());
+    DEFER {
+        if (!ctx.closed) tlsuv_http_close(&ctx.clt, nullptr);
+        test.drain();
+    };
+
+    // several TLS records: the link has more to deliver when the callback ends the client
+    ctx.req = tlsuv_http_req(&ctx.clt, "GET", "/bytes/100000", [](tlsuv_http_resp_t *resp, void *data) {
+        auto c = static_cast<ctx_t *>(data);
+        resp->body_cb = [](tlsuv_http_req_t *req, char *, ssize_t len) {
+            auto c = static_cast<ctx_t *>(req->data);
+            if (len > 0) {
+                if (c->stopped) c->chunks_after_stop++;
+                else if (c->at == where::body_data) c->stop();
+            } else {
+                c->body_ends.push_back(len);
+            }
+        };
+        if (c->at == where::resp_cb) c->stop();
+    }, &ctx);
+
+    test.run(UNTIL(!ctx.body_ends.empty()));
+
+    CHECK(ctx.body_ends == std::vector<ssize_t>{UV_ECANCELED});
+    CHECK(ctx.chunks_after_stop == 0);
+}
+
+// an engine that always has more to read, and counts the reads
+struct stub_engine {
+    tlsuv_engine_s api;
+    int reads;
+    bool released;
+};
+
+// Closing the client from a read callback releases the TLS engine while the link is still delivering what the
+// engine read. Real engines only report more data (TLS_MORE_AVAILABLE) when a read fills the link's buffer, which
+// is a matter of timing, so this one always does: the link must not read from the engine again.
+TEST_CASE("tls link does not read an engine released from a read callback", "[http]") {
+    stub_engine eng{};
+    eng.api.set_io = [](tlsuv_engine_t, io_ctx, io_read, io_write) {};
+    eng.api.handshake_state = [](tlsuv_engine_t) { return TLS_HS_COMPLETE; };
+    eng.api.handshake = [](tlsuv_engine_t) { return TLS_HS_COMPLETE; };
+    eng.api.read = [](tlsuv_engine_t self, char *out, size_t *out_bytes, size_t) -> int {
+        ((stub_engine *) self)->reads++;
+        out[0] = 'x';
+        *out_bytes = 1;
+        return TLS_MORE_AVAILABLE;
+    };
+    eng.api.free = [](tlsuv_engine_t self) { ((stub_engine *) self)->released = true; };
+
+    tls_link_t tls{};
+    REQUIRE(tlsuv_tls_link_init(&tls, nullptr, &eng.api, [](tls_link_t *, int) {}) == 0);
+    tls.hs_reported = true;
+    tls.data = &eng;
+    // the link has no child, its read callback is the application's
+    tls.read_cb = [](uv_link_t *l, ssize_t, const uv_buf_t *buf) {
+        if (buf) free(buf->base);
+        auto tls = (tls_link_t *) l;
+        auto eng = (stub_engine *) l->data;
+        if (tls->engine == &eng->api) {
+            // what closing the client does: the link still references the engine when it is released
+            tls->engine = nullptr;
+            eng->api.free(&eng->api);
+        }
+    };
+
+    static const uv_link_methods_t parent_methods{};
+    uv_link_t parent;
+    uv_link_init(&parent, &parent_methods);
+    REQUIRE(uv_link_chain(&parent, (uv_link_t *) &tls) == 0);
+
+    // a byte of ciphertext arrives
+    uv_buf_t buf;
+    uv_link_propagate_alloc_cb(&parent, 1024, &buf);
+    uv_link_propagate_read_cb(&parent, 1, &buf);
+
+    CHECK(eng.released);
+    CHECK(eng.reads == 1);
+
+    uv_link_unchain(&parent, (uv_link_t *) &tls);
+    tlsuv_tls_link_free(&tls);
+}
+
 // request body callbacks in the order they ran, an empty chunk shows as "<empty>"
 static std::vector<std::string> chunk_cb_order;
 static void ordered_chunk_cb(tlsuv_http_req_t *, char *chunk, ssize_t status) {
