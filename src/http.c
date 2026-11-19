@@ -159,7 +159,13 @@ static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
     bool keepalive = nread >= 0;
     if (nread > 0) {
         bool parsed = http_req_process(ar, buf->base, nread) >= 0;
-        if (ar->state == completed) {
+        if (ar->stopped) {
+            // the application ended the request from a callback; it is not the active request anymore
+            // and the parser is done with it, so it can be released now
+            http_req_free(ar);
+            tlsuv__free(ar);
+            keepalive = false;
+        } else if (ar->state == completed) {
             // the request is done even when what follows its response does not parse:
             // that only makes the connection unusable for the next request
             if (!parsed) {
@@ -218,6 +224,17 @@ static void clear_req_body(tlsuv_http_req_t *req, int code) {
     req->req_body = NULL;
 }
 
+// The parser runs on the request while it calls the application back, so a request that the application ends
+// from one of those callbacks is released by clt_read_cb once the parser has returned.
+static void release_req(tlsuv_http_req_t *req) {
+    if (req->parsing) {
+        req->stopped = true;
+        return;
+    }
+    http_req_free(req);
+    tlsuv__free(req);
+}
+
 static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
     tlsuv_http_req_t *req = c->active;
 
@@ -235,8 +252,7 @@ static void fail_active_request(tlsuv_http_t *c, int code, const char *msg) {
     }
 
     clear_req_body(req, code);
-    http_req_free(req);
-    tlsuv__free(req);
+    release_req(req);
 }
 
 static void fail_all_requests(tlsuv_http_t *c, int code, const char *msg) {
@@ -985,6 +1001,10 @@ int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, con
     }
 
     if (r == req || req == clt->active) { // req is in the queue
+        if (req == clt->active && req->state == completed) {
+            // its last callback is being delivered: there is nothing left to cancel
+            return 0;
+        }
         if (req == clt->active) {
             stop_req_timer(clt);
             clt->active = NULL;
@@ -1010,8 +1030,7 @@ int http_req_cancel_err(tlsuv_http_t *clt, tlsuv_http_req_t *req, int error, con
             req->resp.body_cb(req, NULL, error);
         }
 
-        http_req_free(req);
-        tlsuv__free(req);
+        release_req(req);
         return 0;
     } else {
         return UV_EINVAL;

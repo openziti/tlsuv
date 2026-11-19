@@ -124,6 +124,10 @@ struct tlsuv_http_req_s {
     llhttp_t parser;
     enum http_request_state state;
     bool keepalive;
+    // internal: llhttp is running on this request (the parser is a part of it), so it can not be released
+    bool parsing;
+    // internal: the application ended this request from a callback while it was parsing
+    bool stopped;
     long timeout;
 
     bool req_chunked;
@@ -332,8 +336,8 @@ void tlsuv_http_header(tlsuv_http_t *clt, const char *name, const char *value);
 /**
  * close client and release all resources associate with it
  *
- * Can be called from the final body callback of a request (`len == UV_EOF`). It must not be called from the
- * response callback or from a body callback that delivers data: the request being processed is released.
+ * Can be called from any callback of a request. A request that is not complete yet is cancelled, see
+ * #tlsuv_http_cancel_all.
  * @param clt
  * @param close_cb callback called after client is closed and all resources released. May be NULL.
  * @return 0 or error code
@@ -342,7 +346,8 @@ int tlsuv_http_close(tlsuv_http_t *clt, tlsuv_http_close_cb close_cb);
 
 /**
  * Create HTTP request with given client and queue it for execution.
- * Request lifecycle is managed by the client.
+ * Request lifecycle is managed by the client: the request is released after its last callback (the final
+ * body callback, or the one that reports a failure or a cancellation), and the pointer must not be used after that.
  * @param clt HTTP client
  * @param method HTTP method
  * @param path request URI (including query)
@@ -430,6 +435,9 @@ void tlsuv_http_req_end(tlsuv_http_req_t *req);
 
 /**
  * Cancels provided request
+ *
+ * Can be called from any callback of the request. Once the request is complete there is nothing left to cancel,
+ * so a call from its final body callback does nothing.
  * @param clt client
  * @param req request to be cancelled
  * @return 0, or error code
@@ -440,6 +448,7 @@ int tlsuv_http_req_cancel(tlsuv_http_t *clt, tlsuv_http_req_t *req);
  * Cancels all (active and queued) requests for the given client.
  * All pending requests would have their callbacks called with cancellation code.
  * If there is an active request, either resp_cb or body_cb (depending on the state) will be called with cancellation code.
+ * Can be called from any callback of a request.
  *
  * @param clt client
  * @return
