@@ -111,6 +111,10 @@ ssize_t http_req_process(tlsuv_http_req_t* req, const char* buf, ssize_t len) {
         processed = llhttp_get_error_pos(&req->parser) - buf;
         UM_LOG(VERB, "websocket upgrade: processed %zd out of %zd", processed, len);
         llhttp_resume_after_upgrade(&req->parser);
+    } else if (req->state == completed) {
+        // the response was complete: an error now is about what follows it, not about this request.
+        // The caller reports that, an ERR here would make a successful request look like a failure
+        UM_LOG(VERB, "stopped at data after the response[%s %s]: %s", req->method, req->path, llhttp_errno_name(err));
     } else {
         UM_LOG(ERR, "failed to process[%s %s]: %s", req->method, req->path, llhttp_errno_name(err));
     }

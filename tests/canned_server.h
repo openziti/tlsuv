@@ -19,6 +19,7 @@
 
 #include <catch2/catch_all.hpp>
 
+#include <cassert>
 #include <string>
 #include <uv.h>
 
@@ -114,6 +115,8 @@ struct canned_server {
                           uv_read_stop(s);
                           c->send(c->srv->reply, [](uv_write_t *w, int) {
                               auto c = (conn *) w->handle->data;
+                              // a trailer closes the connection after it is sent, keep_open would be ignored
+                              assert(!c->srv->keep_open || c->srv->trailer.empty());
                               if (c->srv->keep_open && c->srv->trailer.empty()) {
                                   // what the client sends from now on is ignored; its close ends the connection
                                   uv_read_start((uv_stream_t *) &c->tcp, alloc_request,
