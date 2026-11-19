@@ -377,7 +377,7 @@ TEST_CASE_METHOD(UvLoopTest, "connect with ipv6 source address", "[connector]") 
     CHECK(ntohs(local.sin6_port) == 58732);
 }
 
-TEST_CASE_METHOD(UvLoopTest, "connect races multiple candidates with source address family filter", "[connector]") {
+TEST_CASE_METHOD(UvLoopTest, "connect races multiple candidates with source address family filter", "[connector][internet]") {
     // "yahoo.com" is the dual-stack (A+AAAA) hostname already relied on elsewhere in this suite
     // (see "connect cancel") -- unlike "localhost", whose resolution depends on the local
     // resolver/hosts file and isn't reliably dual-stack across environments (the "default
@@ -494,7 +494,7 @@ TEST_CASE("base64 encode", "[connector]") {
 
 // test cancellation
 // connection is targeting a black-holed port
-TEST_CASE_METHOD(UvLoopTest, "connect cancel", "[connector]") {
+TEST_CASE_METHOD(UvLoopTest, "connect cancel", "[connector][internet]") {
     auto setup = GENERATE(
             std::make_pair("default", tlsuv_global_connector()),
             std::make_pair("proxy", tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", "13128")),
