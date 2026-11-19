@@ -176,10 +176,11 @@ static std::string upgrade_host_header(const char *url) {
     return host;
 }
 
-// the Host header is the host the way the URL writes it: an IPv6 literal is bracketed
+// the Host header is the host the way the URL writes it: an IPv6 literal is bracketed.
+// The header has no port; that is not what is checked here.
 TEST_CASE("websocket host header with an IPv6 literal", "[websocket]") {
-    CHECK_THAT(upgrade_host_header("ws://[::1]:1/ws"), Catch::Matchers::StartsWith("[::1]"));
-    CHECK_THAT(upgrade_host_header("ws://[::1]:1"), Catch::Matchers::StartsWith("[::1]"));
+    CHECK(upgrade_host_header("ws://[::1]:1/ws") == "[::1]");
+    CHECK(upgrade_host_header("ws://[::1]:1") == "[::1]");
     // plain hosts are unchanged
     CHECK(upgrade_host_header("ws://127.0.0.1:1/ws") == "127.0.0.1");
 }

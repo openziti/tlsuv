@@ -477,10 +477,12 @@ struct tlsuv_url_s {
 /**
  * Zero-copy URL parser. [url] fields point to the parsed [str].
  *
- * An IPv6 literal host must be bracketed in [str] (`http://[::1]:8080/`).
- * The parsed `hostname` is the address without the brackets (`::1`),
- * so it can be passed to a resolver as is. Callers that format a `Host`
- * header or an authority from it must add the brackets back.
+ * An IPv6 literal host must be bracketed in [str] (`http://[::1]:8080/`),
+ * and only an IPv6 literal may be. The parsed `hostname` is the address without
+ * the brackets (`::1`), so it can be passed to a resolver as is. Callers that
+ * format a `Host` header or an authority from it must add the brackets back.
+ * A zone id (`[fe80::1%25eth0]`) is accepted and ignored: `hostname` is the address
+ * alone, so a link-local address cannot be reached through such a URL.
  * @param url parsed URL structure
  * @param str URL in string form
  * @return 0 on success, -1 on failure

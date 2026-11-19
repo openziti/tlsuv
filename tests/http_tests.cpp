@@ -1466,8 +1466,30 @@ TEST_CASE("url parse ipv6", "[http]") {
     URL_TEST("wss://[2001:db8:85a3:0:0:8a2e:370:7334]/ws", 0, "wss", "2001:db8:85a3:0:0:8a2e:370:7334", 0, "/ws", nullptr);
     URL_TEST("http://[::ffff:192.0.2.1]:80/", 0, "http", "::ffff:192.0.2.1", 80, "/", nullptr);
     URL_TEST("[::1]:80/echo", 0, nullptr, "::1", 80, "/echo", nullptr);
-    // zone id is passed through as written
-    URL_TEST("http://[fe80::1%25eth0]:80/", 0, "http", "fe80::1%25eth0", 80, "/", nullptr);
+
+    // a zone id is ignored: the hostname is the address alone
+    URL_TEST("http://[fe80::1%25eth0]:80/", 0, "http", "fe80::1", 80, "/", nullptr);
+    URL_TEST("http://[fe80::1%25eth0]", 0, "http", "fe80::1", 0, nullptr, nullptr);
+    URL_TEST("http://[fe80::1%eth0]/echo", 0, "http", "fe80::1", 0, "/echo", nullptr);
+    URL_TEST("http://[fe80::1%251]/", 0, "http", "fe80::1", 0, "/", nullptr);
+    URL_TEST("[fe80::1%25eth0]:8080/echo?foo=bar", 0, nullptr, "fe80::1", 8080, "/echo", "foo=bar");
+    // but it is for an address, and it is not empty
+    URL_TEST("http://[fe80::1%]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[%25eth0]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[example.com%25eth0]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+
+    // only an IPv6 address goes in brackets
+    URL_TEST("http://[example.com]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[example.com]:80/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[127.0.0.1]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[localhost]", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[abc]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[1:2:3:4:5:6:7:8:9]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[:::1]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[::g]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[v1.fe80::1]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    // longer than any IPv6 address
+    URL_TEST("http://[0000:0000:0000:0000:0000:0000:0000:0000:0000:0000]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
 
     // malformed
     URL_TEST("http://[::1/", -1, nullptr, nullptr, 0, nullptr, nullptr);
@@ -1516,6 +1538,9 @@ TEST_CASE("http host header with an IPv6 literal", "[http]") {
             {"http://[::1]:8080/path",      "::1",         "8080", "[::1]:8080"},
             {"https://[2001:db8::1]",       "2001:db8::1", "443",  "[2001:db8::1]"},
             {"https://[2001:db8::1]:8443",  "2001:db8::1", "8443", "[2001:db8::1]:8443"},
+            // the zone id is not in the host the client resolves, nor in the header
+            {"http://[fe80::1%25eth0]:8080", "fe80::1",    "8080", "[fe80::1]:8080"},
+            {"http://[fe80::1%25eth0]",     "fe80::1",     "80",   "[fe80::1]"},
             // plain hosts are unchanged
             {"http://localhost",            "localhost",   "80",   "localhost"},
             {"http://127.0.0.1:8080",       "127.0.0.1",   "8080", "127.0.0.1:8080"},
