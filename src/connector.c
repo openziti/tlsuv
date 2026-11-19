@@ -426,14 +426,19 @@ static void proxy_work(uv_work_t *wr) {
         return;
     }
 
+    // an IPv6 literal is bracketed in an authority, to tell it from the port
+    bool ipv6 = strchr(r->host, ':') != NULL;
+    const char *lb = ipv6 ? "[" : "";
+    const char *rb = ipv6 ? "]" : "";
+
     char req[1024];
     size_t reqlen = snprintf(req, sizeof(req),
-                             "CONNECT %s:%s HTTP/1.1\r\n"
-                             "Host: %s:%s\r\n"
+                             "CONNECT %s%s%s:%s HTTP/1.1\r\n"
+                             "Host: %s%s%s:%s\r\n"
                              "Proxy-Connection: keep-alive\r\n"
                              "%s%s%s%s"
                              "\r\n",
-                             r->host, r->port, r->host, r->port,
+                             lb, r->host, rb, r->port, lb, r->host, rb, r->port,
                              proxy->auth_header ? proxy->auth_header : "",
                              proxy->auth_header ? ": " : "",
                              proxy->auth_header ? proxy->auth_value : "",

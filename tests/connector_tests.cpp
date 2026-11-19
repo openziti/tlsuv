@@ -16,6 +16,7 @@
 
 #include <tlsuv/connector.h>
 
+#include "canned_server.h"
 #include "fixtures.h"
 #include "tlsuv/tlsuv.h"
 
@@ -140,6 +141,45 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connector", "[connector]") {
     char dest[256];
     uv_ip4_name((sockaddr_in*)&peer, dest, sizeof(dest));
     fprintf(stderr, "dest = %s\n", dest);
+}
+
+// the target of the connect is written to the proxy as an authority: an IPv6 literal is bracketed
+TEST_CASE_METHOD(UvLoopTest, "proxy connect request", "[connector]") {
+    auto [host, authority] = GENERATE(table<std::string, std::string>({
+            {"example.com", "example.com:443"},
+            {"127.0.0.1", "127.0.0.1:443"},
+            {"::1", "[::1]:443"},
+            {"2001:db8::1", "[2001:db8::1]:443"},
+    }));
+    INFO("target: " << host);
+
+    // a proxy that refuses, there is nothing to connect to behind it
+    canned_server proxy(loop, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", "");
+    auto connector = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", std::to_string(proxy.port()).c_str());
+
+    struct result_s {
+        bool called;
+        int err;
+    } result = {false, 0};
+    DEFER {
+        // not while a connect is still pending (the test timed out): it would use it
+        if (result.called) connector->free(connector);
+        proxy.close();
+        drain();
+    };
+
+    connector->connect(loop, connector, host.c_str(), "443", nullptr,
+                       [](uv_os_sock_t, int err, void *ctx) {
+                           auto r = (result_s *) ctx;
+                           r->called = true;
+                           r->err = err;
+                       }, &result);
+    run(UNTIL(result.called));
+
+    CHECK(result.err == UV_ECONNREFUSED);
+    CHECK_THAT(proxy.request,
+               Catch::Matchers::StartsWith("CONNECT " + authority + " HTTP/1.1\r\n"
+                                           "Host: " + authority + "\r\n"));
 }
 
 TEST_CASE_METHOD(UvLoopTest, "connect with ipv4 source address", "[connector]") {

@@ -59,6 +59,7 @@ struct canned_server {
     uv_tcp_t listener{};
     std::string reply;
     std::string trailer;
+    std::string request; // what the server read of the first request
     bool done = false; // the connection has been closed by the server
 
     canned_server(uv_loop_t *loop, std::string reply, std::string trailer) :
@@ -71,11 +72,15 @@ struct canned_server {
         REQUIRE(uv_listen((uv_stream_t *) &listener, 1, on_accept) == 0);
     }
 
-    std::string url(const std::string &scheme = "ws") {
+    uint16_t port() {
         sockaddr_storage bound{};
         int len = sizeof(bound);
         uv_tcp_getsockname(&listener, (sockaddr *) &bound, &len);
-        return scheme + "://127.0.0.1:" + std::to_string(ntohs(((sockaddr_in *) &bound)->sin_port)) + "/";
+        return ntohs(((sockaddr_in *) &bound)->sin_port);
+    }
+
+    std::string url(const std::string &scheme = "ws") {
+        return scheme + "://127.0.0.1:" + std::to_string(port()) + "/";
     }
 
     void close() {
@@ -97,12 +102,13 @@ struct canned_server {
                           auto c = (conn *) h->data;
                           *buf = uv_buf_init(c->request, sizeof(c->request));
                       },
-                      [](uv_stream_t *s, ssize_t nread, const uv_buf_t *) {
+                      [](uv_stream_t *s, ssize_t nread, const uv_buf_t *buf) {
                           auto c = (conn *) s->data;
                           if (nread <= 0) {
                               if (nread < 0) c->finish();
                               return;
                           }
+                          c->srv->request.assign(buf->base, nread);
                           uv_read_stop(s);
                           c->send(c->srv->reply, [](uv_write_t *w, int) {
                               auto c = (conn *) w->handle->data;
