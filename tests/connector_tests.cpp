@@ -182,6 +182,69 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connect request", "[connector]") {
                                            "Host: " + authority + "\r\n"));
 }
 
+// the Proxy-Authorization header line for basic credentials, "" if there are none
+static std::string basic_auth_line(const std::string &user, const std::string &pass) {
+    if (user.empty()) return "";
+
+    std::string cred = user + ":" + pass;
+    char *b64 = nullptr;
+    size_t b64_len = 0;
+    REQUIRE(tlsuv_base64_encode((const uint8_t *) cred.data(), cred.size(), &b64, &b64_len) == 0);
+    std::string line = "Proxy-Authorization: Basic " + std::string(b64, b64_len) + "\r\n";
+    free(b64);
+    return line;
+}
+
+// the request does not have to fit any fixed size: whatever the host and the credentials are, the proxy gets all of it
+TEST_CASE_METHOD(UvLoopTest, "proxy connect request of any size", "[connector]") {
+    auto [host, user, pass] = GENERATE(table<std::string, std::string, std::string>({
+            {"example.com",            "",      ""},
+            {"example.com",            "user",  "pw"},
+            // more than the CONNECT request used to be allowed to hold
+            {std::string(600, 'a'),    "",      ""},
+            // more than the credentials used to be allowed to hold
+            {"example.com",            std::string(300, 'u'), std::string(200, 'p')},
+            // a token as the password
+            {"example.com",            "token", std::string(1500, 'p')},
+            {std::string(600, 'a'),    std::string(300, 'u'), std::string(200, 'p')},
+    }));
+    INFO("host length: " << host.size() << ", user length: " << user.size() << ", password length: " << pass.size());
+
+    canned_server proxy(loop, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", "");
+    auto connector = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", std::to_string(proxy.port()).c_str());
+
+    struct result_s {
+        bool called;
+        int err;
+    } result = {false, 0};
+    DEFER {
+        if (result.called) connector->free(connector);
+        proxy.close();
+        drain();
+    };
+
+    if (!user.empty()) {
+        REQUIRE(connector->set_auth(connector, tlsuv_PROXY_BASIC, user.c_str(), pass.c_str()) == 0);
+    }
+
+    connector->connect(loop, connector, host.c_str(), "443", nullptr,
+                       [](uv_os_sock_t, int err, void *ctx) {
+                           auto r = (result_s *) ctx;
+                           r->called = true;
+                           r->err = err;
+                       }, &result);
+    run(UNTIL(result.called));
+
+    std::string expected = "CONNECT " + host + ":443 HTTP/1.1\r\n"
+                           "Host: " + host + ":443\r\n"
+                           "Proxy-Connection: keep-alive\r\n" +
+                           basic_auth_line(user, pass) +
+                           "\r\n";
+    CHECK(result.err == UV_ECONNREFUSED);
+    CHECK(proxy.request.size() == expected.size());
+    CHECK(proxy.request == expected);
+}
+
 TEST_CASE_METHOD(UvLoopTest, "connect with ipv4 source address", "[connector]") {
     // a local listener stands in for the destination -- this test doesn't depend on the
     // external test server/proxy infra, only on being able to bind an arbitrary local port.
