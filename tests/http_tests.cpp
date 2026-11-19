@@ -30,6 +30,7 @@
 
 extern "C" {
 #include "http_req.h"
+#include "util.h"
 }
 
 #include <parson.h>
@@ -1648,6 +1649,55 @@ TEST_CASE("url parse with an empty username or password", "[http]") {
         TEST_FIELD(hostname, c.host);
         TEST_FIELD(path, c.path);
     }
+}
+
+// the username and password of a URL are percent-encoded: a '#', '/' or '?' in them has to be written %23, %2F, %3F
+TEST_CASE("url userinfo percent-decode", "[http]") {
+    struct {
+        const char *in;
+        const char *out;
+    } cases[] = {
+            {"",              ""},
+            {"plain",         "plain"},
+            {"p%23ss",        "p#ss"},
+            {"a%2Fb%3Fc%40d", "a/b?c@d"},
+            {"%41%62%63",     "Abc"},      // either case of a hex digit
+            {"%2f%3a%7E",     "/:~"},
+            {"100%",          "100%"},     // a '%' that does not start an escape stays
+            {"50%off",        "50%off"},
+            {"%4",            "%4"},
+            {"%zz",           "%zz"},
+            {"%%41",          "%A"},
+            {"a%00b",         "a%00b"},    // a NUL would cut the credential short: not decoded
+    };
+
+    for (auto &c: cases) {
+        INFO("in: " << c.in);
+        // the decoded text is in the buffer, with room to spare after the encoded one
+        std::string buf = std::string(c.in) + "@rest";
+        size_t len = strlen(c.in);
+        size_t out = tlsuv__url_decode(buf.data(), len);
+        CHECK(out == strlen(c.out));
+        CHECK(std::string(buf.c_str()) == c.out);   // and it is terminated
+        // only the encoded part is touched
+        CHECK(buf.substr(len + 1) == "rest");
+    }
+}
+
+// the way the HTTP_PROXY credentials go from the URL to the proxy
+TEST_CASE("url userinfo from a proxy url", "[http]") {
+    std::string url = "http://us%40er:p%23ss%2Fw%3Frd@proxy:3128/";
+    tlsuv_url_s u{};
+    REQUIRE(tlsuv_parse_url(&u, url.c_str()) == 0);
+    REQUIRE(u.username != nullptr);
+    REQUIRE(u.password != nullptr);
+    CHECK(std::string(u.hostname, u.hostname_len) == "proxy");
+    CHECK(u.port == 3128);
+
+    tlsuv__url_decode((char *) u.username, u.username_len);
+    tlsuv__url_decode((char *) u.password, u.password_len);
+    CHECK(std::string(u.username) == "us@er");
+    CHECK(std::string(u.password) == "p#ss/w?rd");
 }
 
 // intermediate certs are changed frequently, so this test is not stable

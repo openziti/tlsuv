@@ -7,6 +7,8 @@
 
 #include <tlsuv/http.h>
 
+#include "util.h"
+
 // `s` is an IPv6 address, without the brackets and without a zone id.
 static bool is_ipv6_literal(const char *s, size_t len) {
     char buf[46]; // INET6_ADDRSTRLEN: the longest address, with an embedded IPv4 part, and '\0'
@@ -16,6 +18,32 @@ static bool is_ipv6_literal(const char *s, size_t len) {
     memcpy(buf, s, len);
     buf[len] = '\0';
     return uv_inet_pton(AF_INET6, buf, addr) == 0;
+}
+
+static int hex_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+size_t tlsuv__url_decode(char *s, size_t len) {
+    size_t out = 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = s[i];
+        if (c == '%' && i + 2 < len) {
+            int hi = hex_value(s[i + 1]);
+            int lo = hex_value(s[i + 2]);
+            bool is_nul = hi == 0 && lo == 0; // "%00" would cut the text short, it is left as is
+            if (hi >= 0 && lo >= 0 && !is_nul) {
+                c = (char) (hi << 4 | lo);
+                i += 2;
+            }
+        }
+        s[out++] = c;
+    }
+    s[out] = '\0';
+    return out;
 }
 
 int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
