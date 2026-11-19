@@ -1623,6 +1623,33 @@ TEST_CASE("url parse with @ in the path or the query", "[http]") {
     }
 }
 
+// an empty username or password is still just the text up to the next delimiter
+TEST_CASE("url parse with an empty username or password", "[http]") {
+    struct {
+        const char *str;
+        const char *user;
+        const char *pass;
+        const char *host;
+        const char *path;
+    } cases[] = {
+            {"http://@host/",     "",     nullptr, "host", "/"},
+            {"http://:pw@host/",  "",     "pw",    "host", "/"},
+            {"http://user:@host/", "user", "",      "host", "/"},
+            // nothing after the host: the parser must not look past the end of the string
+            {"http://@h",         "",     nullptr, "h",    nullptr},
+    };
+
+    for (auto &c: cases) {
+        INFO("url: " << c.str);
+        tlsuv_url_s url{};
+        REQUIRE(tlsuv_parse_url(&url, c.str) == 0);
+        TEST_FIELD(username, c.user);
+        TEST_FIELD(password, c.pass);
+        TEST_FIELD(hostname, c.host);
+        TEST_FIELD(path, c.path);
+    }
+}
+
 // intermediate certs are changed frequently, so this test is not stable
 TEST_CASE("partial bundle", "[.]") {
 

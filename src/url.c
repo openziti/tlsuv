@@ -83,13 +83,13 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
     // an '@' after it is part of the path or the query
     if (memchr(p, '@', strcspn(p, "/?#")) != NULL) {
         url->username = p;
-        sscanf(p, "%*[^:@]%n", &count);
+        count = (int) strcspn(p, ":@");
         url->username_len = count;
         p += count;
         if (*p == ':') {
             p++;
             url->password = p;
-            sscanf(p, "%*[^@]%n", &count);
+            count = (int) strcspn(p, "@");
             url->password_len = count;
             p += count;
         }
