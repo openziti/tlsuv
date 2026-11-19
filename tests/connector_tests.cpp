@@ -578,8 +578,27 @@ struct BlackHole {
     bool ready = false;
 
     BlackHole() {
+        ready = fill();
+        // the fillers only serve to make the black hole: without one (macOS resets the
+        // connects instead of dropping them) do not keep up to 512 sockets open for the test
+        if (!ready) release_fillers();
+    }
+
+    ~BlackHole() {
+        release_fillers();
+        if (listener != INVALID_SOCKET) close_sock(listener);
+    }
+
+private:
+    void release_fillers() {
+        for (auto s: fillers) close_sock(s);
+        fillers.clear();
+    }
+
+    // returns true once the accept queue is full, i.e. a connect() to the listener stays pending
+    bool fill() {
         listener = socket(AF_INET, SOCK_STREAM, 0);
-        if (listener == INVALID_SOCKET) return;
+        if (listener == INVALID_SOCKET) return false;
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -588,15 +607,15 @@ struct BlackHole {
         if (bind(listener, (sockaddr *) &addr, sizeof(addr)) != 0 ||
             listen(listener, 0) != 0 ||
             getsockname(listener, (sockaddr *) &addr, &len) != 0) {
-            return;
+            return false;
         }
         port = std::to_string(ntohs(addr.sin_port));
 
         // connect until one stays pending: the accept queue is full by then
         // (the backlog is rounded up on some systems, e.g. 128 on macOS)
-        for (int i = 0; i < 512 && !ready; i++) {
+        for (int i = 0; i < 512; i++) {
             uv_os_sock_t s = socket(AF_INET, SOCK_STREAM, 0);
-            if (s == INVALID_SOCKET) return;
+            if (s == INVALID_SOCKET) return false;
             fillers.push_back(s);
 #if _WIN32
             u_long nb = 1;
@@ -610,13 +629,9 @@ struct BlackHole {
             FD_ZERO(&wfds);
             FD_SET(s, &wfds);
             timeval tv{0, 100 * 1000};
-            ready = select((int) s + 1, nullptr, &wfds, nullptr, &tv) == 0;
+            if (select((int) s + 1, nullptr, &wfds, nullptr, &tv) == 0) return true;
         }
-    }
-
-    ~BlackHole() {
-        for (auto s: fillers) close_sock(s);
-        if (listener != INVALID_SOCKET) close_sock(listener);
+        return false;
     }
 };
 
@@ -647,7 +662,8 @@ TEST_CASE_METHOD(UvLoopTest, "connect cancel", "[connector]") {
                          tlsuv_global_connector();
         DEFER {
             if (result.called && result.err == 0) close_sock(result.sock);
-            connector->free((void *) connector);
+            // a request that is still pending holds on to its connector: leak it rather than free it
+            if (result.called) connector->free((void *) connector);
         };
 
         auto cr = connector->connect(loop, connector, via_proxy ? "127.0.0.1" : hole_host,
