@@ -17,6 +17,7 @@
 #ifndef TLSUV_TESTS_HTTP_CAPTURE_H
 #define TLSUV_TESTS_HTTP_CAPTURE_H
 
+#include <cctype>
 #include <map>
 #include <string>
 #include <tlsuv/http.h>
@@ -46,6 +47,19 @@ public:
     uv_timeval64_t resp_start{};
     uv_timeval64_t resp_endtime{};
 };
+
+// value of a header in a header list (the name is matched ignoring case), "" if there is none
+inline std::string header_value(um_header_list *hl, const std::string &name) {
+    auto lower = [](std::string s) {
+        for (auto &c: s) c = (char) std::tolower((unsigned char) c);
+        return s;
+    };
+    tlsuv_http_hdr *h;
+    LIST_FOREACH(h, hl, _next) {
+        if (lower(h->name) == lower(name)) return h->value;
+    }
+    return {};
+}
 
 std::string testServerURL(const string& type);
 void req_body_cb(tlsuv_http_req_t *req, char *chunk, ssize_t status);

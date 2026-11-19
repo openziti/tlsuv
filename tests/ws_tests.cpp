@@ -17,6 +17,7 @@ limitations under the License.
 #include <catch2/catch_all.hpp>
 #include "canned_server.h"
 #include "fixtures.h"
+#include "http_capture.h"
 #include <cstring>
 #include <tlsuv/tlsuv.h>
 #include <tlsuv/websocket.h>
@@ -159,6 +160,29 @@ TEST_CASE("free websocket from the connect callback after a refused upgrade", "[
 
 TEST_CASE("free websocket from the connect callback after a reply that is not HTTP", "[websocket]") {
     check_freed_from_failed_connect("this is not an HTTP reply\r\n\r\n");
+}
+
+// the Host header of the upgrade request for `url`, which nothing listens on
+static std::string upgrade_host_header(const char *url) {
+    UvLoopTest lt;
+    websocket_test test(0);
+    uv_connect_t r;
+    start_freeing_websocket(lt, test, r);
+
+    REQUIRE(tlsuv_websocket_connect(&r, test.ws, url, on_connect, on_ws_data) == 0);
+    // the request is made before the connection is, and the failed connect closes the websocket
+    std::string host = header_value(&test.ws->req->req_headers, "Host");
+    lt.run(UNTIL(test.close_cb_called));
+    return host;
+}
+
+// the Host header is the host the way the URL writes it: an IPv6 literal is bracketed.
+// The header has no port; that is not what is checked here.
+TEST_CASE("websocket host header with an IPv6 literal", "[websocket]") {
+    CHECK(upgrade_host_header("ws://[::1]:1/ws") == "[::1]");
+    CHECK(upgrade_host_header("ws://[::1]:1") == "[::1]");
+    // plain hosts are unchanged
+    CHECK(upgrade_host_header("ws://127.0.0.1:1/ws") == "127.0.0.1");
 }
 
 static void close_on_connect(uv_connect_t *req, int status) {

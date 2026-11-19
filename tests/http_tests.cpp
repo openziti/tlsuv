@@ -1456,6 +1456,109 @@ TEST_CASE("url parse", "[http]") {
     URL_TEST("websocket.org:443443/echo", -1, nullptr, "websocket.org", 443, "/echo", nullptr);
 }
 
+// IPv6 literals are bracketed in a URL; the parsed hostname excludes the brackets
+TEST_CASE("url parse ipv6", "[http]") {
+    URL_TEST("http://[::1]", 0, "http", "::1", 0, nullptr, nullptr);
+    URL_TEST("http://[::1]:8080", 0, "http", "::1", 8080, nullptr, nullptr);
+    URL_TEST("http://[::1]/echo", 0, "http", "::1", 0, "/echo", nullptr);
+    URL_TEST("https://[::1]:8443/echo?foo=bar", 0, "https", "::1", 8443, "/echo", "foo=bar");
+    URL_TEST("wss://[2001:db8::1]:443/ws", 0, "wss", "2001:db8::1", 443, "/ws", nullptr);
+    URL_TEST("wss://[2001:db8:85a3:0:0:8a2e:370:7334]/ws", 0, "wss", "2001:db8:85a3:0:0:8a2e:370:7334", 0, "/ws", nullptr);
+    URL_TEST("http://[::ffff:192.0.2.1]:80/", 0, "http", "::ffff:192.0.2.1", 80, "/", nullptr);
+    URL_TEST("[::1]:80/echo", 0, nullptr, "::1", 80, "/echo", nullptr);
+
+    // a zone id is ignored: the hostname is the address alone
+    URL_TEST("http://[fe80::1%25eth0]:80/", 0, "http", "fe80::1", 80, "/", nullptr);
+    URL_TEST("http://[fe80::1%25eth0]", 0, "http", "fe80::1", 0, nullptr, nullptr);
+    URL_TEST("http://[fe80::1%eth0]/echo", 0, "http", "fe80::1", 0, "/echo", nullptr);
+    URL_TEST("http://[fe80::1%251]/", 0, "http", "fe80::1", 0, "/", nullptr);
+    URL_TEST("[fe80::1%25eth0]:8080/echo?foo=bar", 0, nullptr, "fe80::1", 8080, "/echo", "foo=bar");
+    // but it is for an address, and it is not empty
+    URL_TEST("http://[fe80::1%]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[%25eth0]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[example.com%25eth0]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+
+    // only an IPv6 address goes in brackets
+    URL_TEST("http://[example.com]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[example.com]:80/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[127.0.0.1]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[localhost]", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[abc]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[1:2:3:4:5:6:7:8:9]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[:::1]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[::g]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[v1.fe80::1]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    // longer than any IPv6 address
+    URL_TEST("http://[0000:0000:0000:0000:0000:0000:0000:0000:0000:0000]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+
+    // malformed
+    URL_TEST("http://[::1/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[::1", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[]/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[::1]x/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[::1]:/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://[::1]:99999/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+    URL_TEST("http://::1/", -1, nullptr, nullptr, 0, nullptr, nullptr);
+
+    // plain hosts are unaffected
+    URL_TEST("http://127.0.0.1:8080/echo", 0, "http", "127.0.0.1", 8080, "/echo", nullptr);
+}
+
+TEST_CASE("url parse ipv6 auth", "[http]") {
+    tlsuv_url_s url{};
+
+    CHECK(tlsuv_parse_url(&url, "https://foo:passwd@[::1]:3128/path") == 0);
+    CHECK(url.username_len == strlen("foo"));
+    CHECK(strncmp("foo", url.username, url.username_len) == 0);
+    CHECK(url.password_len == strlen("passwd"));
+    CHECK(strncmp("passwd", url.password, url.password_len) == 0);
+    CHECK(url.hostname_len == strlen("::1"));
+    CHECK(strncmp("::1", url.hostname, url.hostname_len) == 0);
+    CHECK(url.port == 3128);
+    CHECK(url.path_len == strlen("/path"));
+
+    CHECK(tlsuv_parse_url(&url, "https://bar@[2001:db8::1]") == 0);
+    CHECK(url.username_len == strlen("bar"));
+    CHECK(url.password == nullptr);
+    CHECK(url.hostname_len == strlen("2001:db8::1"));
+    CHECK(strncmp("2001:db8::1", url.hostname, url.hostname_len) == 0);
+    CHECK(url.port == 0);
+}
+
+// the client resolves the unbracketed address, and sends the host the way a URL writes it
+TEST_CASE("http host header with an IPv6 literal", "[http]") {
+    struct {
+        const char *url;
+        const char *host;
+        const char *port;
+        const char *host_header;
+    } cases[] = {
+            {"http://[::1]",                "::1",         "80",   "[::1]"},
+            {"http://[::1]/path",           "::1",         "80",   "[::1]"},
+            {"http://[::1]:8080/path",      "::1",         "8080", "[::1]:8080"},
+            {"https://[2001:db8::1]",       "2001:db8::1", "443",  "[2001:db8::1]"},
+            {"https://[2001:db8::1]:8443",  "2001:db8::1", "8443", "[2001:db8::1]:8443"},
+            // the zone id is not in the host the client resolves, nor in the header
+            {"http://[fe80::1%25eth0]:8080", "fe80::1",    "8080", "[fe80::1]:8080"},
+            {"http://[fe80::1%25eth0]",     "fe80::1",     "80",   "[fe80::1]"},
+            // plain hosts are unchanged
+            {"http://localhost",            "localhost",   "80",   "localhost"},
+            {"http://127.0.0.1:8080",       "127.0.0.1",   "8080", "127.0.0.1:8080"},
+    };
+
+    UvLoopTest test;
+    for (auto &c: cases) {
+        INFO("url: " << c.url);
+        tlsuv_http_t clt{};
+        REQUIRE(tlsuv_http_init(test.loop, &clt, c.url) == 0);
+        CHECK(std::string(clt.host) == c.host);
+        CHECK(std::string(clt.port) == c.port);
+        CHECK(header_value(&clt.headers, "Host") == c.host_header);
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+    }
+}
+
 TEST_CASE("url parse auth", "[http]") {
     tlsuv_url_s url{};
 

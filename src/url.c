@@ -3,7 +3,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <uv.h>
+
 #include <tlsuv/http.h>
+
+// `s` is an IPv6 address, without the brackets and without a zone id.
+static bool is_ipv6_literal(const char *s, size_t len) {
+    char buf[46]; // INET6_ADDRSTRLEN: the longest address, with an embedded IPv4 part, and '\0'
+    unsigned char addr[16];
+    if (len >= sizeof(buf))
+        return false;
+    memcpy(buf, s, len);
+    buf[len] = '\0';
+    return uv_inet_pton(AF_INET6, buf, addr) == 0;
+}
 
 int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
     memset(url, 0, sizeof(struct tlsuv_url_s));
@@ -82,7 +95,28 @@ int tlsuv_parse_url(struct tlsuv_url_s *url, const char *urlstr) {
     }
 
     count = 0;
-    if (sscanf(p, "%*[^:/]%n", &count) == 0 && count > 0) {
+    if (*p == '[') {
+        // bracketed IPv6 literal: the hostname is what is inside the brackets
+        size_t len = strcspn(p + 1, "]/");
+        if (p[1 + len] != ']')
+            return -1;
+        // A zone id (`[fe80::1%25eth0]`) is ignored: it is cut off the hostname, which stays the
+        // address alone. The resolver cannot use it percent-encoded, and a Host header cannot carry it.
+        size_t addr_len = len;
+        const char *zone = memchr(p + 1, '%', len);
+        if (zone != NULL) {
+            addr_len = zone - (p + 1);
+            if (addr_len + 1 == len) // nothing after the '%'
+                return -1;
+        }
+        if (!is_ipv6_literal(p + 1, addr_len))
+            return -1;
+        url->hostname = p + 1;
+        url->hostname_len = addr_len;
+        p += len + 2;
+        if (*p != '\0' && *p != ':' && *p != '/')
+            return -1;
+    } else if (sscanf(p, "%*[^:/]%n", &count) == 0 && count > 0) {
         url->hostname = p;
         url->hostname_len = count;
         p += count;

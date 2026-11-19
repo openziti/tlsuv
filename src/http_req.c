@@ -336,6 +336,22 @@ void set_http_header(um_header_list* hl, const char* name, const char* value) {
     LIST_INSERT_HEAD(hl, h, _next);
 }
 
+char *http_host_header(const char *host, uint16_t port) {
+    // only an IPv6 literal has a ':' in it, and it is bracketed to tell it from the port
+    bool ipv6 = strchr(host, ':') != NULL;
+    const char *lb = ipv6 ? "[" : "";
+    const char *rb = ipv6 ? "]" : "";
+
+    size_t len = strlen(host) + 2 + 1 + 5 + 1; // brackets, ':', port, '\0'
+    char *hdr = tlsuv__malloc(len);
+    if (port != 0) {
+        snprintf(hdr, len, "%s%s%s:%u", lb, host, rb, (unsigned) port);
+    } else {
+        snprintf(hdr, len, "%s%s%s", lb, host, rb);
+    }
+    return hdr;
+}
+
 const char* tlsuv_http_resp_header(tlsuv_http_resp_t* resp, const char* name) {
     tlsuv_http_hdr* h;
     LIST_FOREACH(h, &resp->headers, _next)
