@@ -142,8 +142,10 @@ static void init_global_connector() {
         init_proxy_connector(&http_proxy_connector, tlsuv_PROXY_HTTP, u.hostname, port);
 
         if (u.username && u.password) {
-            *(char*)(u.username + u.username_len) = '\0'; // ensure null-termination
-            *(char*)(u.password + u.password_len) = '\0'; // ensure null-termination
+            // the username and password are percent-encoded in the URL (a '#', '/' or '?' has to be);
+            // this also null-terminates them
+            tlsuv__url_decode((char *) u.username, u.username_len);
+            tlsuv__url_decode((char *) u.password, u.password_len);
             http_proxy_connector.set_auth((tlsuv_connector_t *)&http_proxy_connector, tlsuv_PROXY_BASIC, u.username, u.password);
         }
         global_connector = (const tlsuv_connector_t *) &http_proxy_connector;

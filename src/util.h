@@ -73,6 +73,18 @@ int tlsuv_socket_set_blocking(uv_os_sock_t s, bool blocking);
 // nosigpipe + cloexec for an accepted socket
 void tlsuv_socket_configure(uv_os_sock_t sock);
 
+/**
+ * Percent-decodes `s[0..len)` in place and terminates the result with '\0'.
+ *
+ * Only a valid `%XX` is decoded; any other '%' stays as it is, and so does `%00`, as a NUL
+ * would cut the text short. The decoded text is never longer than the encoded one, so the
+ * terminator is written at `s[result]`, which is at most `s[len]`: `s` needs no more room
+ * than the `len` bytes of the text and the byte after them.
+ *
+ * @return length of the decoded text
+ */
+size_t tlsuv__url_decode(char *s, size_t len);
+
 struct tlsuv_stream_s;
 // server side of tlsuv_stream_open(): see src/tlsuv.c
 int tlsuv__stream_accept(struct tlsuv_stream_s *s, uv_os_sock_t fd, int alpn_count, const char **alpn,
