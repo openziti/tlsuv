@@ -61,6 +61,7 @@ struct canned_server {
     std::string trailer;
     std::string request; // what the server read of the first request
     bool done = false; // the connection has been closed by the server
+    bool keep_open = false; // after the reply (and no trailer) the connection stays open until the client closes it
 
     canned_server(uv_loop_t *loop, std::string reply, std::string trailer) :
             reply(std::move(reply)), trailer(std::move(trailer)) {
@@ -87,6 +88,11 @@ struct canned_server {
         if (!uv_is_closing((uv_handle_t *) &listener)) uv_close((uv_handle_t *) &listener, nullptr);
     }
 
+    static void alloc_request(uv_handle_t *h, size_t, uv_buf_t *buf) {
+        auto c = (conn *) h->data;
+        *buf = uv_buf_init(c->request, sizeof(c->request));
+    }
+
     static void on_accept(uv_stream_t *l, int status) {
         auto c = new conn{};
         c->srv = (canned_server *) l->data;
@@ -97,11 +103,7 @@ struct canned_server {
             c->finish();
             return;
         }
-        uv_read_start((uv_stream_t *) &c->tcp,
-                      [](uv_handle_t *h, size_t, uv_buf_t *buf) {
-                          auto c = (conn *) h->data;
-                          *buf = uv_buf_init(c->request, sizeof(c->request));
-                      },
+        uv_read_start((uv_stream_t *) &c->tcp, alloc_request,
                       [](uv_stream_t *s, ssize_t nread, const uv_buf_t *buf) {
                           auto c = (conn *) s->data;
                           if (nread <= 0) {
@@ -112,6 +114,14 @@ struct canned_server {
                           uv_read_stop(s);
                           c->send(c->srv->reply, [](uv_write_t *w, int) {
                               auto c = (conn *) w->handle->data;
+                              if (c->srv->keep_open && c->srv->trailer.empty()) {
+                                  // what the client sends from now on is ignored; its close ends the connection
+                                  uv_read_start((uv_stream_t *) &c->tcp, alloc_request,
+                                                [](uv_stream_t *s, ssize_t nread, const uv_buf_t *) {
+                                                    if (nread < 0) ((conn *) s->data)->finish();
+                                                });
+                                  return;
+                              }
                               if (c->srv->trailer.empty()) {
                                   c->finish();
                                   return;

@@ -158,17 +158,23 @@ static void clt_read_cb(tlsuv_http_t *c, ssize_t nread, const uv_buf_t *buf) {
 
     bool keepalive = nread >= 0;
     if (nread > 0) {
-        if (http_req_process(ar, buf->base, nread) < 0) {
-            CLT_LOG(ERR, "failed to parse HTTP response");
-            DUMP_REQ(ERR, ar, "failed to parse HTTP response");
-            fail_active_request(c, UV_EINVAL, "failed to parse HTTP response");
-            keepalive = false;
-        } else if (ar->state == completed) {
-            keepalive = c->keepalive && ar->keepalive;
+        bool parsed = http_req_process(ar, buf->base, nread) >= 0;
+        if (ar->state == completed) {
+            // the request is done even when what follows its response does not parse:
+            // that only makes the connection unusable for the next request
+            if (!parsed) {
+                CLT_LOG(WARN, "unexpected data after the response to request[%s %s]", ar->method, ar->path);
+            }
+            keepalive = parsed && c->keepalive && ar->keepalive;
             stop_req_timer(c);
             c->active = NULL;
             http_req_free(ar);
             tlsuv__free(ar);
+        } else if (!parsed) {
+            CLT_LOG(ERR, "failed to parse HTTP response");
+            DUMP_REQ(ERR, ar, "failed to parse HTTP response");
+            fail_active_request(c, UV_EINVAL, "failed to parse HTTP response");
+            keepalive = false;
         }
     } else if (nread == UV_EOF) {
         if (http_req_finish(ar) == 0 && ar->state == completed) {

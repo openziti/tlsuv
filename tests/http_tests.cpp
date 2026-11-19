@@ -2076,6 +2076,122 @@ TEST_CASE("server closes before the response headers", "[http]") {
     CHECK(ctx.body_ends.empty());
 }
 
+// what the callbacks of a request were told
+struct response_log {
+    tlsuv_http_t clt{};
+    std::vector<int> resp_codes;
+    std::vector<ssize_t> body_ends; // every body callback call that is not data
+    std::string body;
+
+    static void resp_cb(tlsuv_http_resp_t *resp, void *data) {
+        static_cast<response_log *>(data)->resp_codes.push_back(resp->code);
+        resp->body_cb = [](tlsuv_http_req_t *req, char *body, ssize_t len) {
+            auto c = static_cast<response_log *>(req->data);
+            if (len > 0) {
+                c->body.append(body, len);
+            } else {
+                c->body_ends.push_back(len);
+            }
+        };
+    }
+};
+
+// extra bytes after a complete response fail the connection, not the request: the response is
+// delivered once, and the requests queued behind it still run
+TEST_CASE("data after a complete response", "[http]") {
+    auto [name, reply] = GENERATE(table<std::string, std::string>({
+        {"connection close", "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nokEXTRA"},
+        {"keep-alive", "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokEXTRA"},
+    }));
+    INFO(name);
+
+    // the extra bytes have to arrive with the end of the response, in the same read
+    UvLoopTest lt(3);
+    canned_server server(lt.loop, reply, "");
+    response_log ctx;
+    DEFER {
+        server.close();
+        tlsuv_http_close(&ctx.clt, nullptr);
+        lt.drain();
+    };
+
+    REQUIRE(tlsuv_http_init(lt.loop, &ctx.clt, server.url("http").c_str()) == 0);
+    tlsuv_http_req(&ctx.clt, "GET", "/", response_log::resp_cb, &ctx);
+    tlsuv_http_req(&ctx.clt, "GET", "/", response_log::resp_cb, &ctx);
+
+    lt.run(UNTIL(ctx.body_ends.size() == 2));
+
+    CHECK(ctx.resp_codes == std::vector<int>{HTTP_STATUS_OK, HTTP_STATUS_OK});
+    CHECK(ctx.body_ends == std::vector<ssize_t>{UV_EOF, UV_EOF});
+    CHECK(ctx.body == "okok");
+}
+
+// a client has asked for one response: what follows it on a keep-alive connection is unsolicited. An
+// empty line is ignored, anything that starts another message is not parsed and the connection is closed
+TEST_CASE("unsolicited data after a complete response", "[http]") {
+    const std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+    auto [name, reply, closed] = GENERATE_COPY(table<std::string, std::string, bool>({
+        {"nothing", response, false},
+        {"an empty line", response + "\r\n", false},
+        {"the start of a message", response + "HTT", true},
+        {"another response", response + response, true},
+    }));
+    INFO(name);
+
+    UvLoopTest lt(3);
+    canned_server server(lt.loop, reply, "");
+    server.keep_open = true; // the server must not be the one to close the connection
+    response_log ctx;
+    DEFER {
+        server.close();
+        tlsuv_http_close(&ctx.clt, nullptr);
+        lt.drain();
+    };
+
+    REQUIRE(tlsuv_http_init(lt.loop, &ctx.clt, server.url("http").c_str()) == 0);
+    // by default an idle connection is closed at once, which would hide the difference
+    tlsuv_http_idle_keepalive(&ctx.clt, 10000);
+    tlsuv_http_req(&ctx.clt, "GET", "/", response_log::resp_cb, &ctx);
+
+    lt.run(UNTIL(!ctx.body_ends.empty()));
+
+    CHECK(ctx.resp_codes == std::vector<int>{HTTP_STATUS_OK});
+    CHECK(ctx.body_ends == std::vector<ssize_t>{UV_EOF});
+    CHECK(ctx.body == "ok");
+    // the loop stops right after the read that completed the request
+    CHECK((ctx.clt.tr == nullptr) == closed);
+}
+
+// tlsuv_http_close() may be called from the final body callback also when the response is followed
+// by extra bytes: the request is still being parsed then, and is released only after the parse
+TEST_CASE("close http client from the final body callback of a response with extra data", "[http]") {
+    UvLoopTest lt(3);
+    canned_server server(lt.loop, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nokEXTRA", "");
+    failed_body_ctx ctx;
+    ctx.clt.data = &ctx;
+    DEFER {
+        server.close();
+        lt.drain();
+    };
+
+    REQUIRE(tlsuv_http_init(lt.loop, &ctx.clt, server.url("http").c_str()) == 0);
+    tlsuv_http_req(&ctx.clt, "GET", "/", [](tlsuv_http_resp_t *resp, void *data) {
+        static_cast<failed_body_ctx *>(data)->resp_codes.push_back(resp->code);
+        resp->body_cb = [](tlsuv_http_req_t *req, char *, ssize_t len) {
+            if (len > 0) return;
+            auto c = static_cast<failed_body_ctx *>(req->data);
+            c->body_ends.push_back(len);
+            tlsuv_http_close(&c->clt, [](tlsuv_http_t *h) { static_cast<failed_body_ctx *>(h->data)->closed = true; });
+        };
+    }, &ctx);
+
+    lt.run(UNTIL(ctx.closed));
+
+    CHECK(ctx.resp_codes == std::vector<int>{HTTP_STATUS_OK});
+    CHECK(ctx.body_ends == std::vector<ssize_t>{UV_EOF});
+    CHECK(ctx.closed);
+}
+
 TEST_CASE("http_proxy_connector", "[http]") {
     UvLoopTest test;
 
