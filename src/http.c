@@ -835,14 +835,11 @@ int tlsuv_http_set_url(tlsuv_http_t *clt, const char *url) {
 
     clt->host = tlsuv__strndup(u.hostname, u.hostname_len);
     if (u.port != 0) {
-        char host_hdr[128];
         port = u.port;
-        snprintf(host_hdr, sizeof(host_hdr), "%s:%d", clt->host, port);
-        tlsuv_http_header(clt, "Host", host_hdr);
-    } else {
-        tlsuv_http_header(clt, "Host", clt->host);
     }
-
+    char *host_hdr = http_host_header(clt->host, u.port);
+    tlsuv_http_header(clt, "Host", host_hdr);
+    tlsuv__free(host_hdr);
 
     snprintf(clt->port, sizeof(clt->port), "%d", port);
 

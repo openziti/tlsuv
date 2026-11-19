@@ -1503,6 +1503,37 @@ TEST_CASE("url parse ipv6 auth", "[http]") {
     CHECK(url.port == 0);
 }
 
+// the client resolves the unbracketed address, and sends the host the way a URL writes it
+TEST_CASE("http host header with an IPv6 literal", "[http]") {
+    struct {
+        const char *url;
+        const char *host;
+        const char *port;
+        const char *host_header;
+    } cases[] = {
+            {"http://[::1]",                "::1",         "80",   "[::1]"},
+            {"http://[::1]/path",           "::1",         "80",   "[::1]"},
+            {"http://[::1]:8080/path",      "::1",         "8080", "[::1]:8080"},
+            {"https://[2001:db8::1]",       "2001:db8::1", "443",  "[2001:db8::1]"},
+            {"https://[2001:db8::1]:8443",  "2001:db8::1", "8443", "[2001:db8::1]:8443"},
+            // plain hosts are unchanged
+            {"http://localhost",            "localhost",   "80",   "localhost"},
+            {"http://127.0.0.1:8080",       "127.0.0.1",   "8080", "127.0.0.1:8080"},
+    };
+
+    UvLoopTest test;
+    for (auto &c: cases) {
+        INFO("url: " << c.url);
+        tlsuv_http_t clt{};
+        REQUIRE(tlsuv_http_init(test.loop, &clt, c.url) == 0);
+        CHECK(std::string(clt.host) == c.host);
+        CHECK(std::string(clt.port) == c.port);
+        CHECK(header_value(&clt.headers, "Host") == c.host_header);
+        tlsuv_http_close(&clt, nullptr);
+        test.drain();
+    }
+}
+
 TEST_CASE("url parse auth", "[http]") {
     tlsuv_url_s url{};
 

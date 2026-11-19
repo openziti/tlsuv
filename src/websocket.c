@@ -270,7 +270,9 @@ int tlsuv_websocket_connect(uv_connect_t *req, tlsuv_websocket_t *ws, const char
     if (path != DEFAULT_PATH) {
         tlsuv__free((char*)path);
     }
-    set_http_header(&ws->req->req_headers, "host", host);
+    char *host_hdr = http_host_header(host, 0);
+    set_http_header(&ws->req->req_headers, "host", host_hdr);
+    tlsuv__free(host_hdr);
 
     ws->host = host;
     ws->read_cb = data_cb;

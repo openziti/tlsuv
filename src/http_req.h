@@ -38,6 +38,11 @@ void free_hdr_list(um_header_list * l);
 void set_http_header(um_header_list* hl, const char* name, const char* value);
 void set_http_headern(um_header_list* hl, const char* name, const char* value, size_t vallen);
 
+// value of a Host header: `host`, followed by `:port` unless port is 0.
+// `host` is a hostname or an address without brackets, an IPv6 literal is bracketed.
+// The result is to be freed with tlsuv__free().
+char *http_host_header(const char *host, uint16_t port);
+
 struct body_chunk_s {
     char* chunk;
     size_t len;
