@@ -102,9 +102,14 @@ int http_req_finish(tlsuv_http_req_t* req) {
 
 ssize_t http_req_process(tlsuv_http_req_t* req, const char* buf, ssize_t len) {
     UM_LOG(TRACE, "processing %zd bytes\n%.*s", len, printable_len((const unsigned char*)buf, len), buf);
+    req->parsing = true;
     llhttp_errno_t err = llhttp_execute(&req->parser, buf, len);
+    req->parsing = false;
     ssize_t processed = -1;
-    if (err == HPE_OK) {
+    if (req->stopped) {
+        // the application ended the request from a callback, the callback that stopped the parser is not an error
+        UM_LOG(VERB, "req[%s %s] was stopped while processing", req->method, req->path);
+    } else if (err == HPE_OK) {
         processed = len;
         UM_LOG(VERB, "processed %zd of %zd", processed, len);
     } else if (err == HPE_PAUSED_UPGRADE) {
@@ -371,7 +376,8 @@ const char* tlsuv_http_resp_header(tlsuv_http_resp_t* resp, const char* name) {
 
 static void inflator_cb(void* ctx, const char* chunk, ssize_t len) {
     tlsuv_http_req_t* req = (tlsuv_http_req_t*)ctx;
-    if (req->resp.body_cb != NULL) {
+    // one inflate call can produce several chunks: none after the application has ended the request
+    if (req->resp.body_cb != NULL && !req->stopped) {
         req->resp.body_bytes += len;
         req->resp.body_cb(req, (char*)chunk, len);
     }
@@ -398,6 +404,7 @@ static int http_headers_complete_cb(llhttp_t* p) {
     if (req->resp_cb != NULL) {
         req->resp_cb(&req->resp, req->data);
     }
+    if (req->stopped) return HPE_USER; // the application ended the request, nothing more to deliver
     if (compression && req->resp.body_cb) {
         req->inflater = um_get_inflater(compression, inflator_cb, req);
     }
@@ -463,5 +470,5 @@ static int http_body_cb(llhttp_t* parser, const char* body, size_t len) {
             r->resp.body_cb(r, (char*)body, (ssize_t)len);
         }
     }
-    return 0;
+    return r->stopped ? HPE_USER : 0; // the application ended the request, nothing more to deliver
 }

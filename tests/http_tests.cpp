@@ -2049,6 +2049,93 @@ TEST_CASE("failure after the response headers", "[http]") {
     CHECK(ctx.end_codes == std::vector<int>{HTTP_STATUS_OK});
 }
 
+// llhttp is still running on a request while the application is called back from it,
+// so a request stopped from inside such a callback has to outlive that callback
+struct stop_in_cb_ctx {
+    enum class where { resp_cb, body_data, body_end };
+    enum class how { cancel_req, cancel_all, close };
+
+    tlsuv_http_t clt{};
+    tlsuv_http_req_t *req = nullptr;
+    where at = where::resp_cb;
+    how by = how::close;
+    bool closed = false;
+    std::vector<int> resp_codes;
+    std::string body;
+    std::vector<ssize_t> body_ends; // every body callback call that is not data
+
+    void stop() {
+        switch (by) {
+            case how::cancel_req:
+                tlsuv_http_req_cancel(&clt, req);
+                break;
+            case how::cancel_all:
+                tlsuv_http_cancel_all(&clt);
+                break;
+            case how::close:
+                closed = true;
+                tlsuv_http_close(&clt, nullptr);
+                break;
+        }
+    }
+};
+
+TEST_CASE("stop the client from a response or body callback", "[http]") {
+    using ctx_t = stop_in_cb_ctx;
+    auto at = GENERATE(ctx_t::where::resp_cb, ctx_t::where::body_data, ctx_t::where::body_end);
+    auto by = GENERATE(ctx_t::how::cancel_req, ctx_t::how::cancel_all, ctx_t::how::close);
+    static const char *const at_names[] = {"response callback", "body data callback", "final body callback"};
+    static const char *const by_names[] = {"tlsuv_http_req_cancel", "tlsuv_http_cancel_all", "tlsuv_http_close"};
+    auto tls = GENERATE(false, true);
+    INFO("stopped from the " << at_names[(int) at] << " by " << by_names[(int) by] << (tls ? ", over TLS" : ""));
+
+    UvLoopTest lt;
+    // the whole response arrives in one read, so llhttp keeps parsing after the callback that stops the client
+    canned_server server(lt.loop, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello", "");
+    ctx_t ctx;
+    ctx.at = at;
+    ctx.by = by;
+    DEFER {
+        server.close();
+        if (!ctx.closed) tlsuv_http_close(&ctx.clt, nullptr);
+        lt.drain();
+    };
+
+    REQUIRE(tlsuv_http_init(lt.loop, &ctx.clt, (tls ? testServerURL("https") : server.url("http")).c_str()) == 0);
+    if (tls) tlsuv_http_set_ssl(&ctx.clt, testServerTLS());
+    ctx.req = tlsuv_http_req(&ctx.clt, "GET", tls ? "/bytes/5" : "/", [](tlsuv_http_resp_t *resp, void *data) {
+        auto c = static_cast<ctx_t *>(data);
+        c->resp_codes.push_back(resp->code);
+        resp->body_cb = [](tlsuv_http_req_t *req, char *chunk, ssize_t len) {
+            auto c = static_cast<ctx_t *>(req->data);
+            if (len > 0) {
+                c->body.append(chunk, len);
+                if (c->at == ctx_t::where::body_data) c->stop();
+            } else {
+                c->body_ends.push_back(len);
+                if (c->at == ctx_t::where::body_end && len == UV_EOF) c->stop();
+            }
+        };
+        if (c->at == ctx_t::where::resp_cb) c->stop();
+    }, &ctx);
+
+    lt.run(UNTIL(!ctx.body_ends.empty()));
+
+    CHECK(ctx.resp_codes == std::vector<int>{HTTP_STATUS_OK});
+    if (at == ctx_t::where::resp_cb) {
+        // stopped before any of the body: its last call is the only one
+        CHECK(ctx.body.empty());
+        CHECK(ctx.body_ends == std::vector<ssize_t>{UV_ECANCELED});
+    } else if (at == ctx_t::where::body_data) {
+        CHECK(ctx.body.size() == 5);
+        CHECK(ctx.body_ends == std::vector<ssize_t>{UV_ECANCELED});
+    } else {
+        // the final call has been made, stopping the client does not make another one
+        CHECK(ctx.body.size() == 5);
+        CHECK(ctx.body_ends == std::vector<ssize_t>{UV_EOF});
+    }
+}
+
 // a server closing the connection is the same failure for the response callback as for the body callback
 TEST_CASE("server closes before the response headers", "[http]") {
     UvLoopTest lt;
