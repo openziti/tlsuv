@@ -194,6 +194,41 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connect request", "[connector]") {
                                            "Host: " + authority + "\r\n"));
 }
 
+TEST_CASE_METHOD(UvLoopTest, "proxy connect fails with EACCES only when the proxy answers 407", "[connector]") {
+    auto [reply, expected_err] = GENERATE(table<std::string, int>({
+            {"HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"proxy\"\r\nContent-Length: 0\r\n\r\n", UV_EACCES},
+            {"HTTP/1.0 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n", UV_EACCES},
+            {"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", UV_ECONNREFUSED},
+            {"not an HTTP reply\r\n\r\n", UV_ECONNREFUSED},
+    }));
+    INFO("reply: " << reply);
+
+    canned_server proxy(loop, reply, "");
+    auto connector = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", std::to_string(proxy.port()).c_str());
+
+    struct result_s {
+        bool called;
+        int err;
+    } result = {false, 0};
+    DEFER {
+        if (result.called) connector->free(connector);
+        proxy.close();
+        drain();
+    };
+
+    REQUIRE(connector->set_auth(connector, tlsuv_PROXY_BASIC, "user", "wrong-password") == 0);
+    connector->connect(loop, connector, "example.com", "443", nullptr,
+                       [](uv_os_sock_t, int err, void *ctx) {
+                           auto r = (result_s *) ctx;
+                           r->called = true;
+                           r->err = err;
+                       }, &result);
+    run(UNTIL(result.called));
+
+    INFO("error => " << uv_strerror(result.err));
+    CHECK(result.err == expected_err);
+}
+
 // the Proxy-Authorization header line for basic credentials, "" if there are none
 static std::string basic_auth_line(const std::string &user, const std::string &pass) {
     if (user.empty()) return "";

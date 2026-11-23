@@ -49,6 +49,8 @@ extern void tlsuv_set_global_connector(const tlsuv_connector_t* connector);
 const tlsuv_connector_t *tlsuv_global_connector();
 
 // proxy connector connects to proxy and does proxy negotiation
+// its connect fails with UV_EACCES when the proxy answers CONNECT with 407 (login missing or rejected),
+// and with UV_ECONNREFUSED when it answers anything else but 200 or hangs up without an answer
 tlsuv_connector_t *tlsuv_new_proxy_connector(tlsuv_proxy_t type, const char* host, const char *port);
 
 struct tlsuv_connector_s {

@@ -477,7 +477,8 @@ static void proxy_work(uv_work_t *wr) {
         }
     }
 
-    if (pfd.revents & (POLLHUP|POLLERR)) {
+    // a proxy that closes right after its answer can report POLLHUP along with POLLIN, the answer is still readable
+    if ((pfd.revents & POLLERR) || !(pfd.revents & POLLIN)) {
         r->err = UV_ECONNREFUSED;
         return;
     }
@@ -495,7 +496,11 @@ static void proxy_work(uv_work_t *wr) {
     int code = 0;
     res = sscanf(resp, "HTTP/1.%*c %d ", &code);
     if (res != 1 || code != 200) {
-        r->err = UV_ECONNREFUSED;
+        if (res == 1 && code == 407) {
+            r->err = UV_EACCES;
+        } else {
+            r->err = UV_ECONNREFUSED;
+        }
         closesocket(r->sock);
         r->sock = -1;
     }
