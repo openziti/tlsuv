@@ -201,6 +201,7 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connect fails with EACCES on 407 and EPERM o
             {"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", UV_EPERM},
             {"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n", UV_ECONNREFUSED},
             {"not an HTTP reply\r\n\r\n", UV_ECONNREFUSED},
+            {"", UV_ECONNREFUSED}, // closes without an answer
     }));
     INFO("reply: " << reply);
 
@@ -210,7 +211,8 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connect fails with EACCES on 407 and EPERM o
     struct result_s {
         bool called;
         int err;
-    } result = {false, 0};
+        uv_os_sock_t sock;
+    } result = {false, 0, INVALID_SOCKET};
     DEFER {
         if (result.called) connector->free(connector);
         proxy.close();
@@ -219,15 +221,53 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connect fails with EACCES on 407 and EPERM o
 
     REQUIRE(connector->set_auth(connector, tlsuv_PROXY_BASIC, "user", "wrong-password") == 0);
     connector->connect(loop, connector, "example.com", "443", nullptr,
-                       [](uv_os_sock_t, int err, void *ctx) {
+                       [](uv_os_sock_t s, int err, void *ctx) {
                            auto r = (result_s *) ctx;
                            r->called = true;
                            r->err = err;
+                           r->sock = s;
                        }, &result);
     run(UNTIL(result.called));
 
     INFO("error => " << uv_strerror(result.err));
     CHECK(result.err == expected_err);
+    // a failed connect hands the caller no socket: the connector closed it
+    CHECK(result.sock == INVALID_SOCKET);
+}
+
+TEST_CASE_METHOD(UvLoopTest, "proxy connect cancelled while waiting for the answer closes the socket", "[connector]") {
+    // the proxy reads the CONNECT and never answers
+    canned_server proxy(loop, "", "");
+    proxy.keep_open = true;
+    auto connector = tlsuv_new_proxy_connector(tlsuv_PROXY_HTTP, "127.0.0.1", std::to_string(proxy.port()).c_str());
+
+    struct result_s {
+        bool called;
+        int err;
+        uv_os_sock_t sock;
+    } result = {false, 0, INVALID_SOCKET};
+    DEFER {
+        if (result.called) connector->free(connector);
+        proxy.close();
+        drain();
+    };
+
+    auto cr = connector->connect(loop, connector, "example.com", "443", nullptr,
+                                 [](uv_os_sock_t s, int err, void *ctx) {
+                                     auto r = (result_s *) ctx;
+                                     r->called = true;
+                                     r->err = err;
+                                     r->sock = s;
+                                 }, &result);
+    run(UNTIL(!proxy.request.empty()));
+    REQUIRE(!result.called);
+
+    connector->cancel(cr);
+    run(UNTIL(result.called));
+
+    INFO("error => " << uv_strerror(result.err));
+    CHECK(result.err == UV_ECANCELED);
+    CHECK(result.sock == INVALID_SOCKET);
 }
 
 // the Proxy-Authorization header line for basic credentials, "" if there are none

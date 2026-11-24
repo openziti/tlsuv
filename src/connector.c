@@ -459,8 +459,6 @@ static void proxy_work(uv_work_t *wr) {
     tlsuv__free(req);
     if (res < 0) {
         r->err = err_to_uv((int)get_error());
-        closesocket(r->sock);
-        r->sock = -1;
         return;
     }
 
@@ -470,11 +468,17 @@ static void proxy_work(uv_work_t *wr) {
             .events = POLLIN,
     };
 
-    while(poll(&pfd, 1, 50) == 0) {
+    int rc;
+    while ((rc = poll(&pfd, 1, 50)) == 0 || (rc < 0 && get_error() == EINTR)) {
         if (r->cancel) {
             r->err = UV_ECANCELED;
             return;
         }
+    }
+
+    if (rc < 0) {
+        r->err = err_to_uv((int)get_error());
+        return;
     }
 
     // a proxy that closes right after its answer can report POLLHUP along with POLLIN, the answer is still readable
@@ -487,8 +491,6 @@ static void proxy_work(uv_work_t *wr) {
     res = read(r->sock, resp, sizeof(resp)-1);
     if (res < 0) {
         r->err = err_to_uv((int)get_error());
-        closesocket(r->sock);
-        r->sock = -1;
         return;
     }
     resp[res] = 0;
@@ -503,17 +505,17 @@ static void proxy_work(uv_work_t *wr) {
         } else {
             r->err = UV_ECONNREFUSED;
         }
-        closesocket(r->sock);
-        r->sock = -1;
     }
 }
 
 static void proxy_work_cb(uv_work_t *wr, int status) {
     struct proxy_connect_req *r = container_of(wr, struct proxy_connect_req, work);
     if (status != 0) {
+        r->err = status;
+    }
+    if (r->err != 0) {
         closesocket(r->sock);
         r->sock = -1;
-        r->err = status;
     }
 
     UM_LOG(TRACE, "fd[%lu] is connected via HTTP proxy", (unsigned long)r->sock);
