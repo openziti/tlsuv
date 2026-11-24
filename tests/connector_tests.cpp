@@ -188,17 +188,18 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connect request", "[connector]") {
                        }, &result);
     run(UNTIL(result.called));
 
-    CHECK(result.err == UV_ECONNREFUSED);
+    CHECK(result.err == UV_EPERM);
     CHECK_THAT(proxy.request,
                Catch::Matchers::StartsWith("CONNECT " + authority + " HTTP/1.1\r\n"
                                            "Host: " + authority + "\r\n"));
 }
 
-TEST_CASE_METHOD(UvLoopTest, "proxy connect fails with EACCES only when the proxy answers 407", "[connector]") {
+TEST_CASE_METHOD(UvLoopTest, "proxy connect fails with EACCES on 407 and EPERM on 403", "[connector]") {
     auto [reply, expected_err] = GENERATE(table<std::string, int>({
             {"HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"proxy\"\r\nContent-Length: 0\r\n\r\n", UV_EACCES},
             {"HTTP/1.0 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n", UV_EACCES},
-            {"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", UV_ECONNREFUSED},
+            {"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", UV_EPERM},
+            {"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n", UV_ECONNREFUSED},
             {"not an HTTP reply\r\n\r\n", UV_ECONNREFUSED},
     }));
     INFO("reply: " << reply);
@@ -287,7 +288,7 @@ TEST_CASE_METHOD(UvLoopTest, "proxy connect request of any size", "[connector]")
                            "Proxy-Connection: keep-alive\r\n" +
                            basic_auth_line(user, pass) +
                            "\r\n";
-    CHECK(result.err == UV_ECONNREFUSED);
+    CHECK(result.err == UV_EPERM);
     CHECK(proxy.request.size() == expected.size());
     CHECK(proxy.request == expected);
 }

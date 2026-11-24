@@ -498,6 +498,8 @@ static void proxy_work(uv_work_t *wr) {
     if (res != 1 || code != 200) {
         if (res == 1 && code == 407) {
             r->err = UV_EACCES;
+        } else if (res == 1 && code == 403) {
+            r->err = UV_EPERM;
         } else {
             r->err = UV_ECONNREFUSED;
         }
