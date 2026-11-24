@@ -116,7 +116,9 @@ int um_inflate(http_inflater_t *inflater, const char *compressed, size_t len) {
         inflater->s.next_out = decompressed;
         inflater->s.avail_out = sizeof(decompressed);
         int rc = inflate_f(&inflater->s, Z_FULL_FLUSH);
-        if (rc == Z_DATA_ERROR) {
+        if (rc != Z_OK && rc != Z_STREAM_END) {
+            // Z_DATA_ERROR, and also what stops inflate() with no progress, e.g. Z_NEED_DICT:
+            // there is no preset dictionary to give it, and the same input would be tried again
             return -1;
         }
         if (rc == Z_STREAM_END) {
