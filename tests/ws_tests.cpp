@@ -496,3 +496,30 @@ TEST_CASE("websocket frame: a frame that is not all there is rejected", "[websoc
     CHECK(p.sent.empty());
     CHECK(p.ws.closed);
 }
+
+// The application is told once. Until it closes the websocket the transport may keep reading,
+// and what comes next is not a frame boundary: it is the middle of the frame that was rejected.
+TEST_CASE("websocket frame: reads after a protocol error are dropped", "[websocket][frame]") {
+    frame_peer p;
+    p.feed(bytes({0x81, 100, 'a'})); // declares more than came
+    REQUIRE(p.got.size() == 1);
+    REQUIRE(p.got[0].first == UV_EPROTO);
+    REQUIRE(p.ws.closed);
+
+    WHEN("the rest of the rejected frame comes") {
+        // the payload that did not fit in the first read, which parses as a text frame of 3 bytes
+        p.feed(bytes({0x81, 3, 'x', 'y', 'z'}));
+    }
+    WHEN("a ping comes") {
+        p.feed(bytes({0x89, 2, 'h', 'i'}));
+    }
+    WHEN("a close comes") {
+        p.feed(bytes({0x88, 0}));
+    }
+    WHEN("a frame that is not all there is comes") {
+        p.feed(bytes({0x81, 100, 'a'}));
+    }
+
+    CHECK(p.got.size() == 1); // still only the error
+    CHECK(p.sent.empty());
+}

@@ -525,6 +525,13 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
         return;
     }
 
+    if (ws->closed) {
+        // The websocket failed (UV_EPROTO) or the app closed it, and the transport has not stopped
+        // yet. The app has been told, and the bytes are not at a frame boundary: drop them.
+        tlsuv__free(buf->base);
+        return;
+    }
+
     ssize_t processed = 0;
     bool failed = false;
     if (ws->conn_req != NULL) {
