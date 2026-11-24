@@ -450,6 +450,61 @@ static void ws_connect_failed(tlsuv_websocket_t *ws, int status) {
     req->cb(req, status);
 }
 
+typedef struct ws_frame_s {
+    uint8_t op;
+    uint8_t mask[4]; // all zero for a frame that is not masked
+    const char *payload;
+    size_t len;
+} ws_frame_t;
+
+// Parses the frame at the start of `data`, which is all there is: the `avail` bytes that were read.
+// The lengths in the frame are the peer's word: it is a frame only if its header and its whole
+// payload are within those bytes. Frames that are split across reads are not put together.
+static bool ws_parse_frame(const uint8_t *data, size_t avail, ws_frame_t *f) {
+    if (avail < 2) {
+        return false;
+    }
+
+    f->op = data[0] & WS_OP_BITS;
+    bool masked = (data[1] & WS_MASK) != 0;
+    uint64_t len = data[1] & 0x7fU;
+    size_t hdr = 2;
+    if (len == 126) {
+        uint16_t v;
+        if (avail - hdr < sizeof(v)) {
+            return false;
+        }
+        memcpy(&v, data + hdr, sizeof(v));
+        len = be16toh(v);
+        hdr += sizeof(v);
+    } else if (len == 127) {
+        uint64_t v;
+        if (avail - hdr < sizeof(v)) {
+            return false;
+        }
+        memcpy(&v, data + hdr, sizeof(v));
+        len = be64toh(v);
+        hdr += sizeof(v);
+    }
+
+    if (masked) {
+        if (avail - hdr < sizeof(f->mask)) {
+            return false;
+        }
+        memcpy(f->mask, data + hdr, sizeof(f->mask));
+        hdr += sizeof(f->mask);
+    } else {
+        memset(f->mask, 0, sizeof(f->mask));
+    }
+
+    if (len > avail - hdr) {
+        return false;
+    }
+    f->payload = (const char *) data + hdr;
+    f->len = (size_t) len;
+    return true;
+}
+
 void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) {
     UM_LOG(VERB, "ws_read_cb nread = %zd", nread);
     if (nread < 0) {
@@ -466,6 +521,13 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
 
     if (ws->conn_req == NULL && !ws->connected) {
         // the connect has failed and the app knows: nothing to parse, nothing to pass on
+        tlsuv__free(buf->base);
+        return;
+    }
+
+    if (ws->closed) {
+        // The websocket failed (UV_EPROTO) or the app closed it, and the transport has not stopped
+        // yet. The app has been told, and the bytes are not at a frame boundary: drop them.
         tlsuv__free(buf->base);
         return;
     }
@@ -509,54 +571,38 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
         return;
     }
 
-    char *frame = buf->base + processed;
-    char op = (char)(frame[0] & WS_OP_BITS);
-    bool masked = (frame[1] & WS_MASK) != 0;
-    size_t len = frame[1] & (~WS_MASK);
-    char *dp = frame + 2;
-    if (len == 126) {
-        uint16_t v;
-        memcpy(&v, &frame[2], sizeof(v));
-        len = be16toh(v);
-        dp += 2;
-    } else if (len == 127) {
-        uint64_t v;
-        memcpy(&v, &frame[2], sizeof(v));
-        len = be64toh(v);
-        dp += 8;
+    ws_frame_t frame;
+    if (!ws_parse_frame((const uint8_t *) buf->base + processed, (size_t) (nread - processed), &frame)) {
+        UM_LOG(ERR, "invalid websocket frame: not all of it is in the %zd bytes read", nread - processed);
+        // nothing of it is used, and the websocket is of no use after it: the app closes it
+        ws->closed = true;
+        ws->read_cb((uv_stream_t *) ws, UV_EPROTO, buf);
+        tlsuv__free(buf->base);
+        return;
     }
 
-    uint8_t mask[4];
-    if (masked) {
-        memcpy(mask, dp, sizeof(mask));
-        dp += sizeof(mask);
-    } else {
-        memset(mask, 0, sizeof(mask));
-    }
-
-    switch (op) {
+    switch (frame.op) {
         case OpCode_TXT:
         case OpCode_BIN:
-            UM_LOG(TRACE, "got data %zd masked=%d", len, masked);
-            for (size_t i=0; i<len; i++) {
-                buf->base[i] = (char)(*dp ^ mask[i % 4]);
-                dp++;
+            UM_LOG(TRACE, "got data %zd", frame.len);
+            for (size_t i = 0; i < frame.len; i++) {
+                buf->base[i] = (char) (frame.payload[i] ^ frame.mask[i % 4]);
             }
-            ws->read_cb((uv_stream_t *) ws, (ssize_t)len, buf);
+            ws->read_cb((uv_stream_t *) ws, (ssize_t) frame.len, buf);
             break;
         case OpCode_Close:
             UM_LOG(TRACE, "got close");
             ws->read_cb((uv_stream_t *) ws, UV_EOF, buf);
             break;
         case OpCode_Ping:
-            UM_LOG(TRACE, "got ping masked=%d len=%zd", masked, len);
-            send_pong(ws, dp, len);
+            UM_LOG(TRACE, "got ping len=%zd", frame.len);
+            send_pong(ws, frame.payload, frame.len);
             break;
         case OpCode_Pong:
             UM_LOG(TRACE, "got pong");
             break;
         default:
-            UM_LOG(INFO, "got unsupported frame %hd", op);
+            UM_LOG(INFO, "got unsupported frame %d", frame.op);
     }
 
     tlsuv__free(buf->base);
