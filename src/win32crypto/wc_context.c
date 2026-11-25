@@ -385,9 +385,13 @@ static int set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certifi
     c->own_store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, (HCRYPTPROV)NULL, 0, NULL);
     CertAddCertificateContextToStore(c->own_store, pcc, CERT_STORE_ADD_ALWAYS, &c->own_cert);
 
+    // SChannel opens the key through this container name. A key from the MACHINE container must say so,
+    // otherwise the name is looked up in the caller's user container (a service such as LocalSystem has none)
+    // and AcquireCredentialsHandle fails with SEC_E_UNKNOWN_CREDENTIALS (0x8009030D).
     CRYPT_KEY_PROV_INFO key_info = {
         .pwszContainerName = key_name,
         .pwszProvName = prov_name,
+        .dwFlags = pk->machine_key ? NCRYPT_MACHINE_KEY_FLAG : 0,
     };
     if (!CertSetCertificateContextProperty(c->own_cert, CERT_KEY_PROV_INFO_PROP_ID, 0, &key_info)) {
         LOG_LAST_ERROR(ERR, "failed to set cert key");

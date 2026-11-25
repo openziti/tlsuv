@@ -532,16 +532,19 @@ int win32crypto_load_keychain_key(tlsuv_private_key_t *pk, const char *id) {
     NCRYPT_PROV_HANDLE ph = 0;
     NCRYPT_KEY_HANDLE kh = 0;
 
+    int machine_key = 0;
     wchar_t* name = key_name(id);
     for (int i = 0; i < sizeof(providers)/sizeof(providers[0]); i++) {
         SECURITY_STATUS rc = NCryptOpenStorageProvider(&ph, providers[i], 0);
         if (rc != ERROR_SUCCESS) continue;
 
         UM_LOG(DEBG, "loading key[%ls] provider[%ls]", name, providers[i]);
+        machine_key = 0;
         rc = NCryptOpenKey(ph, &kh, name, 0, 0);
         if (rc != ERROR_SUCCESS) {
             UM_LOG(DEBG, "fallback to load machine level key[%ls]", name);
             rc = NCryptOpenKey(ph, &kh, name, 0, NCRYPT_MACHINE_KEY_FLAG);
+            machine_key = (rc == ERROR_SUCCESS);
         }
         if (rc == ERROR_SUCCESS) {
           UM_LOG(DEBG, "loaded key[%ls] from provider[%ls]", name, providers[i]);
@@ -554,7 +557,9 @@ int win32crypto_load_keychain_key(tlsuv_private_key_t *pk, const char *id) {
 
     tlsuv__free(name);
     if (kh) {
-        *pk = (tlsuv_private_key_t)new_private_key(ph, kh);
+        struct win32crypto_private_key_s *key = new_private_key(ph, kh);
+        key->machine_key = machine_key;
+        *pk = (tlsuv_private_key_t)key;
         return 0;
     }
 
