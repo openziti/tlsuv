@@ -523,3 +523,162 @@ TEST_CASE("websocket frame: reads after a protocol error are dropped", "[websock
     CHECK(p.got.size() == 1); // still only the error
     CHECK(p.sent.empty());
 }
+
+// What the application saw: a call for each data frame, in order.
+static void check_data(const frame_peer &p, const std::vector<std::string> &payloads) {
+    REQUIRE(p.got.size() == payloads.size());
+    for (size_t i = 0; i < payloads.size(); i++) {
+        CAPTURE(i);
+        CHECK(p.got[i].first == (ssize_t) payloads[i].size());
+        CHECK(p.got[i].second == payloads[i]);
+    }
+}
+
+// A read holds whatever the transport had: a message and the ping behind it, or many messages.
+TEST_CASE("websocket frame: every frame in a read is processed", "[websocket][frame]") {
+    frame_peer p;
+    std::string frames;
+    std::vector<std::string> data; // what the application is to see
+    std::vector<std::string> pongs; // what the peer is to get back
+
+    WHEN("two data frames") {
+        frames = bytes({0x81, 3, 'a', 'b', 'c'}) + bytes({0x82, 3, 'd', 'e', 'f'});
+        data = {"abc", "def"};
+    }
+    WHEN("a data frame and a ping behind it") {
+        frames = bytes({0x81, 3, 'a', 'b', 'c'}) + bytes({0x89, 2, 'h', 'i'});
+        data = {"abc"};
+        pongs = {"hi"};
+    }
+    WHEN("a ping and a data frame behind it") {
+        frames = bytes({0x89, 2, 'h', 'i'}) + bytes({0x81, 3, 'a', 'b', 'c'});
+        data = {"abc"};
+        pongs = {"hi"};
+    }
+    WHEN("a ping between two data frames") {
+        frames = bytes({0x81, 3, 'a', 'b', 'c'}) + bytes({0x89, 2, 'h', 'i'}) + bytes({0x81, 3, 'd', 'e', 'f'});
+        data = {"abc", "def"};
+        pongs = {"hi"};
+    }
+    WHEN("masked data frames") {
+        frames = bytes({0x81, 0x83, 1, 2, 3, 4, 'a' ^ 1, 'b' ^ 2, 'c' ^ 3}) +
+                 bytes({0x82, 0x83, 5, 6, 7, 8, 'd' ^ 5, 'e' ^ 6, 'f' ^ 7});
+        data = {"abc", "def"};
+    }
+    WHEN("a masked and an unmasked data frame") {
+        frames = bytes({0x81, 0x83, 1, 2, 3, 4, 'a' ^ 1, 'b' ^ 2, 'c' ^ 3}) + bytes({0x82, 3, 'd', 'e', 'f'});
+        data = {"abc", "def"};
+    }
+    WHEN("frames of each length form") {
+        std::string medium(300, 'x');
+        for (size_t i = 0; i < medium.size(); i++) medium[i] = (char) ('a' + i % 26);
+        frames = bytes({0x82, 1, 'x'}) + bytes({0x82, 126, 0x01, 0x2c}) + medium +
+                 bytes({0x82, 127, 0, 0, 0, 0, 0, 0, 0, 4, 'w', 'x', 'y', 'z'});
+        data = {"x", medium, "wxyz"};
+    }
+    WHEN("frames that the websocket has nothing to do with between data frames") {
+        // a pong, and an opcode that is not defined
+        frames = bytes({0x81, 3, 'a', 'b', 'c'}) + bytes({0x8a, 0}) + bytes({0x83, 2, 'z', 'z'}) +
+                 bytes({0x81, 3, 'd', 'e', 'f'});
+        data = {"abc", "def"};
+    }
+    WHEN("a hundred small frames") {
+        for (int i = 0; i < 100; i++) {
+            char c = (char) ('a' + i % 26);
+            frames += bytes({0x81, 1, c});
+            data.emplace_back(1, c);
+        }
+    }
+
+    // the read ends where the last frame does: the buffer is not any bigger than the frames
+    p.feed(frames, frames.size());
+
+    check_data(p, data);
+    REQUIRE(p.sent.size() == pongs.size());
+    for (size_t i = 0; i < pongs.size(); i++) {
+        CHECK(frame_peer::pong_payload(p.sent[i]) == pongs[i]);
+    }
+    CHECK_FALSE(p.ws.closed);
+}
+
+// Frames after the one that fails are not looked at, and the ones before it have been delivered.
+TEST_CASE("websocket frame: a read that ends in the middle of a later frame", "[websocket][frame]") {
+    frame_peer p;
+    std::string frames;
+    std::vector<std::string> data;
+    std::vector<std::string> pongs;
+
+    WHEN("a data frame, then one that declares more than came") {
+        frames = bytes({0x81, 3, 'a', 'b', 'c'}) + bytes({0x81, 100, 'd'});
+        data = {"abc"};
+    }
+    WHEN("a ping, then a data frame that declares more than came") {
+        frames = bytes({0x89, 2, 'h', 'i'}) + bytes({0x81, 100, 'd'});
+        pongs = {"hi"};
+    }
+    WHEN("a data frame, then the first byte of a header") {
+        frames = bytes({0x81, 3, 'a', 'b', 'c'}) + bytes({0x81});
+        data = {"abc"};
+    }
+    WHEN("two data frames, then a header cut in its 16 bit length") {
+        frames = bytes({0x81, 1, 'a'}) + bytes({0x81, 1, 'b'}) + bytes({0x81, 126, 0x00});
+        data = {"a", "b"};
+    }
+
+    p.feed(frames);
+
+    REQUIRE(p.got.size() == data.size() + 1);
+    for (size_t i = 0; i < data.size(); i++) {
+        CHECK(p.got[i].first == (ssize_t) data[i].size());
+        CHECK(p.got[i].second == data[i]);
+    }
+    CHECK(p.got.back().first == UV_EPROTO);
+    REQUIRE(p.sent.size() == pongs.size());
+    for (size_t i = 0; i < pongs.size(); i++) {
+        CHECK(frame_peer::pong_payload(p.sent[i]) == pongs[i]);
+    }
+    CHECK(p.ws.closed);
+}
+
+TEST_CASE("websocket frame: the rest of a read after a close frame is dropped", "[websocket][frame]") {
+    frame_peer p;
+
+    WHEN("a data frame behind it") {
+        p.feed(bytes({0x88, 0}) + bytes({0x81, 3, 'a', 'b', 'c'}));
+    }
+    WHEN("a ping behind it") {
+        p.feed(bytes({0x88, 0}) + bytes({0x89, 2, 'h', 'i'}));
+    }
+    WHEN("a frame that is not all there is behind it") {
+        p.feed(bytes({0x88, 0}) + bytes({0x81, 100, 'a'}));
+    }
+
+    REQUIRE(p.got.size() == 1);
+    CHECK(p.got[0].first == UV_EOF);
+    CHECK(p.sent.empty());
+}
+
+// The application may close the websocket from any callback. The frames behind that one are for
+// a websocket that is closed.
+TEST_CASE("websocket frame: the application closes the websocket from a callback", "[websocket][frame]") {
+    frame_peer p;
+    // closing sets the flag; the close itself is deferred, so the websocket is still there
+    p.ws.read_cb = [](uv_stream_t *s, ssize_t nread, const uv_buf_t *buf) {
+        auto peer = static_cast<frame_peer *>(s->data);
+        peer->got.emplace_back(nread, nread > 0 ? std::string(buf->base, nread) : std::string());
+        peer->ws.closed = true;
+    };
+
+    WHEN("a data frame behind it") {
+        p.feed(bytes({0x81, 3, 'a', 'b', 'c'}) + bytes({0x81, 3, 'd', 'e', 'f'}));
+    }
+    WHEN("a ping behind it") {
+        p.feed(bytes({0x81, 3, 'a', 'b', 'c'}) + bytes({0x89, 2, 'h', 'i'}));
+    }
+    WHEN("a frame that is not all there is behind it") {
+        p.feed(bytes({0x81, 3, 'a', 'b', 'c'}) + bytes({0x81, 100, 'd'}));
+    }
+
+    check_data(p, {"abc"});
+    CHECK(p.sent.empty());
+}
