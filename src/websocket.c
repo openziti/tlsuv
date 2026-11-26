@@ -571,38 +571,55 @@ void ws_process_read(tlsuv_websocket_t *ws, ssize_t nread, const uv_buf_t *buf) 
         return;
     }
 
-    ws_frame_t frame;
-    if (!ws_parse_frame((const uint8_t *) buf->base + processed, (size_t) (nread - processed), &frame)) {
-        UM_LOG(ERR, "invalid websocket frame: not all of it is in the %zd bytes read", nread - processed);
-        // nothing of it is used, and the websocket is of no use after it: the app closes it
-        ws->closed = true;
-        ws->read_cb((uv_stream_t *) ws, UV_EPROTO, buf);
-        tlsuv__free(buf->base);
-        return;
-    }
+    // Every frame in the read, in order.
+    const char *end = buf->base + nread;
+    const char *pos = buf->base + processed;
+    while (pos < end) {
+        ws_frame_t frame;
+        if (!ws_parse_frame((const uint8_t *) pos, (size_t) (end - pos), &frame)) {
+            UM_LOG(ERR, "invalid websocket frame: not all of it is in the %zd bytes read", end - pos);
+            // nothing of it is used, and the websocket is of no use after it: the app closes it
+            ws->closed = true;
+            ws->read_cb((uv_stream_t *) ws, UV_EPROTO, buf);
+            break;
+        }
+        pos = frame.payload + frame.len;
 
-    switch (frame.op) {
-        case OpCode_TXT:
-        case OpCode_BIN:
-            UM_LOG(TRACE, "got data %zd", frame.len);
-            for (size_t i = 0; i < frame.len; i++) {
-                buf->base[i] = (char) (frame.payload[i] ^ frame.mask[i % 4]);
+        switch (frame.op) {
+            case OpCode_TXT:
+            case OpCode_BIN: {
+                UM_LOG(TRACE, "got data %zd", frame.len);
+                // the payload is unmasked where it is, so that the frames behind it stay as they
+                // are, and the app gets a buffer that starts at it
+                char *payload = (char *) frame.payload; // the read buffer is the websocket's
+                for (size_t i = 0; i < frame.len; i++) {
+                    payload[i] ^= (char) frame.mask[i % 4];
+                }
+                uv_buf_t data = uv_buf_init(payload, (unsigned int) frame.len);
+                ws->read_cb((uv_stream_t *) ws, (ssize_t) frame.len, &data);
+                break;
             }
-            ws->read_cb((uv_stream_t *) ws, (ssize_t) frame.len, buf);
+            case OpCode_Close:
+                UM_LOG(TRACE, "got close");
+                ws->read_cb((uv_stream_t *) ws, UV_EOF, buf);
+                break;
+            case OpCode_Ping:
+                UM_LOG(TRACE, "got ping len=%zd", frame.len);
+                send_pong(ws, frame.payload, frame.len);
+                break;
+            case OpCode_Pong:
+                UM_LOG(TRACE, "got pong");
+                break;
+            default:
+                UM_LOG(INFO, "got unsupported frame %d", frame.op);
+        }
+
+        if (frame.op == OpCode_Close || ws->closed) {
+            // Nothing behind a close frame counts. The app may also have closed the websocket from
+            // the callback; the close itself is deferred, so ws is still here, and what is left of
+            // the read is for a websocket that is closed.
             break;
-        case OpCode_Close:
-            UM_LOG(TRACE, "got close");
-            ws->read_cb((uv_stream_t *) ws, UV_EOF, buf);
-            break;
-        case OpCode_Ping:
-            UM_LOG(TRACE, "got ping len=%zd", frame.len);
-            send_pong(ws, frame.payload, frame.len);
-            break;
-        case OpCode_Pong:
-            UM_LOG(TRACE, "got pong");
-            break;
-        default:
-            UM_LOG(INFO, "got unsupported frame %d", frame.op);
+        }
     }
 
     tlsuv__free(buf->base);
